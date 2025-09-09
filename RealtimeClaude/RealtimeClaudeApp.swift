@@ -5,6 +5,8 @@ struct RealtimeClaudeApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .rotationEffect(.degrees(180))
+                .statusBarHidden()
         }
     }
 }
