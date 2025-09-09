@@ -8,11 +8,15 @@
 
 /* Begin PBXBuildFile section */
 		B316EC042D3454C000205805 /* RealtimeClaudeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B316EC032D3454C000205805 /* RealtimeClaudeApp.swift */; };
+		B316EC052D3454C000205806 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = B316EC052D3454C000205807 /* Logger.swift */; };
+		B316EC062D3454C000205808 /* LogListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B316EC062D3454C000205809 /* LogListView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		B316EC002D3454C000205805 /* RealtimeClaude.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = RealtimeClaude.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B316EC032D3454C000205805 /* RealtimeClaudeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeClaudeApp.swift; sourceTree = "<group>"; };
+		B316EC052D3454C000205807 /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
+		B316EC062D3454C000205809 /* LogListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogListView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -46,6 +50,8 @@
 			isa = PBXGroup;
 			children = (
 				B316EC032D3454C000205805 /* RealtimeClaudeApp.swift */,
+				B316EC052D3454C000205807 /* Logger.swift */,
+				B316EC062D3454C000205809 /* LogListView.swift */,
 			);
 			path = RealtimeClaude;
 			sourceTree = "<group>";
@@ -119,6 +125,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				B316EC042D3454C000205805 /* RealtimeClaudeApp.swift in Sources */,
+				B316EC052D3454C000205806 /* Logger.swift in Sources */,
+				B316EC062D3454C000205808 /* LogListView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
