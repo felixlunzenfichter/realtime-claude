@@ -1,0 +1,7 @@
+# Private folder - contains logs and sensitive data
+private/
+node_modules
+RealtimeClaude.xcodeproj/project.xcworkspace/xcuserdata
+
+# macOS files
+.DS_Store
