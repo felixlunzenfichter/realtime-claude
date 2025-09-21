@@ -13,55 +13,8 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 const logsDir = path.join('private', 'logs');
-const testDir = path.join('private', 'test');
 let currentSessionFile = null;
 let currentSessionNumber = 0;
-
-
-function getSessionCount() {
-    const files = fs.readdirSync(logsDir);
-    return files.filter(f => f.endsWith('.json')).length;
-}
-
-function computeUptimeStats() {
-    const files = fs.readdirSync(logsDir).filter(f => f.endsWith('.json'));
-
-    if (files.length === 0) {
-        return { totalUptime: 0, todayUptime: 0 };
-    }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    let totalUptime = 0;
-    let todayUptime = 0;
-
-    files.forEach(file => {
-        const filePath = path.join(logsDir, file);
-        const content = fs.readFileSync(filePath, 'utf8');
-        const lines = content.split('\n').filter(line => line.trim());
-
-        if (lines.length === 0) return;
-
-        const firstLog = JSON.parse(lines[0]);
-        const lastLog = JSON.parse(lines[lines.length - 1]);
-
-        const startTime = new Date(firstLog.timestamp);
-        const endTime = new Date(lastLog.timestamp);
-        const duration = endTime - startTime;
-
-        totalUptime += duration;
-
-        if (startTime >= today) {
-            todayUptime += duration;
-        }
-    });
-
-    return {
-        totalUptime: Math.floor(totalUptime),
-        todayUptime: Math.floor(todayUptime)
-    };
-}
 
 const server = net.createServer((socket) => {
     console.log('iOS client connected');
@@ -82,6 +35,13 @@ const server = net.createServer((socket) => {
     });
 });
 
+server.listen(8082, '0.0.0.0', () => {
+    console.log('Mac server listening on port 8082');
+    console.log('Waiting for iOS connections...');
+    console.log('Logs directory:', logsDir);
+    console.log('Existing sessions:', getSessionCount());
+});
+
 function processBufferedData(socket, buffer) {
     let lines = buffer.split('\n');
     buffer = lines.pop() || '';
@@ -97,55 +57,187 @@ function processBufferedData(socket, buffer) {
 }
 
 function handleMessage(socket, logData) {
-    if (logData.type === 'start') {
+    if (isStartMessage(logData)) {
         handleStartMessage(socket);
-    } else if ('error' in logData.type) {
+    } else if (isErrorMessage(logData)) {
         handleErrorMessage(socket, logData);
-    } else if ('log' in logData.type) {
+    } else if (isLogMessage(logData)) {
         handleLogMessage(socket, logData);
     } else {
-        console.error('Unknown message type:', logData.type);
+        handleUnknownMessage(logData);
     }
 }
 
-function handleLogMessage(socket, logData) {
-    console.log('Received log:', logData.message);
-    writeLogToFile(logData);
-    sendAcknowledgment(socket, logData.id);
+function isStartMessage(logData) {
+    return logData.type === 'start';
 }
 
-function handleErrorMessage(socket, logData) {
-    console.error(`🚨 ERROR: ${logData.message} [${logData.fileName}:${logData.functionName}] - test will fail`);
-    writeLogToFile(logData);
-    sendAcknowledgment(socket, logData.id);
+function isErrorMessage(logData) {
+    return 'error' in logData.type;
+}
+
+function isLogMessage(logData) {
+    return 'log' in logData.type;
+}
+
+function handleUnknownMessage(logData) {
+    console.error('Unknown message type:', logData.type);
 }
 
 function handleStartMessage(socket) {
+    createNewSession();
+    const stats = gatherSessionStatistics();
+    sendHandshakeResponse(socket, stats);
+    logHandshakeDetails(stats);
+}
+
+function createNewSession() {
     currentSessionNumber = getSessionCount() + 1;
     currentSessionFile = path.join(logsDir, `${currentSessionNumber}.json`);
     fs.writeFileSync(currentSessionFile, '');
+}
 
+function gatherSessionStatistics() {
     const uptimeStats = computeUptimeStats();
+    const totalLogs = countAllLogs();
 
-    let totalLogs = 0;
-    fs.readdirSync(logsDir).filter(f => f.endsWith('.json')).forEach(file => {
-        const content = fs.readFileSync(path.join(logsDir, file), 'utf8');
-        totalLogs += content.split('\n').filter(line => line.trim()).length;
-    });
-
-    const handshakeResponse = JSON.stringify({
-        type: 'handshake',
+    return {
         sessionNumber: currentSessionNumber,
         totalUptime: uptimeStats.totalUptime,
         todayUptime: uptimeStats.todayUptime,
         totalLogs: totalLogs
+    };
+}
+
+function computeUptimeStats() {
+    const files = getAllSessionFiles();
+
+    if (noSessionsExist(files)) {
+        return { totalUptime: 0, todayUptime: 0 };
+    }
+
+    const today = getMidnightToday();
+    let totalUptime = 0;
+    let todayUptime = 0;
+
+    files.forEach(file => {
+        const sessionUptime = calculateSessionUptime(file);
+        totalUptime += sessionUptime.duration;
+
+        if (isSessionFromToday(sessionUptime.startTime, today)) {
+            todayUptime += sessionUptime.duration;
+        }
+    });
+
+    return {
+        totalUptime: Math.floor(totalUptime),
+        todayUptime: Math.floor(todayUptime)
+    };
+}
+
+function noSessionsExist(files) {
+    return files.length === 0;
+}
+
+function getMidnightToday() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return today;
+}
+
+function calculateSessionUptime(file) {
+    const filePath = path.join(logsDir, file);
+    const content = fs.readFileSync(filePath, 'utf8');
+    const lines = content.split('\n').filter(line => line.trim());
+
+    if (sessionHasNoLogs(lines)) {
+        return { duration: 0, startTime: new Date() };
+    }
+
+    const firstLog = JSON.parse(lines[0]);
+    const lastLog = JSON.parse(lines[lines.length - 1]);
+
+    const startTime = new Date(firstLog.timestamp);
+    const endTime = new Date(lastLog.timestamp);
+    const duration = endTime - startTime;
+
+    return { duration, startTime };
+}
+
+function sessionHasNoLogs(lines) {
+    return lines.length === 0;
+}
+
+function isSessionFromToday(sessionStartTime, today) {
+    return sessionStartTime >= today;
+}
+
+function countAllLogs() {
+    let totalLogs = 0;
+
+    getAllSessionFiles().forEach(file => {
+        const content = fs.readFileSync(path.join(logsDir, file), 'utf8');
+        totalLogs += countLinesInContent(content);
+    });
+
+    return totalLogs;
+}
+
+function getAllSessionFiles() {
+    return fs.readdirSync(logsDir).filter(f => f.endsWith('.json'));
+}
+
+function countLinesInContent(content) {
+    return content.split('\n').filter(line => line.trim()).length;
+}
+
+function sendHandshakeResponse(socket, stats) {
+    const handshakeResponse = JSON.stringify({
+        type: 'handshake',
+        sessionNumber: stats.sessionNumber,
+        totalUptime: stats.totalUptime,
+        todayUptime: stats.todayUptime,
+        totalLogs: stats.totalLogs
     }) + '\n';
 
     socket.write(handshakeResponse);
-    console.log('Sent handshake with session number:', currentSessionNumber);
-    console.log('Included stats - Total:', uptimeStats.totalUptime + 'ms, Today:', uptimeStats.todayUptime + 'ms, Logs:', totalLogs);
 }
 
+function logHandshakeDetails(stats) {
+    console.log('Sent handshake with session number:', stats.sessionNumber);
+    console.log('Included stats - Total:', stats.totalUptime + 'ms, Today:', stats.todayUptime + 'ms, Logs:', stats.totalLogs);
+}
+
+function handleLogMessage(socket, logData) {
+    console.log('Received log:', logData.message);
+    persistLogToFile(logData);
+    confirmLogReception(socket, logData.id);
+}
+
+function handleErrorMessage(socket, logData) {
+    reportErrorToConsole(logData);
+    persistLogToFile(logData);
+    confirmLogReception(socket, logData.id);
+}
+
+function reportErrorToConsole(logData) {
+    console.error(`🚨 ERROR: ${logData.message} [${logData.fileName}:${logData.functionName}] - test will fail`);
+}
+
+function persistLogToFile(logData) {
+    writeLogToFile(logData);
+    console.log('Wrote log with ID:', logData.id);
+}
+
+function confirmLogReception(socket, logId) {
+    sendAcknowledgment(socket, logId);
+    console.log('Sent ACK for log ID:', logId);
+}
+
+function getSessionCount() {
+    const files = fs.readdirSync(logsDir);
+    return files.filter(f => f.endsWith('.json')).length;
+}
 
 function writeLogToFile(logData) {
     if (!currentSessionFile) {
@@ -153,7 +245,6 @@ function writeLogToFile(logData) {
         return;
     }
     fs.appendFileSync(currentSessionFile, JSON.stringify(logData) + '\n');
-    console.log('Wrote log with ID:', logData.id);
 }
 
 function sendAcknowledgment(socket, logId) {
@@ -163,12 +254,4 @@ function sendAcknowledgment(socket, logId) {
     }) + '\n';
 
     socket.write(ackMessage);
-    console.log('Sent ACK for log ID:', logId);
 }
-
-server.listen(8082, '0.0.0.0', () => {
-    console.log('Mac server listening on port 8082');
-    console.log('Waiting for iOS connections...');
-    console.log('Logs directory:', logsDir);
-    console.log('Existing sessions:', getSessionCount());
-});

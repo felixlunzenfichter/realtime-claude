@@ -156,7 +156,7 @@ class Logger: @unchecked Sendable {
                         routeIncomingMessage(jsonDict)
                     }
                 } catch {
-                    print("Failed to parse JSON: \(error)")
+                    fatalError("Failed to parse JSON: \(error)")
                 }
             }
         }

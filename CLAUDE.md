@@ -20,6 +20,7 @@ Each task = 3 commits:
 ### Refactoring Rules
 - Apply ONLY after test passes
 - Function ordering: If function A uses function B, then B must be defined below A
+- Function ordering: If function A is used before function B, then A should be defined before B
 - Functions should be small, do one thing, and have descriptive names
 - NO COMMENTS in code - zero tolerance for any comments
 
