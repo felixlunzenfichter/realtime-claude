@@ -2,7 +2,8 @@ const chokidar = require('chokidar');
 const fs = require('fs');
 const path = require('path');
 
-const EXPECTED_MESSAGE = 'Successful handshake';
+const EXPECTED_MESSAGE_1 = 'Successful handshake';
+const EXPECTED_MESSAGE_2 = 'Model responded';
 const logsDir = 'private/logs';
 const testDir = 'private/test';
 const sessionStates = new Map();
@@ -55,10 +56,11 @@ watcher.on('add', (filePath) => {
     }
 
     const testFile = path.join(testDir, `${sessionNumber}.txt`);
-    fs.writeFileSync(testFile, `🚀 Test Started at ${new Date().toLocaleString('en-GB')}\nRequirements:\n1) "Successful handshake"\n2) NO errors\n\n`);
+    fs.writeFileSync(testFile, `🚀 Test Started at ${new Date().toLocaleString('en-GB')}\nRequirements:\n1) "Successful handshake"\n2) "Model responded"\n3) NO errors\n\n`);
 
     sessionStates.set(sessionNumber, {
         handshakePassed: false,
+        modelResponded: false,
         errorDetected: false,
         errorDetails: [],
         lastTestState: null,
@@ -105,6 +107,10 @@ function runTestsForSession(sessionNumber) {
         if (isHandshakeMessage(logData)) {
             markHandshakeAsPassed(state);
         }
+
+        if (isModelResponseMessage(logData)) {
+            markModelResponseAsPassed(state);
+        }
     }
 
     updateTestState(sessionNumber, state);
@@ -128,16 +134,25 @@ function recordError(state, logData) {
 }
 
 function isHandshakeMessage(logData) {
-    return logData.message.includes(EXPECTED_MESSAGE);
+    return logData.message.includes(EXPECTED_MESSAGE_1);
 }
 
 function markHandshakeAsPassed(state) {
     state.handshakePassed = true;
 }
 
+function isModelResponseMessage(logData) {
+    return logData.message.includes(EXPECTED_MESSAGE_2);
+}
+
+function markModelResponseAsPassed(state) {
+    state.modelResponded = true;
+}
+
 function updateTestState(sessionNumber, state) {
     const currentState = JSON.stringify({
         handshake: state.handshakePassed,
+        modelResponded: state.modelResponded,
         hasErrors: state.errorDetected
     });
 
@@ -166,7 +181,7 @@ function writeStateChange(sessionNumber, state) {
 }
 
 function formatTestStatus(state) {
-    return `T1:${state.handshakePassed ? '✅' : '❌'} Err:${state.errorDetected ? `❌(${state.errorDetails.length})` : '✅'}`;
+    return `T1:${state.handshakePassed ? '✅' : '❌'} T2:${state.modelResponded ? '✅' : '❌'} Err:${state.errorDetected ? `❌(${state.errorDetails.length})` : '✅'}`;
 }
 
 function testsJustPassed(state) {
@@ -174,7 +189,7 @@ function testsJustPassed(state) {
 }
 
 function allRequirementsMet(state) {
-    return state.handshakePassed && !state.errorDetected;
+    return state.handshakePassed && state.modelResponded && !state.errorDetected;
 }
 
 function errorOccurredAfterPassing(state) {
