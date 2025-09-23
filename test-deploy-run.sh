@@ -20,8 +20,12 @@ cd /Users/felixlunzenfichter/Documents/realtime-claude
 
 # Step 1: Clean up any existing processes
 echo "🧹 Cleaning up existing processes..."
-pkill -f "node test-logger-initialized.js" 2>/dev/null || true
-pkill -f "node mac-tcp-server.js" 2>/dev/null || true
+pkill -f "node test-system.js" 2>/dev/null || true
+pkill -f "node mac-server.js" 2>/dev/null || true
+
+# Clean up port 8082 if it's in use
+echo "🔧 Cleaning up port 8082..."
+lsof -ti:8082 | xargs kill -9 2>/dev/null || true
 sleep 2
 
 

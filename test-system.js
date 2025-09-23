@@ -3,7 +3,11 @@ const fs = require('fs');
 const path = require('path');
 
 const EXPECTED_MESSAGE_1 = 'Successful handshake';
-const EXPECTED_MESSAGE_2 = 'Model responded';
+const EXPECTED_MESSAGE_2 = 'WebSocket connection established';
+const EXPECTED_MESSAGE_3 = 'Voice activity detection started';
+const EXPECTED_MESSAGE_4 = 'Voice activity detection stopped';
+const EXPECTED_MESSAGE_5 = 'Started playing response';
+const EXPECTED_MESSAGE_6 = 'Stopped playing response';
 const logsDir = 'private/logs';
 const testDir = 'private/test';
 const sessionStates = new Map();
@@ -56,11 +60,15 @@ watcher.on('add', (filePath) => {
     }
 
     const testFile = path.join(testDir, `${sessionNumber}.txt`);
-    fs.writeFileSync(testFile, `🚀 Test Started at ${new Date().toLocaleString('en-GB')}\nRequirements:\n1) "Successful handshake"\n2) "Model responded"\n3) NO errors\n\n`);
+    fs.writeFileSync(testFile, `🚀 Test Started at ${new Date().toLocaleString('en-GB')}\nRequirements:\n1) "Successful handshake"\n2) "WebSocket connection established"\n3) "Voice activity detection started"\n4) "Voice activity detection stopped"\n5) "Started playing response"\n6) "Stopped playing response"\n7) NO errors\n\n`);
 
     sessionStates.set(sessionNumber, {
         handshakePassed: false,
-        modelResponded: false,
+        webRtcConnected: false,
+        vadStarted: false,
+        vadStopped: false,
+        playingStarted: false,
+        playingStopped: false,
         errorDetected: false,
         errorDetails: [],
         lastTestState: null,
@@ -108,8 +116,24 @@ function runTestsForSession(sessionNumber) {
             markHandshakeAsPassed(state);
         }
 
-        if (isModelResponseMessage(logData)) {
-            markModelResponseAsPassed(state);
+        if (isWebRtcConnectedMessage(logData)) {
+            state.webRtcConnected = true;
+        }
+
+        if (isVadStartedMessage(logData)) {
+            state.vadStarted = true;
+        }
+
+        if (isVadStoppedMessage(logData)) {
+            state.vadStopped = true;
+        }
+
+        if (isPlayingStartedMessage(logData)) {
+            state.playingStarted = true;
+        }
+
+        if (isPlayingStoppedMessage(logData)) {
+            state.playingStopped = true;
         }
     }
 
@@ -141,18 +165,34 @@ function markHandshakeAsPassed(state) {
     state.handshakePassed = true;
 }
 
-function isModelResponseMessage(logData) {
+function isWebRtcConnectedMessage(logData) {
     return logData.message.includes(EXPECTED_MESSAGE_2);
 }
 
-function markModelResponseAsPassed(state) {
-    state.modelResponded = true;
+function isVadStartedMessage(logData) {
+    return logData.message.includes(EXPECTED_MESSAGE_3);
+}
+
+function isVadStoppedMessage(logData) {
+    return logData.message.includes(EXPECTED_MESSAGE_4);
+}
+
+function isPlayingStartedMessage(logData) {
+    return logData.message.includes(EXPECTED_MESSAGE_5);
+}
+
+function isPlayingStoppedMessage(logData) {
+    return logData.message.includes(EXPECTED_MESSAGE_6);
 }
 
 function updateTestState(sessionNumber, state) {
     const currentState = JSON.stringify({
         handshake: state.handshakePassed,
-        modelResponded: state.modelResponded,
+        webRtc: state.webRtcConnected,
+        vadStart: state.vadStarted,
+        vadStop: state.vadStopped,
+        playStart: state.playingStarted,
+        playStop: state.playingStopped,
         hasErrors: state.errorDetected
     });
 
@@ -181,7 +221,7 @@ function writeStateChange(sessionNumber, state) {
 }
 
 function formatTestStatus(state) {
-    return `T1:${state.handshakePassed ? '✅' : '❌'} T2:${state.modelResponded ? '✅' : '❌'} Err:${state.errorDetected ? `❌(${state.errorDetails.length})` : '✅'}`;
+    return `T1:${state.handshakePassed ? '✅' : '❌'} T2:${state.webRtcConnected ? '✅' : '❌'} T3:${state.vadStarted ? '✅' : '❌'} T4:${state.vadStopped ? '✅' : '❌'} T5:${state.playingStarted ? '✅' : '❌'} T6:${state.playingStopped ? '✅' : '❌'} Err:${state.errorDetected ? `❌(${state.errorDetails.length})` : '✅'}`;
 }
 
 function testsJustPassed(state) {
@@ -189,7 +229,7 @@ function testsJustPassed(state) {
 }
 
 function allRequirementsMet(state) {
-    return state.handshakePassed && state.modelResponded && !state.errorDetected;
+    return state.handshakePassed && state.webRtcConnected && state.vadStarted && state.vadStopped && state.playingStarted && state.playingStopped && !state.errorDetected;
 }
 
 function errorOccurredAfterPassing(state) {
