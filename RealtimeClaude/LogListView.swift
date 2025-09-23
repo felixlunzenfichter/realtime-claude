@@ -86,61 +86,22 @@ class LogListViewModel {
         }
     }
 
-    func setupLogSubscription() {
-        Logger.shared.logsSubject
-            .sink { [weak self] logs in
-                self?.logs = logs
-            }
-            .store(in: &cancellables)
-    }
-
-    func setupTransmittedIdsSubscription() {
-        Logger.shared.transmittedLogIdsSubject
-            .sink { [weak self] transmittedIds in
-                self?.transmittedLogIds = transmittedIds
-            }
-            .store(in: &cancellables)
-    }
-
-    func setupSessionNumberSubscription() {
-        Logger.shared.sessionNumberSubject
-            .sink { [weak self] sessionNumber in
-                self?.sessionNumber = sessionNumber
-            }
-            .store(in: &cancellables)
-    }
-
-    func setupUptimeTodaySubscription() {
-        Logger.shared.uptimeTodaySubject
-            .sink { [weak self] uptimeToday in
-                self?.uptimeToday = uptimeToday
-            }
-            .store(in: &cancellables)
-    }
-
-    func setupUptimeTotalSubscription() {
-        Logger.shared.uptimeTotalSubject
-            .sink { [weak self] uptimeTotal in
-                self?.uptimeTotal = uptimeTotal
-            }
-            .store(in: &cancellables)
-    }
-
-    func setupTotalLogsSubscription() {
-        Logger.shared.totalLogsSubject
-            .sink { [weak self] totalLogs in
-                self?.totalLogs = totalLogs
-            }
-            .store(in: &cancellables)
-    }
-
     init() {
-        setupLogSubscription()
-        setupTransmittedIdsSubscription()
-        setupSessionNumberSubscription()
-        setupUptimeTodaySubscription()
-        setupUptimeTotalSubscription()
-        setupTotalLogsSubscription()
+        setupSubscription(Logger.shared.logsSubject) { self.logs = $0 }
+        setupSubscription(Logger.shared.transmittedLogIdsSubject) { self.transmittedLogIds = $0 }
+        setupSubscription(Logger.shared.sessionNumberSubject) { self.sessionNumber = $0 }
+        setupSubscription(Logger.shared.uptimeTodaySubject) { self.uptimeToday = $0 }
+        setupSubscription(Logger.shared.uptimeTotalSubject) { self.uptimeTotal = $0 }
+        setupSubscription(Logger.shared.totalLogsSubject) { self.totalLogs = $0 }
+    }
+    
+    func setupSubscription<T>(_ subject: CurrentValueSubject<T, Never>, updateProperty: @escaping (T) -> Void) {
+        subject
+            .sink { [weak self] value in
+                guard let self = self else { return }
+                updateProperty(value)
+            }
+            .store(in: &cancellables)
     }
 }
 
@@ -239,7 +200,7 @@ struct LogListView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(viewModel.logs) { log in
-                            LogRowView(log: log, transmittedIds: viewModel.transmittedLogIds)
+                            LogRowView(log: log, isTransmitted: viewModel.transmittedLogIds.contains(log.id.uuidString))
                         }
                     }
                     .padding(.horizontal)
@@ -251,11 +212,7 @@ struct LogListView: View {
 
 struct LogRowView: View {
     let log: LogMessage
-    let transmittedIds: [String]
-
-    var isTransmitted: Bool {
-        transmittedIds.contains(log.id.uuidString)
-    }
+    let isTransmitted: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
