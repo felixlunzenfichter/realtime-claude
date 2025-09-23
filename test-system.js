@@ -49,6 +49,7 @@ const watcher = chokidar.watch(logsDir, {
 
 watcher.on('add', (filePath) => {
     const filename = path.basename(filePath);
+    console.log(`📁 New file detected: ${filename}`);
     if (!filename.endsWith('.json')) return;
 
     const sessionNumber = parseInt(filename.replace('.json', ''));
@@ -81,8 +82,12 @@ watcher.on('add', (filePath) => {
         ignoreInitial: false
     });
 
-    sessionWatcher.on('add', () => {
-        setTimeout(() => runTestsForSession(sessionNumber), 100);
+    sessionWatcher.on('change', () => {
+        console.log(`📂 SessionWatcher detected change for session ${sessionNumber}`);
+        setTimeout(() => {
+            console.log(`🧪 Running tests for session ${sessionNumber}...`);
+            runTestsForSession(sessionNumber);
+        }, 100);
     });
 });
 
@@ -108,7 +113,8 @@ function runTestsForSession(sessionNumber) {
 
         const logData = JSON.parse(line);
 
-        if (isErrorLog(logData) && isFirstError(state)) {
+        // Always record ALL errors, not just the first one
+        if (isErrorLog(logData)) {
             recordError(state, logData);
         }
 
@@ -144,12 +150,14 @@ function isErrorLog(logData) {
     return 'error' in logData.type;
 }
 
-function isFirstError(state) {
-    return !state.errorDetected;
-}
 
 function recordError(state, logData) {
-    state.errorDetected = true;
+    // Mark that we've seen an error
+    if (!state.errorDetected) {
+        state.errorDetected = true;
+    }
+
+    // Always add to error details array
     state.errorDetails.push({
         file: logData.fileName,
         function: logData.functionName,
@@ -193,7 +201,8 @@ function updateTestState(sessionNumber, state) {
         vadStop: state.vadStopped,
         playStart: state.playingStarted,
         playStop: state.playingStopped,
-        hasErrors: state.errorDetected
+        hasErrors: state.errorDetected,
+        errorCount: state.errorDetails.length  // Track error count changes
     });
 
     if (stateHasChanged(currentState, state)) {

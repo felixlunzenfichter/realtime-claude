@@ -7,10 +7,11 @@ class LogListViewModel {
     var logs: [LogMessage] = []
     var transmittedLogIds: [String] = []
     var sessionNumber: Int = 0
-    var uptimeToday: Int = 0  
-    var uptimeTotal: Int = 0  
+    var uptimeToday: Int = 0
+    var uptimeTotal: Int = 0
     var totalLogs: Int = 0
     private var cancellables = Set<AnyCancellable>()
+    let webSocketManager = WebSocketManager()
 
     var sessionStartTime: Date? {
         logs.last?.timestamp

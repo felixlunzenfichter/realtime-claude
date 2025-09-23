@@ -10,6 +10,7 @@
 		B316EC042D3454C000205805 /* RealtimeClaudeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B316EC032D3454C000205805 /* RealtimeClaudeApp.swift */; };
 		B316EC052D3454C000205806 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = B316EC052D3454C000205807 /* Logger.swift */; };
 		B316EC062D3454C000205808 /* LogListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B316EC062D3454C000205809 /* LogListView.swift */; };
+		B316EC072D3454C000205810 /* WebSocketManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B316EC072D3454C000205811 /* WebSocketManager.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -17,6 +18,7 @@
 		B316EC032D3454C000205805 /* RealtimeClaudeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeClaudeApp.swift; sourceTree = "<group>"; };
 		B316EC052D3454C000205807 /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
 		B316EC062D3454C000205809 /* LogListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogListView.swift; sourceTree = "<group>"; };
+		B316EC072D3454C000205811 /* WebSocketManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSocketManager.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -52,6 +54,7 @@
 				B316EC032D3454C000205805 /* RealtimeClaudeApp.swift */,
 				B316EC052D3454C000205807 /* Logger.swift */,
 				B316EC062D3454C000205809 /* LogListView.swift */,
+				B316EC072D3454C000205811 /* WebSocketManager.swift */,
 			);
 			path = RealtimeClaude;
 			sourceTree = "<group>";
@@ -127,6 +130,7 @@
 				B316EC042D3454C000205805 /* RealtimeClaudeApp.swift in Sources */,
 				B316EC052D3454C000205806 /* Logger.swift in Sources */,
 				B316EC062D3454C000205808 /* LogListView.swift in Sources */,
+				B316EC072D3454C000205810 /* WebSocketManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
