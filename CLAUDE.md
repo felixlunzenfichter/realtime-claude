@@ -17,12 +17,22 @@ Each task = 3 commits:
 2. Make test pass (minimal code only, ignore refactoring rules)
 3. Refactor & clean up (apply refactoring rules)
 
-### Refactoring Rules
+### Implementation Rules (Step 2)
+- Focus on making test pass quickly
+- Comment heavily mentioning resources, documentation links, API references
+- Include TODO comments for things to clean up in refactoring
+- Document any assumptions or gotchas discovered
+- Make heavy use of log() and error() functions (see Logger.swift for usage)
+- Log all successes and especially catch ALL errors with error()
+
+### Refactoring Rules (Step 3)
 - Apply ONLY after test passes
 - Function ordering: If function A uses function B, then B must be defined below A
 - Function ordering: If function A is used before function B, then A should be defined before B
 - Functions should be small, do one thing, and have descriptive names
-- NO COMMENTS in code - zero tolerance for any comments
+- NO COMMENTS in code - zero tolerance for any comments, express yourself only in logs
+- Clean up any TODO items from implementation phase
+- Code should read like well-written prose
 
 ## Run
 

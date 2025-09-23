@@ -86,42 +86,61 @@ class LogListViewModel {
         }
     }
 
-    init() {
+    func setupLogSubscription() {
         Logger.shared.logsSubject
             .sink { [weak self] logs in
                 self?.logs = logs
             }
             .store(in: &cancellables)
+    }
 
+    func setupTransmittedIdsSubscription() {
         Logger.shared.transmittedLogIdsSubject
             .sink { [weak self] transmittedIds in
                 self?.transmittedLogIds = transmittedIds
             }
             .store(in: &cancellables)
+    }
 
+    func setupSessionNumberSubscription() {
         Logger.shared.sessionNumberSubject
             .sink { [weak self] sessionNumber in
                 self?.sessionNumber = sessionNumber
             }
             .store(in: &cancellables)
+    }
 
+    func setupUptimeTodaySubscription() {
         Logger.shared.uptimeTodaySubject
             .sink { [weak self] uptimeToday in
                 self?.uptimeToday = uptimeToday
             }
             .store(in: &cancellables)
+    }
 
+    func setupUptimeTotalSubscription() {
         Logger.shared.uptimeTotalSubject
             .sink { [weak self] uptimeTotal in
                 self?.uptimeTotal = uptimeTotal
             }
             .store(in: &cancellables)
+    }
 
+    func setupTotalLogsSubscription() {
         Logger.shared.totalLogsSubject
             .sink { [weak self] totalLogs in
                 self?.totalLogs = totalLogs
             }
             .store(in: &cancellables)
+    }
+
+    init() {
+        setupLogSubscription()
+        setupTransmittedIdsSubscription()
+        setupSessionNumberSubscription()
+        setupUptimeTodaySubscription()
+        setupUptimeTotalSubscription()
+        setupTotalLogsSubscription()
     }
 }
 

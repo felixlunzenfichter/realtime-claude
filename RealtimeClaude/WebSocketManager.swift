@@ -1,22 +1,3 @@
-/*
- * WebSocketManager - Native iOS URLSessionWebSocketTask Implementation
- * =====================================================================
- * Date: September 23, 2025
- * iOS Version: iOS 26 (current) / iOS 18 (LTS) / iOS 13+ (minimum for URLSessionWebSocketTask)
- *
- * OPENAI REALTIME API DETAILS
- * ---------------------------
- * Model: gpt-realtime (released August 28, 2025)
- * Endpoint: wss://api.openai.com/v1/realtime?model=gpt-realtime
- * Authentication: Bearer token in Authorization header
- * Beta Header: OpenAI-Beta: realtime=v1
- *
- * NATIVE URLSessionWebSocketTask IMPLEMENTATION
- * =============================================
- * - The receive() method only fires ONCE - you must call it again after each message
- * - Always call resume() on the task to start the connection
- * - Connection timeout is fixed at 60 seconds (cannot be changed via configuration)
- */
 
 import Foundation
 import AVFoundation
@@ -95,10 +76,10 @@ class WebSocketManager: NSObject, @unchecked Sendable {
             switch result {
             case .success(let message):
                 switch message {
-                case .string(let text):
-                    self.handleTextMessage(text)
                 case .data(let data):
                     self.handleDataMessage(data)
+                case .string(let text):
+                    self.handleTextMessage(text)
                 @unknown default:
                     error("Received unknown message type")
                 }
@@ -108,6 +89,14 @@ class WebSocketManager: NSObject, @unchecked Sendable {
             case .failure(let receiveError):
                 self.handleError(receiveError)
             }
+        }
+    }
+
+    func handleDataMessage(_ data: Data) {
+        if let text = String(data: data, encoding: .utf8) {
+            handleTextMessage(text)
+        } else {
+            error("Binary data received: \(data.count) bytes - cannot process")
         }
     }
 
@@ -133,7 +122,6 @@ class WebSocketManager: NSObject, @unchecked Sendable {
             log("WebSocket connection established")
             self.sendSessionUpdate()
         } else if type == "error" {
-            // Print the full error details
             if let errorInfo = json["error"] as? [String: Any] {
                 let errorType = errorInfo["type"] as? String ?? "unknown"
                 let errorMessage = errorInfo["message"] as? String ?? "no message"
@@ -141,14 +129,6 @@ class WebSocketManager: NSObject, @unchecked Sendable {
             } else {
                 error("Full error event: \(json)")
             }
-        }
-    }
-
-    func handleDataMessage(_ data: Data) {
-        if let text = String(data: data, encoding: .utf8) {
-            handleTextMessage(text)
-        } else {
-            error("Binary data received: \(data.count) bytes - cannot process")
         }
     }
 
@@ -162,12 +142,6 @@ class WebSocketManager: NSObject, @unchecked Sendable {
             error("WebSocket disconnected: Connection reset by peer")
         default:
             error("WebSocket error: \(connectionError.localizedDescription)")
-        }
-
-        Task {
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            log("Attempting to reconnect...")
-            self.connect()
         }
     }
 
@@ -245,10 +219,7 @@ extension WebSocketManager: URLSessionWebSocketDelegate {
             log("Using protocol: \(`protocol`)")
         }
 
-        // Start receiving messages now that connection is open
         self.receiveMessage()
-
-        // Send session update immediately
     }
 
     nonisolated func urlSession(_ session: URLSession,
