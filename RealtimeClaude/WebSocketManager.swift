@@ -1,11 +1,13 @@
 
 import Foundation
-import AVFoundation
+@preconcurrency import AVFoundation
 
 class WebSocketManager: NSObject, @unchecked Sendable {
     private var webSocketTask: URLSessionWebSocketTask?
     private var urlSession: URLSession?
     private let apiKey = "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"
+    private var audioEngine: AVAudioEngine?
+    private var audioConverter: AVAudioConverter?
 
     override init() {
         super.init()
@@ -116,12 +118,24 @@ class WebSocketManager: NSObject, @unchecked Sendable {
             return
         }
 
-        log("Event received: \(type)")
-
-        if type == "session.created" {
+        switch type {
+        case "session.created":
             log("WebSocket connection established")
             self.sendSessionUpdate()
-        } else if type == "error" {
+            self.startAudioCapture()
+        case "input_audio_buffer.speech_started":
+            log("Voice activity detection started")
+        case "input_audio_buffer.speech_stopped":
+            log("Voice activity detection stopped")
+        case "input_audio_buffer.committed":
+            log("Audio buffer committed")
+        case "response.created":
+            log("Response created")
+        case "response.done":
+            log("Response completed")
+        case "session.updated", "conversation.item.created", "response.output_item.added", "response.content_part.added", "response.audio.done", "response.audio_transcript.done", "response.content_part.done", "response.output_item.done", "rate_limits.updated", "conversation.item.input_audio_transcription.delta", "conversation.item.input_audio_transcription.completed", "response.audio.delta", "response.audio_transcript.delta":
+            break
+        case "error":
             if let errorInfo = json["error"] as? [String: Any] {
                 let errorType = errorInfo["type"] as? String ?? "unknown"
                 let errorMessage = errorInfo["message"] as? String ?? "no message"
@@ -129,6 +143,8 @@ class WebSocketManager: NSObject, @unchecked Sendable {
             } else {
                 error("Full error event: \(json)")
             }
+        default:
+            log("Unknown event type: \(type) - JSON: \(json)")
         }
     }
 
@@ -185,12 +201,14 @@ class WebSocketManager: NSObject, @unchecked Sendable {
             let message = URLSessionWebSocketTask.Message.string(text)
             let eventType = event["type"] as? String ?? "unknown"
 
-            log("Sending event: \(eventType)")
+            if eventType != "input_audio_buffer.append" {
+                log("Sending event: \(eventType)")
+            }
 
             webSocketTask.send(message) { sendError in
                 if let sendError = sendError {
                     error("Failed to send \(eventType): \(sendError.localizedDescription)")
-                } else {
+                } else if eventType != "input_audio_buffer.append" {
                     log("Successfully sent: \(eventType)")
                 }
             }
@@ -199,13 +217,122 @@ class WebSocketManager: NSObject, @unchecked Sendable {
         }
     }
 
+    func startAudioCapture() {
+        setupAudioEngine()
+        startAudioEngine()
+    }
+
+    func setupAudioEngine() {
+        audioEngine = AVAudioEngine()
+
+        guard let audioEngine = audioEngine else {
+            error("Failed to create audio engine")
+            return
+        }
+
+        let inputNode = audioEngine.inputNode
+        let inputFormat = inputNode.outputFormat(forBus: 0)
+
+        guard let outputFormat = createOutputFormat() else {
+            error("Failed to create output audio format")
+            return
+        }
+
+        audioConverter = AVAudioConverter(from: inputFormat, to: outputFormat)
+
+        if audioConverter == nil {
+            error("Failed to create audio converter")
+            return
+        }
+
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
+            self?.processAudioBuffer(buffer)
+        }
+    }
+
+    func createOutputFormat() -> AVAudioFormat? {
+        return AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24000, channels: 1, interleaved: false)
+    }
+
+    func startAudioEngine() {
+        guard let audioEngine = audioEngine else {
+            error("Audio engine not initialized")
+            return
+        }
+
+        do {
+            try audioEngine.start()
+            log("Audio engine started successfully")
+        } catch let startError {
+            error("Failed to start audio engine: \(startError.localizedDescription)")
+        }
+    }
+
+    func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
+        guard let converter = audioConverter else {
+            error("Audio converter not available")
+            return
+        }
+
+        let outputFrameCapacity = AVAudioFrameCount(Double(buffer.frameLength) * 24000.0 / buffer.format.sampleRate)
+
+        guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: converter.outputFormat, frameCapacity: outputFrameCapacity) else {
+            error("Failed to create converted buffer")
+            return
+        }
+
+        let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
+            outStatus.pointee = .haveData
+            return buffer
+        }
+
+        var converterError: NSError? = nil
+        let status = converter.convert(to: convertedBuffer, error: &converterError, withInputFrom: inputBlock)
+
+        if let converterError = converterError {
+            error("Audio conversion failed: \(converterError.localizedDescription)")
+            return
+        }
+
+        if status == .haveData {
+            sendAudioData(convertedBuffer)
+        }
+    }
+
+    func sendAudioData(_ buffer: AVAudioPCMBuffer) {
+        guard let channelData = buffer.int16ChannelData?[0] else {
+            error("Failed to get channel data")
+            return
+        }
+
+        let frameLength = Int(buffer.frameLength)
+        let data = Data(bytes: channelData, count: frameLength * MemoryLayout<Int16>.size)
+        let base64Audio = data.base64EncodedString()
+
+        let audioEvent: [String: Any] = [
+            "type": "input_audio_buffer.append",
+            "audio": base64Audio
+        ]
+
+        send(event: audioEvent)
+    }
+
     func disconnect() {
         log("Disconnecting WebSocket...")
+        stopAudioCapture()
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
         webSocketTask = nil
     }
 
+    func stopAudioCapture() {
+        audioEngine?.stop()
+        audioEngine?.inputNode.removeTap(onBus: 0)
+        audioEngine = nil
+        audioConverter = nil
+    }
+
     deinit {
+        stopAudioCapture()
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
     }
 }
