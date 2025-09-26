@@ -1,6 +1,7 @@
 const net = require('net');
 const fs = require('fs');
 const path = require('path');
+const { exec } = require('child_process');
 
 process.on('uncaughtException', (error) => {
     console.error(`💥 FATAL: Mac Server crashed! ${error}\n❌ Server must be reliable - this is unacceptable!`);
@@ -43,22 +44,38 @@ server.listen(8082, '0.0.0.0', () => {
 });
 
 function processBufferedData(socket, buffer) {
-    let lines = buffer.split('\n');
-    buffer = lines.pop() || '';
+    let messagesProcessed = 0;
+    let remainingBuffer = buffer;
 
-    for (const line of lines) {
+    // Process ALL complete messages in the buffer
+    while (remainingBuffer.indexOf('\n') !== -1) {
+        const newlineIndex = remainingBuffer.indexOf('\n');
+        const line = remainingBuffer.substring(0, newlineIndex);
+        remainingBuffer = remainingBuffer.substring(newlineIndex + 1);
+
         if (line.trim()) {
-            const jsonData = JSON.parse(line);
-            handleMessage(socket, jsonData);
+            try {
+                const jsonData = JSON.parse(line);
+                handleMessage(socket, jsonData);
+                messagesProcessed++;
+            } catch (error) {
+                console.error('Failed to parse JSON:', error, 'Line:', line);
+            }
         }
     }
 
-    return buffer;
+    if (messagesProcessed > 0) {
+        console.log(`📦 Processed ${messagesProcessed} messages, ${remainingBuffer.length} bytes remaining in buffer`);
+    }
+
+    return remainingBuffer;
 }
 
 function handleMessage(socket, logData) {
     if (isStartMessage(logData)) {
         handleStartMessage(socket);
+    } else if (isPromptMessage(logData)) {
+        handlePromptMessage(socket, logData);
     } else if (isErrorMessage(logData)) {
         handleErrorMessage(socket, logData);
     } else if (isLogMessage(logData)) {
@@ -70,6 +87,10 @@ function handleMessage(socket, logData) {
 
 function isStartMessage(logData) {
     return logData.type === 'start';
+}
+
+function isPromptMessage(logData) {
+    return logData.type === 'prompt';
 }
 
 function isErrorMessage(logData) {
@@ -89,6 +110,124 @@ function handleStartMessage(socket) {
     const stats = gatherSessionStatistics();
     sendHandshakeResponse(socket, stats);
     logHandshakeDetails(stats);
+}
+
+function findLatestConversationFile(dir) {
+    try {
+        const files = fs.readdirSync(dir)
+            .filter(f => f.endsWith('.jsonl'))
+            .map(f => ({
+                name: f,
+                path: path.join(dir, f),
+                mtime: fs.statSync(path.join(dir, f)).mtime
+            }))
+            .sort((a, b) => b.mtime - a.mtime);
+
+        if (files.length === 0) {
+            console.error('❌ No conversation files found');
+            return null;
+        }
+
+        return files[0].path;
+    } catch (e) {
+        console.error('❌ Error finding conversation file:', e.message);
+        return null;
+    }
+}
+
+
+function handlePromptMessage(socket, logData) {
+    const { prompt, category, timestamp } = logData;
+    console.log(`\n📨 Received prompt from iOS app:`);
+    console.log(`   Category: ${category}`);
+    console.log(`   Prompt: "${prompt}"`);
+    console.log(`   Timestamp: ${new Date(timestamp * 1000).toLocaleString()}`);
+
+    // Use Terminal automation (macOS 26 enhanced method)
+    console.log('\n🚀 Attempting Terminal automation (macOS 26 enhanced method)...');
+    injectIntoTerminal(prompt, (terminalSuccess, terminalError) => {
+        if (terminalSuccess) {
+            console.log('✅ Terminal automation executed successfully!');
+            console.log('🔍 Verifying prompt in conversation file...');
+
+            // Wait and verify the prompt actually appears in the conversation
+            const conversationDir = '/Users/felixlunzenfichter/.claude/projects/-Users-felixlunzenfichter-Documents-realtime-claude';
+            const convFile = findLatestConversationFile(conversationDir);
+
+            if (!convFile) {
+                console.log('❌ No conversation file found for verification');
+                sendFailureAck('No conversation file found');
+                return;
+            }
+
+            // Wait 2 seconds then verify
+            setTimeout(() => {
+                try {
+                    const fileContent = fs.readFileSync(convFile, 'utf8');
+                    const lines = fileContent.split('\n').filter(line => line.trim());
+                    const lastLines = lines.slice(-50);
+
+                    let foundInConversation = false;
+                    for (const line of lastLines) {
+                        try {
+                            const json = JSON.parse(line);
+                            if (json.message && json.message.content &&
+                                JSON.stringify(json.message.content).includes(prompt)) {
+                                foundInConversation = true;
+                                console.log('✅ Verified: Prompt found in conversation!');
+                                break;
+                            }
+                        } catch (e) {
+                            // Ignore JSON parse errors
+                        }
+                    }
+
+                    if (foundInConversation) {
+                        // Send success acknowledgment
+                        const ackMessage = {
+                            type: 'prompt_ack',
+                            status: 'success',
+                            method: 'terminal_automation',
+                            originalPrompt: prompt,
+                            timestamp: Date.now()
+                        };
+
+                        const jsonData = JSON.stringify(ackMessage) + '\n';
+                        socket.write(jsonData);
+
+                        console.log('📤 Sent success acknowledgment to iOS app');
+                        console.log('🎉 Prompt successfully injected via Terminal automation!');
+                    } else {
+                        console.log('❌ Terminal automation executed but prompt not found in conversation');
+                        sendFailureAck('Prompt not found in conversation after Terminal automation');
+                    }
+                } catch (error) {
+                    console.error('❌ Error verifying Terminal automation:', error.message);
+                    sendFailureAck(`Verification error: ${error.message}`);
+                }
+            }, 2000);
+        } else {
+            console.log(`❌ Terminal automation failed: ${terminalError}`);
+            sendFailureAck(`Terminal automation failed: ${terminalError}`);
+        }
+    });
+
+    // Helper function to send failure acknowledgment
+    function sendFailureAck(errorMessage) {
+        const ackMessage = {
+            type: 'prompt_ack',
+            status: 'error',
+            error: errorMessage,
+            originalPrompt: prompt,
+            timestamp: Date.now()
+        };
+
+        const jsonData = JSON.stringify(ackMessage) + '\n';
+        socket.write(jsonData);
+
+        console.log('📤 Sent failure acknowledgment to iOS app');
+        console.error('❌ Failed to inject prompt:', errorMessage);
+    }
 }
 
 function createNewSession() {
@@ -192,12 +331,15 @@ function countLinesInContent(content) {
 }
 
 function sendHandshakeResponse(socket, stats) {
+    const apiKey = fs.readFileSync(path.join('private', 'secrets.txt'), 'utf8').trim();
+
     const handshakeResponse = JSON.stringify({
         type: 'handshake',
         sessionNumber: stats.sessionNumber,
         totalUptime: stats.totalUptime,
         todayUptime: stats.todayUptime,
-        totalLogs: stats.totalLogs
+        totalLogs: stats.totalLogs,
+        apiKey: apiKey
     }) + '\n';
 
     socket.write(handshakeResponse);
@@ -254,4 +396,68 @@ function sendAcknowledgment(socket, logId) {
     }) + '\n';
 
     socket.write(ackMessage);
+}
+
+
+function injectIntoTerminal(prompt, callback) {
+    // Escape special characters for AppleScript strings
+    const escapedPrompt = prompt
+        .replace(/\\/g, '\\\\')
+        .replace(/"/g, '\\"');  // Only escape double quotes for AppleScript string
+
+    console.log(`🔤 Escaped prompt for AppleScript: "${escapedPrompt}"`);
+
+    // Enhanced AppleScript for macOS 26 Tahoe - using heredoc for safety
+    const appleScriptCommand = `osascript <<'EOF'
+        -- First activate Terminal to bring it to front
+        tell application "Terminal"
+            activate
+        end tell
+
+        -- Short delay to ensure activation
+        delay 0.2
+
+        -- Use System Events for extra reliability
+        tell application "System Events"
+            tell process "Terminal"
+                set frontmost to true
+
+                -- Perform AXRaise action for additional window raising
+                try
+                    perform action "AXRaise" of window 1
+                end try
+
+                -- Now send keystrokes
+                keystroke "${escapedPrompt}"
+
+                -- Wait 1 second before pressing enter
+                delay 1
+
+                keystroke return
+
+                return "success: Typed into Terminal (macOS 26 enhanced method)"
+            end tell
+        end tell
+EOF`;
+
+    console.log('🍎 Executing enhanced AppleScript for macOS 26 Tahoe...');
+
+    // Execute the AppleScript using heredoc
+    exec(appleScriptCommand, (error, stdout, stderr) => {
+        console.log('📝 AppleScript result:');
+        if (error) {
+            console.log(`   Error: ${error.message}`);
+            console.log(`   Note: Ensure Terminal has Accessibility permissions in System Settings`);
+            callback(false, `AppleScript error: ${error.message}`);
+        } else if (stderr) {
+            console.log(`   Stderr: ${stderr}`);
+            callback(false, `AppleScript stderr: ${stderr}`);
+        } else if (stdout.includes('error:')) {
+            console.log(`   Output: ${stdout.trim()}`);
+            callback(false, stdout.trim());
+        } else {
+            console.log(`   Success: ${stdout.trim()}`);
+            callback(true);
+        }
+    });
 }

@@ -3,6 +3,18 @@ import SwiftUI
 import Network
 import Combine
 
+protocol LoggerProtocol {
+    var logsSubject: CurrentValueSubject<[LogMessage], Never> { get }
+    var debugLogsSubject: CurrentValueSubject<[(LogMessage, Int)], Never> { get }
+    var transmittedLogIdsSubject: CurrentValueSubject<[String], Never> { get }
+    var sessionNumberSubject: CurrentValueSubject<Int, Never> { get }
+    var uptimeTodaySubject: CurrentValueSubject<Int, Never> { get }
+    var uptimeTotalSubject: CurrentValueSubject<Int, Never> { get }
+    var totalLogsSubject: CurrentValueSubject<Int, Never> { get }
+
+    func sendPromptToMac(_ prompt: String, category: String)
+}
+
 enum LogType: Codable {
     case log
     case error
@@ -26,7 +38,7 @@ enum LogType: Codable {
     }
 }
 struct LogMessage: Identifiable, Codable, Sendable {
-    var id = UUID()
+    var id: String = UUID().uuidString
     let type: LogType
     let timestamp: Date
     let fileName: String
@@ -46,15 +58,14 @@ struct LogMessage: Identifiable, Codable, Sendable {
     }
 }
 
-class Logger: @unchecked Sendable {
-    static let shared = Logger()
-    
-    private var _logs: [LogMessage] = []
-    private var _transmittedLogIds: [String] = []
+class Logger: @unchecked Sendable, LoggerProtocol {
+    nonisolated(unsafe) static let shared: LoggerProtocol = Logger()
+
     private let connection: NWConnection
     private let macHostname = "Felixs-MacBook-Pro.local"
     private let port: UInt16 = 8082
     private var dataBuffer = Data()
+    private let tcpProcessingQueue = DispatchQueue(label: "logger.tcp.processing", qos: .userInitiated)
 
     let logsSubject = CurrentValueSubject<[LogMessage], Never>([])
     let transmittedLogIdsSubject = CurrentValueSubject<[String], Never>([])
@@ -62,6 +73,7 @@ class Logger: @unchecked Sendable {
     let uptimeTodaySubject = CurrentValueSubject<Int, Never>(0)
     let uptimeTotalSubject = CurrentValueSubject<Int, Never>(0)
     let totalLogsSubject = CurrentValueSubject<Int, Never>(0)
+    let debugLogsSubject = CurrentValueSubject<[(LogMessage, Int)], Never>([])
 
     private var sessionNumber: Int = 0
 
@@ -103,34 +115,67 @@ class Logger: @unchecked Sendable {
         sendLog(logMessage)
     }
 
+    func addDebugLog(id: String, message: String, file: String, function: String) {
+        let logMessage = LogMessage(
+            id: id,
+            type: .log,
+            timestamp: Date(),
+            fileName: file,
+            functionName: function,
+            message: message
+        )
+
+        var debugLogs = debugLogsSubject.value
+
+        if let index = debugLogs.firstIndex(where: { $0.0.id == id }) {
+            let (_, count) = debugLogs[index]
+            debugLogs[index] = (logMessage, count + 1)
+        } else {
+            debugLogs.insert((logMessage, 1), at: 0)
+        }
+
+        debugLogsSubject.send(debugLogs)
+    }
+
     private func addLogMessage(_ logMessage: LogMessage) {
-        _logs.insert(logMessage, at: 0)
-        logsSubject.send(_logs)
+        var currentLogs = logsSubject.value
+        currentLogs.insert(logMessage, at: 0)
+        logsSubject.send(currentLogs)
     }
 
     private func sendLog(_ logMessage: LogMessage) {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        tcpProcessingQueue.async { [weak self] in
+            guard let self = self else { return }
 
-        var jsonData = try! encoder.encode(logMessage)
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
 
-        jsonData.append("\n".data(using: .utf8)!)
+            var jsonData = try! encoder.encode(logMessage)
 
-        connection.send(content: jsonData, completion: .contentProcessed { error in
-            if let error = error {
-                fatalError("Failed to send log: \(error)")
-            }
-        })
+            jsonData.append("\n".data(using: .utf8)!)
+
+            debugLog(id: "sendLog", message: "Sending to Mac server: \(logMessage.message) (ID: \(logMessage.id))")
+
+            self.connection.send(content: jsonData, completion: .contentProcessed { error in
+                if let error = error {
+                    fatalError("Failed to send log: \(error)")
+                }
+            })
+        }
     }
 
     private func startReceiving() {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, isComplete, error in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
+            guard let self = self else { return }
+
             if let error = error {
                 fatalError("Logger receive failed: \(error)")
             }
 
             if let data = data, !data.isEmpty {
-                self.handleIncomingData(data)
+                self.tcpProcessingQueue.async {
+                    self.handleIncomingData(data)
+                }
             }
 
             if !isComplete {
@@ -141,10 +186,13 @@ class Logger: @unchecked Sendable {
 
     private func handleIncomingData(_ data: Data) {
         dataBuffer.append(data)
-        processBufferedMessages()
+        debugLog(id: "tcp-buffer", message: "Buffer size: \(dataBuffer.count) bytes after appending \(data.count) bytes")
+        processAllBufferedMessages()
     }
 
-    private func processBufferedMessages() {
+    private func processAllBufferedMessages() {
+        var messagesProcessed = 0
+
         while let newlineIndex = dataBuffer.firstIndex(of: 0x0A) {
             let lineData = dataBuffer.prefix(upTo: newlineIndex)
             dataBuffer.removeSubrange(...newlineIndex)
@@ -154,11 +202,16 @@ class Logger: @unchecked Sendable {
                     let json = try JSONSerialization.jsonObject(with: lineData, options: [])
                     if let jsonDict = json as? [String: Any] {
                         routeIncomingMessage(jsonDict)
+                        messagesProcessed += 1
                     }
                 } catch {
                     fatalError("Failed to parse JSON: \(error)")
                 }
             }
+        }
+
+        if messagesProcessed > 0 {
+            debugLog(id: "tcp-process", message: "Processed \(messagesProcessed) messages, \(dataBuffer.count) bytes remaining in buffer")
         }
     }
 
@@ -170,6 +223,8 @@ class Logger: @unchecked Sendable {
             handleAckMessage(jsonData)
         case "handshake":
             handleHandshakeMessage(jsonData)
+        case "prompt_ack":
+            handlePromptAckMessage(jsonData)
         default:
             fatalError("Unexpected message type: \(messageType)")
         }
@@ -177,10 +232,15 @@ class Logger: @unchecked Sendable {
 
     private func handleAckMessage(_ jsonData: [String: Any]) {
         let logId = jsonData["logId"] as! String
+        debugLog(id: "ack", message: "Received ACK from Mac server for log ID: \(logId)")
         acknowledgeTransmission(for: logId)
     }
 
     private func handleHandshakeMessage(_ jsonData: [String: Any]) {
+        if let apiKey = jsonData["apiKey"] as? String {
+            RealtimeAPI.shared.connect(apiKey: apiKey)
+        }
+
         sessionNumber = jsonData["sessionNumber"] as! Int
         sessionNumberSubject.send(sessionNumber)
 
@@ -207,21 +267,62 @@ class Logger: @unchecked Sendable {
     }
 
     private func acknowledgeTransmission(for logId: String) {
-        _transmittedLogIds.append(logId)
-        transmittedLogIdsSubject.send(_transmittedLogIds)
+        var currentIds = transmittedLogIdsSubject.value
+        currentIds.append(logId)
+        transmittedLogIdsSubject.send(currentIds)
+    }
+
+    private func handlePromptAckMessage(_ jsonData: [String: Any]) {
+        let status = jsonData["status"] as! String
+        let originalPrompt = jsonData["originalPrompt"] as? String ?? "Unknown prompt"
+
+        if status == "success" {
+            log("✅ Prompt successfully injected into terminal: \(originalPrompt)")
+        } else {
+            let errorMessage = jsonData["error"] as? String ?? "Unknown error"
+            error("❌ Failed to inject prompt: \(errorMessage)")
+        }
     }
 
     private func sendStartMessage() {
-        let startMessage = ["type": "start"] as [String: Any]
-        var jsonData = try! JSONSerialization.data(withJSONObject: startMessage)
+        tcpProcessingQueue.async { [weak self] in
+            guard let self = self else { return }
 
-        jsonData.append("\n".data(using: .utf8)!)
+            let startMessage = ["type": "start"] as [String: Any]
+            var jsonData = try! JSONSerialization.data(withJSONObject: startMessage)
 
-        connection.send(content: jsonData, completion: .contentProcessed { error in
-            if let error = error {
-                fatalError("Failed to send start message: \(error)")
-            }
-        })
+            jsonData.append("\n".data(using: .utf8)!)
+
+            self.connection.send(content: jsonData, completion: .contentProcessed { error in
+                if let error = error {
+                    fatalError("Failed to send start message: \(error)")
+                }
+            })
+        }
+    }
+
+    func sendPromptToMac(_ prompt: String, category: String) {
+        tcpProcessingQueue.async { [weak self] in
+            guard let self = self else { return }
+
+            let promptMessage: [String: Any] = [
+                "type": "prompt",
+                "prompt": prompt,
+                "category": category,
+                "timestamp": Date().timeIntervalSince1970
+            ]
+
+            var jsonData = try! JSONSerialization.data(withJSONObject: promptMessage)
+            jsonData.append("\n".data(using: .utf8)!)
+
+            self.connection.send(content: jsonData, completion: .contentProcessed { error in
+                if let error = error {
+                    fatalError("Failed to send prompt to Mac: \(error)")
+                } else {
+                    log("Sent prompt to Mac server: \(prompt)")
+                }
+            })
+        }
     }
 }
 
@@ -230,7 +331,7 @@ func log(
     file: String = #file,
     function: String = #function
 ) {
-    Logger.shared.addLog(message, type: .log, file: file, function: function)
+    (Logger.shared as! Logger).addLog(message, type: .log, file: file, function: function)
 }
 
 func error(
@@ -238,5 +339,14 @@ func error(
     file: String = #file,
     function: String = #function
 ) {
-    Logger.shared.addLog(message, type: .error, file: file, function: function)
+    (Logger.shared as! Logger).addLog(message, type: .error, file: file, function: function)
+}
+
+func debugLog(
+    id: String,
+    message: String,
+    file: String = #file,
+    function: String = #function
+) {
+    (Logger.shared as! Logger).addDebugLog(id: id, message: message, file: file, function: function)
 }

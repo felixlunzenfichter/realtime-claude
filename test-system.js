@@ -61,7 +61,7 @@ watcher.on('add', (filePath) => {
     }
 
     const testFile = path.join(testDir, `${sessionNumber}.txt`);
-    fs.writeFileSync(testFile, `🚀 Test Started at ${new Date().toLocaleString('en-GB')}\nRequirements:\n1) "Successful handshake"\n2) "WebSocket connection established"\n3) "Voice activity detection started"\n4) "Voice activity detection stopped"\n5) "Started playing response"\n6) "Stopped playing response"\n7) NO errors\n\n`);
+    fs.writeFileSync(testFile, `🚀 Test Started at ${new Date().toLocaleString('en-GB')}\nRequirements:\n1) "Successful handshake"\n2) "WebSocket connection established"\n3) "Voice activity detection started"\n4) "Voice activity detection stopped"\n5) "Started playing response"\n6) "Stopped playing response"\n7) "Prompt successfully injected into terminal"\n8) NO errors\n\n`);
 
     sessionStates.set(sessionNumber, {
         handshakePassed: false,
@@ -70,6 +70,7 @@ watcher.on('add', (filePath) => {
         vadStopped: false,
         playingStarted: false,
         playingStopped: false,
+        promptInjected: false,
         errorDetected: false,
         errorDetails: [],
         lastTestState: null,
@@ -141,6 +142,10 @@ function runTestsForSession(sessionNumber) {
         if (isPlayingStoppedMessage(logData)) {
             state.playingStopped = true;
         }
+
+        if (isPromptInjectedMessage(logData)) {
+            state.promptInjected = true;
+        }
     }
 
     updateTestState(sessionNumber, state);
@@ -193,6 +198,10 @@ function isPlayingStoppedMessage(logData) {
     return logData.message.includes(EXPECTED_MESSAGE_6);
 }
 
+function isPromptInjectedMessage(logData) {
+    return logData.message && logData.message.includes('Prompt successfully injected into terminal');
+}
+
 function updateTestState(sessionNumber, state) {
     const currentState = JSON.stringify({
         handshake: state.handshakePassed,
@@ -201,6 +210,7 @@ function updateTestState(sessionNumber, state) {
         vadStop: state.vadStopped,
         playStart: state.playingStarted,
         playStop: state.playingStopped,
+        promptInject: state.promptInjected,
         hasErrors: state.errorDetected,
         errorCount: state.errorDetails.length  // Track error count changes
     });

@@ -1,5 +1,14 @@
 # CLAUDE.md
 
+## System Information
+- **Current Date: September 26, 2025**
+- **iOS 26** (Release Date: September 15, 2025)
+- **iPadOS 26** (Release Date: September 15, 2025)
+- **macOS 26 Tahoe** (Release Date: September 15, 2025)
+- **Xcode 18** (Release Date: September 2025)
+- **OpenAI Realtime API Version**: gpt-realtime (GA since Aug 28, 2025)
+- Note: Apple changed numbering to unify all OS versions at "26" for 2025-2026 season
+
 ## Core Principles
 
 **100% dogfood. Everything crashes immediately.**

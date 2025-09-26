@@ -5,13 +5,15 @@ import Observation
 @Observable
 class LogListViewModel {
     var logs: [LogMessage] = []
+    var debugLogs: [(LogMessage, Int)] = []
+    var combinedLogs: [(LogMessage, Int?)] = []
     var transmittedLogIds: [String] = []
     var sessionNumber: Int = 0
     var uptimeToday: Int = 0
     var uptimeTotal: Int = 0
     var totalLogs: Int = 0
     private var cancellables = Set<AnyCancellable>()
-    let webSocketManager = WebSocketManager()
+    let realtimeAPI = RealtimeAPI.shared
 
     var sessionStartTime: Date? {
         logs.last?.timestamp
@@ -21,7 +23,7 @@ class LogListViewModel {
         guard let sessionStart = sessionStartTime else { return 0 }
 
         guard let lastAckId = transmittedLogIds.last,
-              let lastAckLog = logs.first(where: { $0.id.uuidString == lastAckId }) else {
+              let lastAckLog = logs.first(where: { $0.id == lastAckId }) else {
             return 0
         }
 
@@ -87,7 +89,14 @@ class LogListViewModel {
     }
 
     init() {
-        setupSubscription(Logger.shared.logsSubject) { self.logs = $0 }
+        setupSubscription(Logger.shared.logsSubject) { [weak self] logs in
+            self?.logs = logs
+            self?.updateCombinedLogs()
+        }
+        setupSubscription(Logger.shared.debugLogsSubject) { [weak self] debugLogs in
+            self?.debugLogs = debugLogs
+            self?.updateCombinedLogs()
+        }
         setupSubscription(Logger.shared.transmittedLogIdsSubject) { self.transmittedLogIds = $0 }
         setupSubscription(Logger.shared.sessionNumberSubject) { self.sessionNumber = $0 }
         setupSubscription(Logger.shared.uptimeTodaySubject) { self.uptimeToday = $0 }
@@ -95,8 +104,15 @@ class LogListViewModel {
         setupSubscription(Logger.shared.totalLogsSubject) { self.totalLogs = $0 }
     }
     
+    func updateCombinedLogs() {
+        var combined: [(LogMessage, Int?)] = logs.map { ($0, nil) }
+        combined.append(contentsOf: debugLogs.map { ($0.0, $0.1) })
+        combinedLogs = combined.sorted { $0.0.timestamp > $1.0.timestamp }
+    }
+
     func setupSubscription<T>(_ subject: CurrentValueSubject<T, Never>, updateProperty: @escaping (T) -> Void) {
         subject
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] value in
                 guard let self = self else { return }
                 updateProperty(value)
@@ -107,6 +123,7 @@ class LogListViewModel {
 
 struct LogListView: View {
     @State private var viewModel = LogListViewModel()
+    @Binding var showLogs: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -190,7 +207,7 @@ struct LogListView: View {
             .padding(.horizontal)
             .padding(.vertical)
 
-            if viewModel.logs.isEmpty {
+            if viewModel.combinedLogs.isEmpty {
                 Spacer()
                 Text("No logs yet")
                     .font(.title2)
@@ -199,32 +216,42 @@ struct LogListView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
-                        ForEach(viewModel.logs) { log in
-                            LogRowView(log: log, isTransmitted: viewModel.transmittedLogIds.contains(log.id.uuidString))
+                        ForEach(Array(viewModel.combinedLogs.enumerated()), id: \.0) { _, item in
+                            let (log, count) = item
+                            LogRowView(log: log, isTransmitted: viewModel.transmittedLogIds.contains(log.id), count: count)
                         }
                     }
                     .padding(.horizontal)
                 }
             }
         }
+        .background(Color(UIColor.systemBackground))
     }
 }
 
 struct LogRowView: View {
     let log: LogMessage
     let isTransmitted: Bool
+    let count: Int?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Circle()
-                    .fill(isTransmitted ? Color.green : Color.red)
+                    .fill(count != nil ? Color.orange : (isTransmitted ? Color.green : Color.red))
                     .frame(width: 8, height: 8)
 
                 Text(log.type.label)
                     .font(.caption)
                     .fontWeight(.bold)
                     .foregroundColor(log.type.color)
+
+                if let count = count {
+                    Text("x\(count)")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.orange)
+                }
 
                 Text("•")
                     .font(.caption)
@@ -253,10 +280,17 @@ struct LogRowView: View {
                 Spacer()
             }
 
-            Text(log.message)
-                .font(.body)
-                .foregroundColor(log.type.color)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if count != nil {
+                Text("[\(log.id)] \(log.message)")
+                    .font(.body)
+                    .foregroundColor(Color.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(log.message)
+                    .font(.body)
+                    .foregroundColor(log.type.color)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(10)
         .background(Color(UIColor.secondarySystemBackground))

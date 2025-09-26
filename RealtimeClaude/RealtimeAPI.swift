@@ -1,0 +1,921 @@
+
+import Foundation
+@preconcurrency import AVFoundation
+import Combine
+
+protocol RealtimeAPIProtocol: Sendable {
+    var microphoneEnabledSubject: CurrentValueSubject<Bool, Never> { get }
+    var playingAudioSubject: CurrentValueSubject<Bool, Never> { get }
+    var lastPromptSubject: CurrentValueSubject<String, Never> { get }
+
+    func connect(apiKey: String)
+    func enableMicrophone()
+    func disableMicrophone()
+    func enablePlayback()
+    func disablePlayback()
+}
+
+class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
+    static let shared: RealtimeAPIProtocol = RealtimeAPI()
+    private var webSocketTask: URLSessionWebSocketTask?
+    private var urlSession: URLSession?
+    private var apiKey = ""
+    private var playbackEnabled = false
+    let OPENAI_AUDIO_FORMAT = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24000, channels: 1, interleaved: false)!
+    private var audioEngine: AVAudioEngine?
+    private var audioConverter: AVAudioConverter?
+    private var responsePlayerNode: AVAudioPlayerNode?
+    let microphoneEnabledSubject = CurrentValueSubject<Bool, Never>(false)
+    let playingAudioSubject = CurrentValueSubject<Bool, Never>(false)
+    let lastPromptSubject = CurrentValueSubject<String, Never>("")
+
+    override init() {
+        super.init()
+        log("WebSocketManager initialized")
+
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForResource = 600.0
+
+        self.urlSession = URLSession(
+            configuration: configuration,
+            delegate: self,
+            delegateQueue: OperationQueue.main
+        )
+
+        requestMicrophonePermission()
+    }
+
+    func requestMicrophonePermission() {
+        log("Requesting microphone permission...")
+        Task {
+            let granted = await AVAudioApplication.requestRecordPermission()
+            if granted {
+                log("Microphone permission granted")
+            } else {
+                error("Microphone permission denied - cannot proceed")
+            }
+        }
+    }
+
+    func connect(apiKey: String) {
+        log("Attempting to connect to OpenAI Realtime API")
+        self.apiKey = apiKey
+
+        guard let url = URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime") else {
+            error("Invalid WebSocket URL")
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 60.0
+
+        log("Creating WebSocket task...")
+
+        guard let session = self.urlSession else {
+            error("URLSession not initialized")
+            return
+        }
+
+        webSocketTask = session.webSocketTask(with: request)
+
+        log("Starting WebSocket connection...")
+
+        webSocketTask?.resume()
+
+        log("WebSocket connection initiated - waiting for delegate callback")
+    }
+
+    func receiveMessage() {
+        webSocketTask?.receive { [weak self] result in
+            guard let self = self else {
+                error("WebSocketManager deallocated during receive")
+                return
+            }
+
+            switch result {
+            case .success(let message):
+                switch message {
+                case .data(let data):
+                    debugLog(id: "ws-data", message: "Received data message: \(data.count) bytes")
+                    self.handleDataMessage(data)
+                case .string(let text):
+                    debugLog(id: "ws-text", message: "Received text message")
+                    self.handleTextMessage(text)
+                @unknown default:
+                    error("Received unknown message type")
+                }
+
+                self.receiveMessage()
+
+            case .failure(let receiveError):
+                self.handleError(receiveError)
+            }
+        }
+    }
+
+    func handleDataMessage(_ data: Data) {
+        if let text = String(data: data, encoding: .utf8) {
+            handleTextMessage(text)
+        } else {
+            error("Binary data received: \(data.count) bytes - cannot process")
+        }
+    }
+
+    func handleTextMessage(_ text: String) {
+        guard let json = parseJSON(from: text) else {
+            return
+        }
+
+        guard let type = extractMessageType(from: json) else {
+            error("Message missing 'type' field: \(text)")
+            return
+        }
+
+        switch type {
+        case "session.created":
+            handleSessionCreated()
+        case "input_audio_buffer.speech_started":
+            handleSpeechStarted()
+        case "input_audio_buffer.speech_stopped":
+            handleSpeechStopped()
+        case "input_audio_buffer.committed":
+            handleAudioBufferCommitted()
+        case "response.created":
+            handleResponseCreated()
+        case "response.done":
+            handleResponseDoneEvent(json)
+        case "response.audio.delta":
+            handleResponseAudioDelta(json)
+        case "response.text.delta":
+            handleResponseTextDelta(json)
+        case "response.text.done":
+            handleResponseTextDone(json)
+        case "response.function_call_arguments.done":
+            handleFunctionCallArgumentsDone(json)
+        case "response.function_call_arguments.delta":
+            debugLog(id: "function-args-delta", message: "Receiving function call arguments...")
+        case "response.output_text.delta":
+            debugLog(id: "text-delta", message: "Receiving text output...")
+        case "response.output_text.done":
+            handleOutputTextDone(json)
+        case "conversation.item.added":
+            debugLog(id: "conversation-item", message: "Conversation item added")
+        case "response.output_audio.delta":
+            // This is the actual audio data event (different from response.audio.delta)
+            if let audioBase64 = json["delta"] as? String {
+                scheduleResponseAudio(audioBase64)
+            }
+        case "response.output_audio.done":
+            log("Audio output completed")
+        case "response.output_audio_transcript.delta":
+            if let delta = json["delta"] as? String {
+                debugLog(id: "transcript-delta", message: "Transcript delta: \(delta)")
+            }
+        case "response.output_audio_transcript.done":
+            if let transcript = json["transcript"] as? String {
+                log("Final transcript: \(transcript)")
+            }
+        case "conversation.item.done":
+            debugLog(id: "conversation", message: "Conversation item completed")
+        case "session.updated", "conversation.item.created", "response.output_item.added", "response.content_part.added", "response.audio.done", "response.audio_transcript.done", "response.content_part.done", "response.output_item.done", "rate_limits.updated", "conversation.item.input_audio_transcription.delta", "conversation.item.input_audio_transcription.completed", "response.audio_transcript.delta", "response.function_call_arguments.delta":
+            break
+        case "error":
+            handleErrorMessage(json)
+        default:
+            log("Unknown event type: \(type) - JSON: \(json)")
+        }
+    }
+
+    func parseJSON(from text: String) -> [String: Any]? {
+        guard let data = text.data(using: .utf8) else {
+            error("Failed to convert text to data")
+            return nil
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            error("Failed to parse message as JSON: \(text)")
+            return nil
+        }
+
+        return json
+    }
+
+    func extractMessageType(from json: [String: Any]) -> String? {
+        return json["type"] as? String
+    }
+
+    func handleSessionCreated() {
+        log("WebSocket connection established")
+        sendSessionUpdate()
+        startAudioCapture()
+    }
+
+    func handleSpeechStarted() {
+        log("Voice activity detection started")
+    }
+
+    func handleSpeechStopped() {
+        log("Voice activity detection stopped")
+        // Request the model to extract the user's speech and call createPrompt function
+        callCreatePromptFunction()
+    }
+
+    func handleAudioBufferCommitted() {
+        log("Audio buffer committed")
+    }
+
+    func handleResponseCreated() {
+        log("Response created")
+    }
+
+    func handleResponseDone() {
+        log("Response completed")
+    }
+
+    func handleResponseDoneEvent(_ json: [String: Any]) {
+        guard let response = json["response"] as? [String: Any] else {
+            error("response.done event missing 'response' field")
+            return
+        }
+
+        guard let outputs = response["output"] as? [[String: Any]] else {
+            error("response.done event missing 'output' array in response")
+            return
+        }
+
+        for (outputIndex, output) in outputs.enumerated() {
+            guard let toolCalls = output["tool_calls"] as? [[String: Any]] else {
+                debugLog(id: "response-done", message: "Output \(outputIndex) has no tool_calls")
+                continue
+            }
+
+            for (callIndex, call) in toolCalls.enumerated() {
+                guard let callType = call["type"] as? String else {
+                    error("Tool call \(callIndex) missing 'type' field")
+                    continue
+                }
+
+                guard callType == "function" else {
+                    debugLog(id: "response-done", message: "Tool call \(callIndex) is not a function: \(callType)")
+                    continue
+                }
+
+                guard let functionName = call["function"] as? [String: Any] else {
+                    error("Function call \(callIndex) missing 'function' field")
+                    continue
+                }
+
+                guard let name = functionName["name"] as? String else {
+                    error("Function call \(callIndex) missing 'name' in function")
+                    continue
+                }
+
+                guard name == "createPrompt" else {
+                    debugLog(id: "response-done", message: "Function call \(callIndex) is not createPrompt: \(name)")
+                    continue
+                }
+
+                guard let arguments = functionName["arguments"] as? String else {
+                    error("createPrompt function missing 'arguments' string")
+                    continue
+                }
+
+                // Parse the JSON arguments string
+                guard let data = arguments.data(using: .utf8) else {
+                    error("Failed to convert createPrompt arguments to data: \(arguments)")
+                    continue
+                }
+
+                do {
+                    guard let args = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                        error("createPrompt arguments is not a dictionary: \(arguments)")
+                        continue
+                    }
+
+                    guard let prompt = args["prompt"] as? String else {
+                        error("createPrompt arguments missing 'prompt' field: \(args)")
+                        continue
+                    }
+
+                    log("createPrompt function called with prompt: \(prompt)")
+
+                    // Update the UI with the prompt
+                    lastPromptSubject.send(prompt)
+
+                    // TODO: Will send to Claude Code when device is tilted
+                    // sendPromptToClaudeCode(prompt, category: "general")
+
+                    // Send function call result if there's a call_id
+                    if let callId = call["id"] as? String {
+                        sendFunctionCallResult(callId: callId, result: ["status": "success", "message": "Prompt captured"])
+                        log("Sent function call result for call_id: \(callId)")
+                    } else {
+                        error("createPrompt function call missing 'id' field - cannot send result")
+                    }
+                } catch let parseError {
+                    error("Failed to parse createPrompt arguments JSON: \(parseError.localizedDescription), arguments: \(arguments)")
+                }
+            }
+        }
+    }
+
+    func handleResponseAudioDelta(_ json: [String: Any]) {
+        if let audioBase64 = json["delta"] as? String {
+            scheduleResponseAudio(audioBase64)
+        }
+    }
+
+    func handleResponseTextDelta(_ json: [String: Any]) {
+        if let delta = json["delta"] as? String {
+            debugLog(id: "text-delta", message: "Received text delta: \(delta)")
+        }
+    }
+
+    func handleResponseTextDone(_ json: [String: Any]) {
+        guard let text = json["text"] as? String else {
+            error("response.text.done missing 'text' field")
+            return
+        }
+
+        log("Text response completed: \(text)")
+
+        // Check if this looks like a function call response
+        if text.contains("mcp={") && text.contains("\"prompt\":") {
+            // Extract the prompt from the text
+            if let startIndex = text.range(of: "\"prompt\": \"")?.upperBound,
+               let endIndex = text[startIndex...].range(of: "\"")?.lowerBound {
+                let prompt = String(text[startIndex..<endIndex])
+
+                log("Extracted prompt from text response: \(prompt)")
+
+                // Update the UI with the prompt
+                lastPromptSubject.send(prompt)
+
+                // TODO: Will send to Claude Code when device is tilted
+                // sendPromptToClaudeCode(prompt, category: "general")
+            } else {
+                error("Failed to extract prompt from text response: \(text)")
+            }
+        }
+    }
+
+    func handleOutputTextDone(_ json: [String: Any]) {
+        guard let text = json["text"] as? String else {
+            error("response.output_text.done missing 'text' field")
+            return
+        }
+
+        log("Text output completed: \(text)")
+
+        // Try to extract prompt from JSON text output
+        if let textData = text.data(using: .utf8),
+           let jsonObject = try? JSONSerialization.jsonObject(with: textData) as? [String: Any],
+           let prompt = jsonObject["prompt"] as? String {
+            log("Extracted prompt from text output: \(prompt)")
+
+            // Update the UI with the prompt directly (no formatting)
+            lastPromptSubject.send(prompt)
+
+            // TODO: Will send to Claude Code when device is tilted
+            // sendPromptToClaudeCode(prompt, category: "general")
+        } else {
+            debugLog(id: "text-parse", message: "Text output is not JSON with prompt field")
+        }
+    }
+
+    func handleFunctionCallArgumentsDone(_ json: [String: Any]) {
+        guard let name = json["name"] as? String else {
+            error("Function call missing name")
+            return
+        }
+
+        guard let callId = json["call_id"] as? String else {
+            error("Function call missing call_id")
+            return
+        }
+
+        guard let argumentsString = json["arguments"] as? String,
+              let argumentsData = argumentsString.data(using: .utf8),
+              let arguments = try? JSONSerialization.jsonObject(with: argumentsData) as? [String: Any] else {
+            error("Function call missing or invalid arguments")
+            return
+        }
+
+        if name == "createPrompt" {
+            if let prompt = arguments["prompt"] as? String {
+                log("createPrompt function called with prompt: \(prompt)")
+
+                // Update the UI with the prompt
+                lastPromptSubject.send(prompt)
+
+                // TODO: Will send to Claude Code when device is tilted
+                // sendPromptToClaudeCode(prompt, category: "general")
+
+                // Send function call result back to the API
+                sendFunctionCallResult(callId: callId, result: ["status": "success", "message": "Prompt captured"])
+
+                log("Function call result sent - NOT sending response.create to avoid duplicate")
+            } else {
+                error("createPrompt function missing 'prompt' in arguments")
+            }
+        } else {
+            error("Unknown function called: \(name)")
+        }
+    }
+
+    func sendPromptToClaudeCode(_ prompt: String, category: String) {
+        guard !prompt.isEmpty else {
+            error("Cannot send empty prompt to Claude Code")
+            return
+        }
+
+        guard !category.isEmpty else {
+            error("Cannot send prompt with empty category to Claude Code")
+            return
+        }
+
+        log("Sending prompt to Claude Code: [\(category)] \(prompt)")
+
+        // Send through Logger's TCP connection to Mac
+        Logger.shared.sendPromptToMac(prompt, category: category)
+    }
+
+    func callCreatePromptFunction() {
+        let responseCreate: [String: Any] = [
+            "type": "response.create",
+            "response": [
+                "instructions": """
+                The user just spoke. Extract what they said and call createPrompt function.
+                Format as numbered task list:
+                1. First task
+                2. Second task
+                3. Third task
+
+                Keep it concise and action-oriented. Remove filler words.
+                """,
+                "tool_choice": [
+                    "type": "function",
+                    "name": "createPrompt"
+                ],
+                "output_modalities": ["text"]
+            ]
+        ]
+
+        send(event: responseCreate)
+        log("Requesting createPrompt function call after speech stopped")
+    }
+
+    func sendFunctionCallResult(callId: String, result: [String: Any]) {
+        guard !callId.isEmpty else {
+            error("Cannot send function call result with empty call_id")
+            return
+        }
+
+        do {
+            let outputData = try JSONSerialization.data(withJSONObject: result)
+            guard let outputString = String(data: outputData, encoding: .utf8) else {
+                error("Failed to convert result to string for call_id: \(callId)")
+                return
+            }
+
+            let response: [String: Any] = [
+                "type": "conversation.item.create",
+                "item": [
+                    "type": "function_call_output",
+                    "call_id": callId,
+                    "output": outputString
+                ]
+            ]
+
+            send(event: response)
+            log("Sent function call result for call_id: \(callId)")
+        } catch let serializeError {
+            error("Failed to serialize function call result: \(serializeError.localizedDescription), call_id: \(callId)")
+        }
+    }
+
+    func handleErrorMessage(_ json: [String: Any]) {
+        if let errorInfo = json["error"] as? [String: Any] {
+            let errorType = errorInfo["type"] as? String ?? "unknown"
+            let errorMessage = errorInfo["message"] as? String ?? "no message"
+            error("Error type: \(errorType), message: \(errorMessage)")
+        } else {
+            error("Full error event: \(json)")
+        }
+    }
+
+    func handleError(_ connectionError: Error) {
+        let nsError = connectionError as NSError
+        let errorMessage = formatConnectionError(nsError)
+        error(errorMessage)
+    }
+
+    func formatConnectionError(_ nsError: NSError) -> String {
+        switch nsError.code {
+        case 57:
+            return "WebSocket disconnected: Socket not connected"
+        case 54:
+            return "WebSocket disconnected: Connection reset by peer"
+        default:
+            return "WebSocket error: \(nsError.localizedDescription)"
+        }
+    }
+
+    func sendSessionUpdate() {
+        let sessionUpdate: [String: Any] = [
+            "type": "session.update",
+            "session": [
+                "type": "realtime",
+                "output_modalities": ["audio"],
+                "instructions": "You are a helpful assistant.",
+                "audio": [
+                    "input": [
+                        "format": [
+                            "type": "audio/pcm",
+                            "rate": 24000
+                        ],
+                        "turn_detection": [
+                            "type": "server_vad",
+                            "threshold": 0.5,
+                            "prefix_padding_ms": 300,
+                            "silence_duration_ms": 200,
+                            "create_response": false,
+                            "interrupt_response": true
+                        ]
+                    ],
+                    "output": [
+                        "format": [
+                            "type": "audio/pcm",
+                            "rate": 24000
+                        ],
+                        "voice": "alloy",
+                        "speed": 1
+                    ]
+                ],
+                "tools": [
+                    [
+                        "type": "function",
+                        "name": "createPrompt",
+                        "description": "Create prompt formatted as numbered task list",
+                        "parameters": [
+                            "type": "object",
+                            "properties": [
+                                "prompt": [
+                                    "type": "string",
+                                    "description": "User's request formatted as numbered task list with no filler words"
+                                ]
+                            ],
+                            "required": ["prompt"],
+                            "additionalProperties": false
+                        ]
+                    ]
+                ],
+                "tool_choice": "none"
+            ]
+        ]
+
+        send(event: sessionUpdate)
+    }
+
+    func send(event: [String: Any]) {
+        guard let webSocketTask = webSocketTask else {
+            error("WebSocket not connected - cannot send event")
+            return
+        }
+
+        do {
+            let data = try JSONSerialization.data(withJSONObject: event, options: [])
+            guard let text = String(data: data, encoding: .utf8) else {
+                error("Failed to convert event to string")
+                return
+            }
+
+            let message = URLSessionWebSocketTask.Message.string(text)
+            let eventType = event["type"] as? String ?? "unknown"
+
+            if eventType != "input_audio_buffer.append" {
+                debugLog(id: "send-event", message: "Sending event: \(eventType)")
+            }
+
+            webSocketTask.send(message) { sendError in
+                if let sendError = sendError {
+                    error("Failed to send \(eventType): \(sendError.localizedDescription)")
+                } else if eventType != "input_audio_buffer.append" {
+                    log("Successfully sent: \(eventType)")
+                }
+            }
+        } catch let serializeError {
+            error("Failed to serialize event: \(serializeError.localizedDescription)")
+        }
+    }
+
+    func startAudioCapture() {
+        setupAudioEngine()
+        startAudioEngine()
+    }
+
+    func setupAudioEngine() {
+        audioEngine = createAndConfigureAudioEngine()
+
+        guard let audioEngine = audioEngine else {
+            error("Failed to create audio engine")
+            return
+        }
+
+        let inputNode = audioEngine.inputNode
+        let inputFormat = inputNode.outputFormat(forBus: 0)
+
+        setupAudioConverter(from: inputFormat, to: OPENAI_AUDIO_FORMAT)
+        setupResponsePlayerNode(in: audioEngine, format: OPENAI_AUDIO_FORMAT)
+    }
+
+    func createAndConfigureAudioEngine() -> AVAudioEngine {
+        return AVAudioEngine()
+    }
+
+    func setupAudioConverter(from inputFormat: AVAudioFormat, to outputFormat: AVAudioFormat) {
+        audioConverter = AVAudioConverter(from: inputFormat, to: outputFormat)
+
+        if audioConverter == nil {
+            error("Failed to create audio converter")
+        }
+    }
+
+    func setupResponsePlayerNode(in audioEngine: AVAudioEngine, format: AVAudioFormat) {
+        responsePlayerNode = AVAudioPlayerNode()
+
+        guard let playerNode = responsePlayerNode else {
+            error("Failed to create response player node")
+            return
+        }
+
+        audioEngine.attach(playerNode)
+        audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: format)
+    }
+
+    func installAudioTap() {
+        guard let audioEngine = audioEngine else {
+            error("Audio engine not initialized")
+            return
+        }
+
+        let inputNode = audioEngine.inputNode
+        let format = inputNode.outputFormat(forBus: 0)
+
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+            guard let self = self else { return }
+
+            if self.microphoneEnabledSubject.value {
+                self.processInputAudioBuffer(buffer)
+            } else {
+                debugLog(id: "input-audio", message: "Ignoring input audio buffer - microphone disabled")
+            }
+        }
+        
+        self.microphoneEnabledSubject.send(true)
+        log("Audio tap installed")
+    }
+
+    func uninstallAudioTap() {
+        guard let audioEngine = audioEngine else {
+            error("Audio engine not initialized")
+            return
+        }
+
+        audioEngine.inputNode.removeTap(onBus: 0)
+        
+        microphoneEnabledSubject.send(false)
+        log("Audio tap uninstalled")
+    }
+
+
+    func startAudioEngine() {
+        guard let audioEngine = audioEngine else {
+            error("Audio engine not initialized")
+            return
+        }
+
+        do {
+            try audioEngine.start()
+            log("Audio engine started successfully")
+
+            guard let playerNode = responsePlayerNode else {
+                error("Response player node not initialized")
+                return
+            }
+
+            playerNode.play()
+            log("Response player node started")
+        } catch let startError {
+            error("Failed to start audio engine: \(startError.localizedDescription)")
+        }
+    }
+
+    func processInputAudioBuffer(_ buffer: AVAudioPCMBuffer) {
+        // Microphone check already done in installAudioTap, no need to check again
+        guard let convertedBuffer = convertAudioBuffer(buffer) else {
+            return
+        }
+
+        sendAudioData(convertedBuffer)
+    }
+
+    func convertAudioBuffer(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard let converter = audioConverter else {
+            error("Audio converter not available")
+            return nil
+        }
+
+        let outputFrameCapacity = AVAudioFrameCount(Double(buffer.frameLength) * 24000.0 / buffer.format.sampleRate)
+
+        guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: converter.outputFormat, frameCapacity: outputFrameCapacity) else {
+            error("Failed to create converted buffer")
+            return nil
+        }
+
+        let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
+            outStatus.pointee = .haveData
+            return buffer
+        }
+
+        var converterError: NSError? = nil
+        let status = converter.convert(to: convertedBuffer, error: &converterError, withInputFrom: inputBlock)
+
+        if let converterError = converterError {
+            error("Audio conversion failed: \(converterError.localizedDescription)")
+            return nil
+        }
+
+        return status == .haveData ? convertedBuffer : nil
+    }
+
+    func sendAudioData(_ buffer: AVAudioPCMBuffer) {
+        guard let channelData = buffer.int16ChannelData?[0] else {
+            error("Failed to get channel data")
+            return
+        }
+
+        let frameLength = Int(buffer.frameLength)
+        let data = Data(bytes: channelData, count: frameLength * MemoryLayout<Int16>.size)
+        let base64Audio = data.base64EncodedString()
+
+        let audioEvent: [String: Any] = [
+            "type": "input_audio_buffer.append",
+            "audio": base64Audio
+        ]
+
+        send(event: audioEvent)
+    }
+
+    func scheduleResponseAudio(_ audioBase64: String) {
+        if !playingAudioSubject.value {
+            debugLog(id: "schedule-audio", message: "Not scheduling response audio - playback disabled")
+            return
+        }
+
+        guard let playerNode = responsePlayerNode else {
+            error("Response player node not available")
+            return
+        }
+
+
+        guard let audioData = Data(base64Encoded: audioBase64) else {
+            error("Failed to decode response audio data")
+            return
+        }
+
+        guard let buffer = createPCMBuffer(from: audioData, format: OPENAI_AUDIO_FORMAT) else {
+            error("Failed to create PCM buffer from response audio")
+            return
+        }
+
+        playerNode.scheduleBuffer(buffer) { [weak self] in
+            guard let self = self else {
+                error("RealtimeAPI deallocated during audio playback")
+                return
+            }
+        }
+    }
+
+    func createPCMBuffer(from data: Data, format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        let frameLength = UInt32(data.count / MemoryLayout<Int16>.size)
+
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameLength) else {
+            return nil
+        }
+
+        buffer.frameLength = frameLength
+
+        let audioBuffer = buffer.int16ChannelData![0]
+        data.withUnsafeBytes { bytes in
+            audioBuffer.initialize(from: bytes.bindMemory(to: Int16.self).baseAddress!, count: Int(frameLength))
+        }
+
+        return buffer
+    }
+
+    func enableMicrophone() {
+        stopAndResetAudioPlayback()
+        installAudioTap()
+        log("Microphone enabled")
+    }
+
+    func stopAndResetAudioPlayback() {
+        playingAudioSubject.send(false)
+        responsePlayerNode?.stop()
+    }
+
+    func disableMicrophone() {
+        uninstallAudioTap()
+
+        // Send prompt to Claude Code if we have one
+        let currentPrompt = lastPromptSubject.value
+        if !currentPrompt.isEmpty {
+            log("Sending prompt to Claude Code: \(currentPrompt)")
+            Logger.shared.sendPromptToMac(currentPrompt, category: "general")
+
+            // Clear the prompt after sending
+            lastPromptSubject.send("")
+        }
+
+        if playbackEnabled {
+            responsePlayerNode?.play()
+            playingAudioSubject.send(true)
+            createResponse()
+        }
+        log("Microphone disabled")
+    }
+
+    func enablePlayback() {
+        playbackEnabled = true
+        log("Playback enabled")
+    }
+
+    func disablePlayback() {
+        playbackEnabled = false
+        responsePlayerNode?.stop()
+        log("Playback disabled")
+    }
+
+    func commitAudioBuffer() {
+        let commitEvent: [String: Any] = [
+            "type": "input_audio_buffer.commit"
+        ]
+        send(event: commitEvent)
+        log("Audio buffer committed")
+    }
+
+    func createResponse() {
+        let responseEvent: [String: Any] = [
+            "type": "response.create"
+        ]
+        send(event: responseEvent)
+        log("Response requested")
+    }
+
+    func disconnect() {
+        log("Disconnecting WebSocket...")
+        stopAudioCapture()
+        webSocketTask?.cancel(with: .normalClosure, reason: nil)
+        webSocketTask = nil
+    }
+
+    func stopAudioCapture() {
+        audioEngine?.stop()
+        audioEngine?.inputNode.removeTap(onBus: 0)
+        audioEngine = nil
+        audioConverter = nil
+        log("Audio capture stopped")
+    }
+
+    deinit {
+        stopAudioCapture()
+        webSocketTask?.cancel(with: .normalClosure, reason: nil)
+        log("RealtimeAPI deallocated")
+    }
+}
+
+extension RealtimeAPI: URLSessionWebSocketDelegate {
+    nonisolated func urlSession(_ session: URLSession,
+                                webSocketTask: URLSessionWebSocketTask,
+                                didOpenWithProtocol protocol: String?) {
+        log("WebSocket delegate: Connection opened")
+        if let `protocol` = `protocol` {
+            log("Using protocol: \(`protocol`)")
+        }
+
+        self.receiveMessage()
+    }
+
+    nonisolated func urlSession(_ session: URLSession,
+                                webSocketTask: URLSessionWebSocketTask,
+                                didCloseWith closeCode: URLSessionWebSocketTask.CloseCode,
+                                reason: Data?) {
+        error("WebSocket delegate: Connection closed with code \(closeCode.rawValue)")
+        if let reason = reason, let reasonString = String(data: reason, encoding: .utf8) {
+            error("Close reason: \(reasonString)")
+        }
+    }
+}
+
