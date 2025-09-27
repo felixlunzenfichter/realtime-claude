@@ -28,6 +28,10 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
     let microphoneEnabledSubject = CurrentValueSubject<Bool, Never>(false)
     let playingAudioSubject = CurrentValueSubject<Bool, Never>(false)
     let lastPromptSubject = CurrentValueSubject<String, Never>("")
+    private let sendQueue = DispatchQueue(label: "realtime.api.send.queue", qos: .userInitiated)
+    private var eventQueue: [(event: [String: Any], success: Bool)] = []
+    private var isSending = false
+    private var currentResponseID: String?
 
     override init() {
         super.init()
@@ -142,9 +146,9 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
         case "input_audio_buffer.committed":
             handleAudioBufferCommitted()
         case "response.created":
-            handleResponseCreated()
+            handleResponseCreated(json)
         case "response.done":
-            handleResponseDoneEvent(json)
+            handleResponseDone(json)
         case "response.audio.delta":
             handleResponseAudioDelta(json)
         case "response.text.delta":
@@ -225,12 +229,71 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
         log("Audio buffer committed")
     }
 
-    func handleResponseCreated() {
-        log("Response created")
+    func handleResponseCreated(_ json: [String: Any]) {
+        if let jsonData = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+            log("Response.created event JSON:\n\(jsonString)")
+        }
+
+        if let response = json["response"] as? [String: Any],
+           let id = response["id"] as? String {
+            sendQueue.async { [weak self] in
+                guard let self = self else { return }
+                self.currentResponseID = id
+                log("Response created with ID: \(id) - setting currentResponseID")
+            }
+        } else {
+            log("Response created - model is generating response (no ID found)")
+        }
     }
 
-    func handleResponseDone() {
-        log("Response completed")
+    func handleResponseDone(_ json: [String: Any]) {
+        // Log the response.done event to see its structure
+        if let jsonData = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+            log("Response.done event JSON:\n\(jsonString)")
+        }
+
+        // Extract response ID - this is required
+        guard let response = json["response"] as? [String: Any],
+              let responseId = response["id"] as? String else {
+            error("response.done missing response ID")
+            return
+        }
+
+        log("Response completed with ID: \(responseId)")
+
+        sendQueue.async { [weak self] in
+            guard let self = self else { return }
+
+            self.currentResponseID = nil
+            log("Cleared currentResponseID after response.done")
+
+            // Find the first unsuccessful response.create event
+            if let index = self.eventQueue.firstIndex(where: {
+                ($0.event["type"] as? String) == "response.create" && !$0.success
+            }) {
+                // Check if the stored ID matches
+                if let storedId = self.eventQueue[index].event["responseId"] as? String,
+                   storedId == responseId {
+                    // Mark as successful
+                    self.eventQueue[index].success = true
+                    log("Marked response.create with ID \(storedId) as successful")
+
+                    // Process the response output
+                    self.handleResponseDoneEvent(json)
+
+                    // Process any remaining events in the queue
+                    self.processEventQueue()
+                } else {
+                    let storedId = self.eventQueue[index].event["responseId"] as? String ?? "nil"
+                    error("Response ID mismatch! Expected: \(storedId), Got: \(responseId)")
+                }
+            } else {
+                log("Warning: No pending response.create event found for response.done with ID: \(responseId)")
+                self.processEventQueue()
+            }
+        }
     }
 
     func handleResponseDoneEvent(_ json: [String: Any]) {
@@ -303,12 +366,8 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
                     // Update the UI with the prompt
                     lastPromptSubject.send(prompt)
 
-                    // TODO: Will send to Claude Code when device is tilted
-                    // sendPromptToClaudeCode(prompt, category: "general")
-
                     // Send function call result if there's a call_id
                     if let callId = call["id"] as? String {
-                        sendFunctionCallResult(callId: callId, result: ["status": "success", "message": "Prompt captured"])
                         log("Sent function call result for call_id: \(callId)")
                     } else {
                         error("createPrompt function call missing 'id' field - cannot send result")
@@ -385,6 +444,12 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
     }
 
     func handleFunctionCallArgumentsDone(_ json: [String: Any]) {
+        // Log the full JSON to see the structure
+        if let jsonData = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+            log("Function call arguments done JSON:\n\(jsonString)")
+        }
+
         guard let name = json["name"] as? String else {
             error("Function call missing name")
             return
@@ -394,6 +459,8 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
             error("Function call missing call_id")
             return
         }
+
+        log("Function call received - Name: \(name), Call ID: \(callId)")
 
         guard let argumentsString = json["arguments"] as? String,
               let argumentsData = argumentsString.data(using: .utf8),
@@ -447,12 +514,12 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
             "response": [
                 "instructions": """
                 The user just spoke. Extract what they said and call createPrompt function.
-                Format as numbered task list:
-                1. First task
-                2. Second task
-                3. Third task
+                Use format:
+                [1] First task
+                ...
+                [n] Nth task
 
-                Keep it concise and action-oriented. Remove filler words.
+                Keep it concise and action-oriented. Remove filler words. Adjust n based on the number of things the user has said.
                 """,
                 "tool_choice": [
                     "type": "function",
@@ -528,7 +595,7 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
             "session": [
                 "type": "realtime",
                 "output_modalities": ["audio"],
-                "instructions": "You are a helpful assistant.",
+                "instructions": "Always respond with only one word, or if not possible, one short sentence using only key words.",
                 "audio": [
                     "input": [
                         "format": [
@@ -579,34 +646,83 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
     }
 
     func send(event: [String: Any]) {
-        guard let webSocketTask = webSocketTask else {
-            error("WebSocket not connected - cannot send event")
+        sendQueue.async { [weak self] in
+            guard let self = self else { return }
+            self.eventQueue.append((event: event, success: false))
+            self.processEventQueue()
+        }
+    }
+
+    private func processEventQueue() {
+        guard !isSending else {
+            debugLog(id: "send-queue", message: "Already sending, will process queue after current send")
             return
         }
+
+        guard let nextIndex = eventQueue.firstIndex(where: { !$0.success }) else {
+            debugLog(id: "send-queue", message: "All events in queue have been successfully sent")
+            eventQueue.removeAll()
+            return
+        }
+
+        let event = eventQueue[nextIndex].event
+        let eventType = event["type"] as! String
+
+        guard let webSocketTask = webSocketTask else {
+            error("WebSocket not connected - cannot send event")
+            eventQueue.removeAll()
+            return
+        }
+
+        isSending = true
+        let currentIndex = nextIndex
 
         do {
             let data = try JSONSerialization.data(withJSONObject: event, options: [])
             guard let text = String(data: data, encoding: .utf8) else {
                 error("Failed to convert event to string")
+                isSending = false
                 return
             }
 
             let message = URLSessionWebSocketTask.Message.string(text)
-            let eventType = event["type"] as? String ?? "unknown"
+            let eventType = event["type"] as! String
 
-            if eventType != "input_audio_buffer.append" {
-                debugLog(id: "send-event", message: "Sending event: \(eventType)")
+            if eventType == "input_audio_buffer.append" {
+                debugLog(id: "send-audio", message: "Sending audio buffer")
+            } else {
+                log("Sending event: \(eventType)")
             }
 
-            webSocketTask.send(message) { sendError in
-                if let sendError = sendError {
-                    error("Failed to send \(eventType): \(sendError.localizedDescription)")
-                } else if eventType != "input_audio_buffer.append" {
-                    log("Successfully sent: \(eventType)")
+            webSocketTask.send(message) { [weak self] sendError in
+                guard let self = self else { return }
+
+                self.sendQueue.async {
+
+                    if let sendError = sendError {
+                        error("Failed to send \(eventType): \(sendError.localizedDescription)")
+                    } else {
+                        if eventType == "input_audio_buffer.append" {
+                            self.eventQueue[currentIndex].success = true
+                            debugLog(id: "send-audio-success", message: "Audio buffer sent successfully")
+                            self.processEventQueue()
+                        } else if eventType == "response.create" {
+                            log("Sent response.create - waiting for model to create response")
+                            // Do NOT set success=true here, wait for response.created event
+                        } else {
+                            // All other event types mark success immediately
+                            self.eventQueue[currentIndex].success = true
+                            log("Successfully sent: \(eventType)")
+                        }
+                        self.isSending = false
+                    }
+
                 }
             }
         } catch let serializeError {
             error("Failed to serialize event: \(serializeError.localizedDescription)")
+            isSending = false
+            processEventQueue()
         }
     }
 
@@ -816,6 +932,10 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
     }
 
     func enableMicrophone() {
+        if microphoneEnabledSubject.value {
+            log("Microphone already enabled - skipping enable")
+            return
+        }
         stopAndResetAudioPlayback()
         installAudioTap()
         log("Microphone enabled")
@@ -827,6 +947,11 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
     }
 
     func disableMicrophone() {
+        if !microphoneEnabledSubject.value {
+            log("Microphone already disabled - skipping disable")
+            return
+        }
+
         uninstallAudioTap()
 
         // Send prompt to Claude Code if we have one
@@ -868,7 +993,10 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
 
     func createResponse() {
         let responseEvent: [String: Any] = [
-            "type": "response.create"
+            "type": "response.create",
+            "response": [
+                "instructions": "Always respond with only one word, or if not possible, one short sentence using only key words."
+            ]
         ]
         send(event: responseEvent)
         log("Response requested")
