@@ -65,6 +65,8 @@ class Logger: @unchecked Sendable, LoggerProtocol {
     private let macHostname = "Felixs-MacBook-Pro.local"
     private let port: UInt16 = 8082
     private var dataBuffer = Data()
+    private var totalBytesReceived: Int = 0
+    private var totalBytesSentToMac: Int = 0
     private let tcpProcessingQueue = DispatchQueue(label: "logger.tcp.processing", qos: .userInitiated)
 
     let logsSubject = CurrentValueSubject<[LogMessage], Never>([])
@@ -85,6 +87,8 @@ class Logger: @unchecked Sendable, LoggerProtocol {
         connection.stateUpdateHandler = { state in
             switch state {
             case .ready:
+                self.totalBytesReceived = 0
+                self.totalBytesSentToMac = 0
                 self.startReceiving()
                 self.sendStartMessage()
             case .failed(let error):
@@ -143,25 +147,36 @@ class Logger: @unchecked Sendable, LoggerProtocol {
         logsSubject.send(currentLogs)
     }
 
-    private func sendLog(_ logMessage: LogMessage) {
+    private func sendMessage(_ data: Data, messageType: String, logMessage: String? = nil) {
         tcpProcessingQueue.async { [weak self] in
             guard let self = self else { return }
 
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-
-            var jsonData = try! encoder.encode(logMessage)
-
+            var jsonData = data
             jsonData.append("\n".data(using: .utf8)!)
 
-            debugLog(id: "sendLog", message: "Sending to Mac server: \(logMessage.message) (ID: \(logMessage.id))")
+            self.totalBytesSentToMac += jsonData.count
+
+            debugLog(id: "macos-outgoing",
+                    message: "📤 [iOS → macOS] Type: \(messageType) | Size: \(jsonData.count.formattedBytes) | Total sent: \(self.totalBytesSentToMac.formattedBytes)")
+
+            if let logMessage = logMessage {
+                log(logMessage)
+            }
 
             self.connection.send(content: jsonData, completion: .contentProcessed { error in
                 if let error = error {
-                    fatalError("Failed to send log: \(error)")
+                    fatalError("Failed to send \(messageType): \(error)")
                 }
             })
         }
+    }
+
+    private func sendLog(_ logMessage: LogMessage) {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let jsonData = try! encoder.encode(logMessage)
+
+        sendMessage(jsonData, messageType: "log")
     }
 
     private func startReceiving() {
@@ -185,8 +200,16 @@ class Logger: @unchecked Sendable, LoggerProtocol {
     }
 
     private func handleIncomingData(_ data: Data) {
+        // Append the new data
         dataBuffer.append(data)
-        debugLog(id: "tcp-buffer", message: "Buffer size: \(dataBuffer.count) bytes after appending \(data.count) bytes")
+
+        // Update total bytes received since connection started
+        totalBytesReceived += data.count
+
+        // Log format: Show only sizes
+        debugLog(id: "tcp-buffer",
+                 message: "📥 TCP | Size: \(data.count.formattedBytes) | Buffer: \(dataBuffer.count.formattedBytes) | Total: \(totalBytesReceived.formattedBytes)")
+
         processAllBufferedMessages()
     }
 
@@ -211,12 +234,18 @@ class Logger: @unchecked Sendable, LoggerProtocol {
         }
 
         if messagesProcessed > 0 {
-            debugLog(id: "tcp-process", message: "Processed \(messagesProcessed) messages, \(dataBuffer.count) bytes remaining in buffer")
+            debugLog(id: "tcp-process", message: "Processed \(messagesProcessed) messages, \(dataBuffer.count.formattedBytes) remaining in buffer")
         }
     }
 
     private func routeIncomingMessage(_ jsonData: [String: Any]) {
         let messageType = jsonData["type"] as! String
+
+        let jsonBytes = try! JSONSerialization.data(withJSONObject: jsonData)
+        let messageSize = jsonBytes.count
+
+        debugLog(id: "macos-incoming",
+                message: "📥 [macOS → iOS] Type: \(messageType) | Size: \(messageSize.formattedBytes) | Total received: \(totalBytesReceived.formattedBytes) | Content: \(jsonData)")
 
         switch messageType {
         case "ack":
@@ -285,44 +314,23 @@ class Logger: @unchecked Sendable, LoggerProtocol {
     }
 
     private func sendStartMessage() {
-        tcpProcessingQueue.async { [weak self] in
-            guard let self = self else { return }
+        let startMessage = ["type": "start"] as [String: Any]
+        let jsonData = try! JSONSerialization.data(withJSONObject: startMessage)
 
-            let startMessage = ["type": "start"] as [String: Any]
-            var jsonData = try! JSONSerialization.data(withJSONObject: startMessage)
-
-            jsonData.append("\n".data(using: .utf8)!)
-
-            self.connection.send(content: jsonData, completion: .contentProcessed { error in
-                if let error = error {
-                    fatalError("Failed to send start message: \(error)")
-                }
-            })
-        }
+        sendMessage(jsonData, messageType: "start", logMessage: "📤 [iOS → macOS] Sending start message")
     }
 
     func sendPromptToMac(_ prompt: String, category: String) {
-        tcpProcessingQueue.async { [weak self] in
-            guard let self = self else { return }
+        let promptMessage: [String: Any] = [
+            "type": "prompt",
+            "prompt": prompt,
+            "category": category,
+            "timestamp": Date().timeIntervalSince1970
+        ]
 
-            let promptMessage: [String: Any] = [
-                "type": "prompt",
-                "prompt": prompt,
-                "category": category,
-                "timestamp": Date().timeIntervalSince1970
-            ]
+        let jsonData = try! JSONSerialization.data(withJSONObject: promptMessage)
 
-            var jsonData = try! JSONSerialization.data(withJSONObject: promptMessage)
-            jsonData.append("\n".data(using: .utf8)!)
-
-            self.connection.send(content: jsonData, completion: .contentProcessed { error in
-                if let error = error {
-                    fatalError("Failed to send prompt to Mac: \(error)")
-                } else {
-                    log("Sent prompt to Mac server: \(prompt)")
-                }
-            })
-        }
+        sendMessage(jsonData, messageType: "prompt", logMessage: "📤 [iOS → macOS] Sending prompt: \(prompt)")
     }
 }
 

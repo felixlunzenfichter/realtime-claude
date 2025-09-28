@@ -28,6 +28,8 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
     let microphoneEnabledSubject = CurrentValueSubject<Bool, Never>(false)
     let playingAudioSubject = CurrentValueSubject<Bool, Never>(false)
     let lastPromptSubject = CurrentValueSubject<String, Never>("")
+    private var totalBytesSent: Int = 0
+    private var totalBytesReceived: Int = 0
 
     override init() {
         super.init()
@@ -97,10 +99,10 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
             case .success(let message):
                 switch message {
                 case .data(let data):
-                    debugLog(id: "ws-data", message: "Received data message: \(data.count) bytes")
+                    debugLog(id: "receivedDataFromRealTimeAPI", message: "Received data message")
                     self.handleDataMessage(data)
                 case .string(let text):
-                    debugLog(id: "ws-text", message: "Received text message")
+                    debugLog(id: "receivedTextFromRealTimeAPI", message: "Received text message")
                     self.handleTextMessage(text)
                 @unknown default:
                     error("Received unknown message type")
@@ -118,7 +120,7 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
         if let text = String(data: data, encoding: .utf8) {
             handleTextMessage(text)
         } else {
-            error("Binary data received: \(data.count) bytes - cannot process")
+            error("Binary data received: \(data.count.formattedBytes) - cannot process")
         }
     }
 
@@ -131,6 +133,13 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
             error("Message missing 'type' field: \(text)")
             return
         }
+
+        // Update total bytes received
+        let messageSize = text.data(using: .utf8)?.count ?? 0
+        totalBytesReceived += messageSize
+
+        debugLog(id: "receivedFromRealTime",
+                message: "Received \(type) of size \(messageSize.formattedBytes) (total: \(totalBytesReceived.formattedBytes))")
 
         switch type {
         case "session.created":
@@ -207,6 +216,8 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
 
     func handleSessionCreated() {
         log("WebSocket connection established")
+        totalBytesSent = 0
+        totalBytesReceived = 0
         sendSessionUpdate()
         startAudioCapture()
     }
@@ -595,8 +606,13 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
             let eventType = event["type"] as? String ?? "unknown"
 
             if eventType != "input_audio_buffer.append" {
-                debugLog(id: "send-event", message: "Sending event: \(eventType)")
+                log("Sending event: \(eventType)")
             }
+
+            // Track size for all events
+            totalBytesSent += data.count
+            debugLog(id: "sendToRealTime",
+                     message: "Sending event: \(eventType), size: \(data.count.formattedBytes), total sent: \(totalBytesSent.formattedBytes)")
 
             webSocketTask.send(message) { sendError in
                 if let sendError = sendError {

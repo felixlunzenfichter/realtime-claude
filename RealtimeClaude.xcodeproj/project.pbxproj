@@ -11,6 +11,7 @@
 		B316EC052D3454C000205806 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = B316EC052D3454C000205807 /* Logger.swift */; };
 		B316EC062D3454C000205808 /* LogListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B316EC062D3454C000205809 /* LogListView.swift */; };
 		B316EC072D3454C000205810 /* RealtimeAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = B316EC072D3454C000205811 /* RealtimeAPI.swift */; };
+		B316EC082D3454C000205812 /* ByteFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B316EC082D3454C000205813 /* ByteFormatter.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -19,6 +20,7 @@
 		B316EC052D3454C000205807 /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
 		B316EC062D3454C000205809 /* LogListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogListView.swift; sourceTree = "<group>"; };
 		B316EC072D3454C000205811 /* RealtimeAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeAPI.swift; sourceTree = "<group>"; };
+		B316EC082D3454C000205813 /* ByteFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ByteFormatter.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -55,6 +57,7 @@
 				B316EC052D3454C000205807 /* Logger.swift */,
 				B316EC062D3454C000205809 /* LogListView.swift */,
 				B316EC072D3454C000205811 /* RealtimeAPI.swift */,
+				B316EC082D3454C000205813 /* ByteFormatter.swift */,
 			);
 			path = RealtimeClaude;
 			sourceTree = "<group>";
@@ -131,6 +134,7 @@
 				B316EC052D3454C000205806 /* Logger.swift in Sources */,
 				B316EC062D3454C000205808 /* LogListView.swift in Sources */,
 				B316EC072D3454C000205810 /* RealtimeAPI.swift in Sources */,
+				B316EC082D3454C000205812 /* ByteFormatter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -215,8 +219,8 @@
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = NO;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				"INFOPLIST_KEY_UISupportedInterfaceOrientations~ipad" = UIInterfaceOrientationPortrait;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
