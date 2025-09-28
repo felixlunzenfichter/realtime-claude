@@ -245,90 +245,7 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
     }
 
     func handleResponseDoneEvent(_ json: [String: Any]) {
-        guard let response = json["response"] as? [String: Any] else {
-            error("response.done event missing 'response' field")
-            return
-        }
-
-        guard let outputs = response["output"] as? [[String: Any]] else {
-            error("response.done event missing 'output' array in response")
-            return
-        }
-
-        for (outputIndex, output) in outputs.enumerated() {
-            guard let toolCalls = output["tool_calls"] as? [[String: Any]] else {
-                debugLog(id: "responseDone", message: "⚙️ [WS] Output \(outputIndex) has no tool_calls")
-                continue
-            }
-
-            for (callIndex, call) in toolCalls.enumerated() {
-                guard let callType = call["type"] as? String else {
-                    error("Tool call \(callIndex) missing 'type' field")
-                    continue
-                }
-
-                guard callType == "function" else {
-                    debugLog(id: "responseDone", message: "⚙️ [WS] Tool call \(callIndex) type: \(callType)")
-                    continue
-                }
-
-                guard let functionName = call["function"] as? [String: Any] else {
-                    error("Function call \(callIndex) missing 'function' field")
-                    continue
-                }
-
-                guard let name = functionName["name"] as? String else {
-                    error("Function call \(callIndex) missing 'name' in function")
-                    continue
-                }
-
-                guard name == "createPrompt" else {
-                    debugLog(id: "responseDone", message: "⚙️ [WS] Function call \(callIndex): \(name)")
-                    continue
-                }
-
-                guard let arguments = functionName["arguments"] as? String else {
-                    error("createPrompt function missing 'arguments' string")
-                    continue
-                }
-
-                // Parse the JSON arguments string
-                guard let data = arguments.data(using: .utf8) else {
-                    error("Failed to convert createPrompt arguments to data: \(arguments)")
-                    continue
-                }
-
-                do {
-                    guard let args = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                        error("createPrompt arguments is not a dictionary: \(arguments)")
-                        continue
-                    }
-
-                    guard let prompt = args["prompt"] as? String else {
-                        error("createPrompt arguments missing 'prompt' field: \(args)")
-                        continue
-                    }
-
-                    log("createPrompt function called with prompt: \(prompt)")
-
-                    // Update the UI with the prompt
-                    lastPromptSubject.send(prompt)
-
-                    // TODO: Will send to Claude Code when device is tilted
-                    // sendPromptToClaudeCode(prompt, category: "general")
-
-                    // Send function call result if there's a call_id
-                    if let callId = call["id"] as? String {
-                        sendFunctionCallResult(callId: callId, result: ["status": "success", "message": "Prompt captured"])
-                        log("Sent function call result for call_id: \(callId)")
-                    } else {
-                        error("createPrompt function call missing 'id' field - cannot send result")
-                    }
-                } catch let parseError {
-                    error("Failed to parse createPrompt arguments JSON: \(parseError.localizedDescription), arguments: \(arguments)")
-                }
-            }
-        }
+        log("Response done event received: \(json)")
     }
 
     func handleResponseAudioDelta(_ json: [String: Any]) {
@@ -344,31 +261,7 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
     }
 
     func handleResponseTextDone(_ json: [String: Any]) {
-        guard let text = json["text"] as? String else {
-            error("response.text.done missing 'text' field")
-            return
-        }
-
-        log("Text response completed: \(text)")
-
-        // Check if this looks like a function call response
-        if text.contains("mcp={") && text.contains("\"prompt\":") {
-            // Extract the prompt from the text
-            if let startIndex = text.range(of: "\"prompt\": \"")?.upperBound,
-               let endIndex = text[startIndex...].range(of: "\"")?.lowerBound {
-                let prompt = String(text[startIndex..<endIndex])
-
-                log("Extracted prompt from text response: \(prompt)")
-
-                // Update the UI with the prompt
-                lastPromptSubject.send(prompt)
-
-                // TODO: Will send to Claude Code when device is tilted
-                // sendPromptToClaudeCode(prompt, category: "general")
-            } else {
-                error("Failed to extract prompt from text response: \(text)")
-            }
-        }
+        log("Response text done received: \(json)")
     }
 
     func handleOutputTextDone(_ json: [String: Any]) {
@@ -376,8 +269,6 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
             error("response.output_text.done missing 'text' field")
             return
         }
-
-        log("Text output completed: \(text)")
 
         // Try to extract prompt from JSON text output
         if let textData = text.data(using: .utf8),
@@ -387,69 +278,13 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
 
             // Update the UI with the prompt directly (no formatting)
             lastPromptSubject.send(prompt)
-
-            // TODO: Will send to Claude Code when device is tilted
-            // sendPromptToClaudeCode(prompt, category: "general")
         } else {
-            debugLog(id: "textParse", message: "⚙️ [WS] Text output not JSON with prompt")
+            error("Failed to extract prompt from text output: \(text)")
         }
     }
 
     func handleFunctionCallArgumentsDone(_ json: [String: Any]) {
-        guard let name = json["name"] as? String else {
-            error("Function call missing name")
-            return
-        }
-
-        guard let callId = json["call_id"] as? String else {
-            error("Function call missing call_id")
-            return
-        }
-
-        guard let argumentsString = json["arguments"] as? String,
-              let argumentsData = argumentsString.data(using: .utf8),
-              let arguments = try? JSONSerialization.jsonObject(with: argumentsData) as? [String: Any] else {
-            error("Function call missing or invalid arguments")
-            return
-        }
-
-        if name == "createPrompt" {
-            if let prompt = arguments["prompt"] as? String {
-                log("createPrompt function called with prompt: \(prompt)")
-
-                // Update the UI with the prompt
-                lastPromptSubject.send(prompt)
-
-                // TODO: Will send to Claude Code when device is tilted
-                // sendPromptToClaudeCode(prompt, category: "general")
-
-                // Send function call result back to the API
-                sendFunctionCallResult(callId: callId, result: ["status": "success", "message": "Prompt captured"])
-
-                log("Function call result sent - NOT sending response.create to avoid duplicate")
-            } else {
-                error("createPrompt function missing 'prompt' in arguments")
-            }
-        } else {
-            error("Unknown function called: \(name)")
-        }
-    }
-
-    func sendPromptToClaudeCode(_ prompt: String, category: String) {
-        guard !prompt.isEmpty else {
-            error("Cannot send empty prompt to Claude Code")
-            return
-        }
-
-        guard !category.isEmpty else {
-            error("Cannot send prompt with empty category to Claude Code")
-            return
-        }
-
-        log("Sending prompt to Claude Code: [\(category)] \(prompt)")
-
-        // Send through Logger's TCP connection to Mac
-        Logger.shared.sendPromptToMac(prompt, category: category)
+        log("Function call arguments done received: \(json)")
     }
 
     func callCreatePromptFunction() {
@@ -832,12 +667,12 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
     }
 
     func enableMicrophone() {
-        stopAndResetAudioPlayback()
+        stopPlayback()
         installAudioTap()
         log("Microphone enabled")
     }
 
-    func stopAndResetAudioPlayback() {
+    func stopPlayback() {
         playingAudioSubject.send(false)
         responsePlayerNode?.stop()
     }
