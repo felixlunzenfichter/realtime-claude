@@ -156,8 +156,8 @@ class Logger: @unchecked Sendable, LoggerProtocol {
 
             self.totalBytesSentToMac += jsonData.count
 
-            debugLog(id: "macos-outgoing",
-                    message: "📤 [iOS → macOS] Type: \(messageType) | Size: \(jsonData.count.formattedBytes) | Total sent: \(self.totalBytesSentToMac.formattedBytes)")
+            debugLog(id: "macosOutgoing",
+                    message: "📤 [iOS→macOS] Sending \(messageType): \(jsonData.count.formattedBytes) (total: \(self.totalBytesSentToMac.formattedBytes))")
 
             if let logMessage = logMessage {
                 log(logMessage)
@@ -207,8 +207,8 @@ class Logger: @unchecked Sendable, LoggerProtocol {
         totalBytesReceived += data.count
 
         // Log format: Show only sizes
-        debugLog(id: "tcp-buffer",
-                 message: "📥 TCP | Size: \(data.count.formattedBytes) | Buffer: \(dataBuffer.count.formattedBytes) | Total: \(totalBytesReceived.formattedBytes)")
+        debugLog(id: "tcpBuffer",
+                 message: "📥 [TCP] Buffered packet: \(data.count.formattedBytes) (buffer: \(dataBuffer.count.formattedBytes), total: \(totalBytesReceived.formattedBytes))")
 
         processAllBufferedMessages()
     }
@@ -234,7 +234,7 @@ class Logger: @unchecked Sendable, LoggerProtocol {
         }
 
         if messagesProcessed > 0 {
-            debugLog(id: "tcp-process", message: "Processed \(messagesProcessed) messages, \(dataBuffer.count.formattedBytes) remaining in buffer")
+            debugLog(id: "tcpProcess", message: "⚙️ [TCP] Processed \(messagesProcessed) messages (\(dataBuffer.count.formattedBytes) remaining)")
         }
     }
 
@@ -244,8 +244,8 @@ class Logger: @unchecked Sendable, LoggerProtocol {
         let jsonBytes = try! JSONSerialization.data(withJSONObject: jsonData)
         let messageSize = jsonBytes.count
 
-        debugLog(id: "macos-incoming",
-                message: "📥 [macOS → iOS] Type: \(messageType) | Size: \(messageSize.formattedBytes) | Total received: \(totalBytesReceived.formattedBytes) | Content: \(jsonData)")
+        debugLog(id: "macosIncoming",
+                message: "📥 [macOS→iOS] Received \(messageType): \(messageSize.formattedBytes) (total: \(totalBytesReceived.formattedBytes))")
 
         switch messageType {
         case "ack":
@@ -261,7 +261,7 @@ class Logger: @unchecked Sendable, LoggerProtocol {
 
     private func handleAckMessage(_ jsonData: [String: Any]) {
         let logId = jsonData["logId"] as! String
-        debugLog(id: "ack", message: "Received ACK from Mac server for log ID: \(logId)")
+        debugLog(id: "ackReceived", message: "✅ [TCP] ACK received for log: \(logId)")
         acknowledgeTransmission(for: logId)
     }
 

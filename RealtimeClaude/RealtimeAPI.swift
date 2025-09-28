@@ -99,10 +99,10 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
             case .success(let message):
                 switch message {
                 case .data(let data):
-                    debugLog(id: "receivedDataFromRealTimeAPI", message: "Received data message")
+                    debugLog(id: "receivedDataFromRealtime", message: "📥 [WS] Received data message")
                     self.handleDataMessage(data)
                 case .string(let text):
-                    debugLog(id: "receivedTextFromRealTimeAPI", message: "Received text message")
+                    debugLog(id: "receivedTextFromRealtime", message: "📥 [WS] Received text message")
                     self.handleTextMessage(text)
                 @unknown default:
                     error("Received unknown message type")
@@ -138,8 +138,8 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
         let messageSize = text.data(using: .utf8)?.count ?? 0
         totalBytesReceived += messageSize
 
-        debugLog(id: "receivedFromRealTime",
-                message: "Received \(type) of size \(messageSize.formattedBytes) (total: \(totalBytesReceived.formattedBytes))")
+        debugLog(id: "receivedFromRealtime",
+                message: "📥 [WS] Received \(type): \(messageSize.formattedBytes) (total: \(totalBytesReceived.formattedBytes))")
 
         switch type {
         case "session.created":
@@ -163,13 +163,13 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
         case "response.function_call_arguments.done":
             handleFunctionCallArgumentsDone(json)
         case "response.function_call_arguments.delta":
-            debugLog(id: "function-args-delta", message: "Receiving function call arguments...")
+            debugLog(id: "functionArgsDelta", message: "⚙️ [WS] Receiving function arguments")
         case "response.output_text.delta":
-            debugLog(id: "text-delta", message: "Receiving text output...")
+            debugLog(id: "textDelta", message: "⚙️ [WS] Receiving text output")
         case "response.output_text.done":
             handleOutputTextDone(json)
         case "conversation.item.added":
-            debugLog(id: "conversation-item", message: "Conversation item added")
+            debugLog(id: "conversationItem", message: "✅ [WS] Conversation item added")
         case "response.output_audio.delta":
             // This is the actual audio data event (different from response.audio.delta)
             if let audioBase64 = json["delta"] as? String {
@@ -179,14 +179,14 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
             log("Audio output completed")
         case "response.output_audio_transcript.delta":
             if let delta = json["delta"] as? String {
-                debugLog(id: "transcript-delta", message: "Transcript delta: \(delta)")
+                debugLog(id: "transcriptDelta", message: "📥 [WS] Transcript delta: \(delta)")
             }
         case "response.output_audio_transcript.done":
             if let transcript = json["transcript"] as? String {
                 log("Final transcript: \(transcript)")
             }
         case "conversation.item.done":
-            debugLog(id: "conversation", message: "Conversation item completed")
+            debugLog(id: "conversationComplete", message: "✅ [WS] Conversation item completed")
         case "session.updated", "conversation.item.created", "response.output_item.added", "response.content_part.added", "response.audio.done", "response.audio_transcript.done", "response.content_part.done", "response.output_item.done", "rate_limits.updated", "conversation.item.input_audio_transcription.delta", "conversation.item.input_audio_transcription.completed", "response.audio_transcript.delta", "response.function_call_arguments.delta":
             break
         case "error":
@@ -257,7 +257,7 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
 
         for (outputIndex, output) in outputs.enumerated() {
             guard let toolCalls = output["tool_calls"] as? [[String: Any]] else {
-                debugLog(id: "response-done", message: "Output \(outputIndex) has no tool_calls")
+                debugLog(id: "responseDone", message: "⚙️ [WS] Output \(outputIndex) has no tool_calls")
                 continue
             }
 
@@ -268,7 +268,7 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
                 }
 
                 guard callType == "function" else {
-                    debugLog(id: "response-done", message: "Tool call \(callIndex) is not a function: \(callType)")
+                    debugLog(id: "responseDone", message: "⚙️ [WS] Tool call \(callIndex) type: \(callType)")
                     continue
                 }
 
@@ -283,7 +283,7 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
                 }
 
                 guard name == "createPrompt" else {
-                    debugLog(id: "response-done", message: "Function call \(callIndex) is not createPrompt: \(name)")
+                    debugLog(id: "responseDone", message: "⚙️ [WS] Function call \(callIndex): \(name)")
                     continue
                 }
 
@@ -339,7 +339,7 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
 
     func handleResponseTextDelta(_ json: [String: Any]) {
         if let delta = json["delta"] as? String {
-            debugLog(id: "text-delta", message: "Received text delta: \(delta)")
+            debugLog(id: "textDelta", message: "📥 [WS] Text delta: \(delta)")
         }
     }
 
@@ -391,7 +391,7 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
             // TODO: Will send to Claude Code when device is tilted
             // sendPromptToClaudeCode(prompt, category: "general")
         } else {
-            debugLog(id: "text-parse", message: "Text output is not JSON with prompt field")
+            debugLog(id: "textParse", message: "⚙️ [WS] Text output not JSON with prompt")
         }
     }
 
@@ -611,8 +611,8 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
 
             // Track size for all events
             totalBytesSent += data.count
-            debugLog(id: "sendToRealTime",
-                     message: "Sending event: \(eventType), size: \(data.count.formattedBytes), total sent: \(totalBytesSent.formattedBytes)")
+            debugLog(id: "sendToRealtime",
+                     message: "📤 [WS] Sending \(eventType): \(data.count.formattedBytes) (total: \(totalBytesSent.formattedBytes))")
 
             webSocketTask.send(message) { sendError in
                 if let sendError = sendError {
@@ -685,7 +685,7 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
             if self.microphoneEnabledSubject.value {
                 self.processInputAudioBuffer(buffer)
             } else {
-                debugLog(id: "input-audio", message: "Ignoring input audio buffer - microphone disabled")
+                debugLog(id: "inputAudio", message: "⛔ [Audio] Microphone disabled, ignoring buffer")
             }
         }
         
@@ -786,7 +786,7 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
 
     func scheduleResponseAudio(_ audioBase64: String) {
         if !playingAudioSubject.value {
-            debugLog(id: "schedule-audio", message: "Not scheduling response audio - playback disabled")
+            debugLog(id: "scheduleAudio", message: "⛔ [Audio] Playback disabled, skipping audio")
             return
         }
 

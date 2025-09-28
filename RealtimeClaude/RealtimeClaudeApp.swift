@@ -188,30 +188,30 @@ class WorkViewModel {
             if !self.microphoneOverride {
                 if self.isFirstMotionUpdate {
                     if pitchDegrees < -45 {
-                        debugLog(id: "tilt", message: "Initial: Device tilted down > 45° (\(Int(pitchDegrees))°) - enabling microphone")
+                        debugLog(id: "deviceTilt", message: "📱 [Motion] Initial tilt detected: \(Int(pitchDegrees))° (enabling mic)")
                         log("Device tilted down > 45 degrees - enabling microphone")
                         RealtimeAPI.shared.enableMicrophone()
                         self.isFirstMotionUpdate = false
                     } else {
-                        debugLog(id: "tilt", message: "Initial: Device not tilted (\(Int(pitchDegrees))°) - microphone disabled")
+                        debugLog(id: "deviceTilt", message: "📱 [Motion] Initial position: \(Int(pitchDegrees))° (mic disabled)")
                     }
                 } else {
                     if pitchDegrees < -45 && !self.isMicrophoneEnabled {
-                        debugLog(id: "tilt", message: "Device tilted down > 45° (\(Int(pitchDegrees))°) - enabling microphone")
+                        debugLog(id: "deviceTilt", message: "📱 [Motion] Tilted down: \(Int(pitchDegrees))° (enabling mic)")
                         log("Device tilted down > 45 degrees - enabling microphone")
                         RealtimeAPI.shared.enableMicrophone()
                     } else if pitchDegrees > -45 && self.isMicrophoneEnabled {
-                        debugLog(id: "tilt", message: "Device tilted back < 45° (\(Int(pitchDegrees))°) - disabling microphone")
+                        debugLog(id: "deviceTilt", message: "📱 [Motion] Tilted back: \(Int(pitchDegrees))° (disabling mic)")
                         log("Device tilted back - disabling microphone")
                         RealtimeAPI.shared.disableMicrophone()
                     } else if pitchDegrees < -45 && self.isMicrophoneEnabled {
-                        debugLog(id: "tilt", message: "Device still tilted (\(Int(pitchDegrees))°) - microphone remains enabled")
+                        debugLog(id: "deviceTilt", message: "📱 [Motion] Still tilted: \(Int(pitchDegrees))° (mic enabled)")
                     } else {
-                        debugLog(id: "tilt", message: "Device still not tilted (\(Int(pitchDegrees))°) - microphone remains disabled")
+                        debugLog(id: "deviceTilt", message: "📱 [Motion] Still upright: \(Int(pitchDegrees))° (mic disabled)")
                     }
                 }
             } else {
-                debugLog(id: "tilt", message: "Tilt detection disabled - microphone override is ON")
+                debugLog(id: "deviceTilt", message: "⛔ [Motion] Tilt detection disabled (override ON)")
             }
         }
     }
