@@ -31,6 +31,7 @@ private class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
     let lastPromptSubject = CurrentValueSubject<String, Never>("")
     private var totalBytesSent: Int = 0
     private var totalBytesReceived: Int = 0
+    private var scheduledBufferCount: Int = 0
 
     fileprivate override init() {
         super.init()
@@ -642,10 +643,19 @@ private class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
             return
         }
 
-        playerNode.scheduleBuffer(buffer) { [weak self] in
+        scheduledBufferCount += 1
+
+        playerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             guard let self = self else {
                 error("realtimeAPI deallocated during audio playback")
                 return
+            }
+
+            self.scheduledBufferCount -= 1
+
+            if self.scheduledBufferCount == 0 {
+                debugLog(id: "audioPlayback", message: "🎵 [Audio] All buffers finished playing")
+                self.playingAudioSubject.send(false)
             }
         }
     }
@@ -711,6 +721,7 @@ private class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
     func disablePlayback() {
         playbackEnabled = false
         responsePlayerNode?.stop()
+        playingAudioSubject.send(false)
         log("Playback disabled")
     }
 
