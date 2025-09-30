@@ -6,12 +6,17 @@ import Observation
 class LogListViewModel {
     var logs: [LogMessage] = []
     var debugLogs: [(LogMessage, Int)] = []
-    var combinedLogs: [(LogMessage, Int?)] = []
     var transmittedLogIds: [String] = []
     var sessionNumber: Int = 0
     var uptimeToday: Int = 0
     var uptimeTotal: Int = 0
     var totalLogs: Int = 0
+
+    var combinedLogs: [(LogMessage, Int?)] {
+        var combined: [(LogMessage, Int?)] = logs.map { ($0, nil) }
+        combined.append(contentsOf: debugLogs.map { ($0.0, $0.1) })
+        return combined.sorted { $0.0.timestamp > $1.0.timestamp }
+    }
     private var cancellables = Set<AnyCancellable>()
     let realtimeAPI = RealtimeAPI.shared
 
@@ -30,19 +35,6 @@ class LogListViewModel {
         return Int(lastAckLog.timestamp.timeIntervalSince(sessionStart) * 1000)
     }
 
-    var currentSessionTimeFormatted: String {
-        let milliseconds = currentSessionTime
-        let seconds = milliseconds / 1000
-        let minutes = seconds / 60
-        let hours = minutes / 60
-
-        if hours > 0 {
-            return String(format: "%02d:%02d:%02d", hours, minutes % 60, seconds % 60)
-        } else {
-            return String(format: "%02d:%02d", minutes, seconds % 60)
-        }
-    }
-
     var sessionLogsCount: Int {
         transmittedLogIds.count
     }
@@ -53,14 +45,6 @@ class LogListViewModel {
 
     var uptimeTotalTotal: Int {
         uptimeTotal + currentSessionTime
-    }
-
-    var uptimeTodayFormatted: String {
-        formatMilliseconds(uptimeTodayTotal)
-    }
-
-    var uptimeTotalFormatted: String {
-        formatMilliseconds(uptimeTotalTotal)
     }
 
     var todayUptimeColor: Color {
@@ -74,40 +58,14 @@ class LogListViewModel {
         }
     }
 
-    func formatMilliseconds(_ milliseconds: Int) -> String {
-        let seconds = milliseconds / 1000
-        let minutes = seconds / 60
-        let hours = minutes / 60
-
-        if hours > 0 {
-            return String(format: "%dh %dm %ds", hours, minutes % 60, seconds % 60)
-        } else if minutes > 0 {
-            return String(format: "%dm %ds", minutes, seconds % 60)
-        } else {
-            return String(format: "%ds", seconds)
-        }
-    }
-
     init() {
-        setupSubscription(Logger.shared.logsSubject) { [weak self] logs in
-            self?.logs = logs
-            self?.updateCombinedLogs()
-        }
-        setupSubscription(Logger.shared.debugLogsSubject) { [weak self] debugLogs in
-            self?.debugLogs = debugLogs
-            self?.updateCombinedLogs()
-        }
+        setupSubscription(Logger.shared.logsSubject) { self.logs = $0 }
+        setupSubscription(Logger.shared.debugLogsSubject) { self.debugLogs = $0 }
         setupSubscription(Logger.shared.transmittedLogIdsSubject) { self.transmittedLogIds = $0 }
         setupSubscription(Logger.shared.sessionNumberSubject) { self.sessionNumber = $0 }
         setupSubscription(Logger.shared.uptimeTodaySubject) { self.uptimeToday = $0 }
         setupSubscription(Logger.shared.uptimeTotalSubject) { self.uptimeTotal = $0 }
         setupSubscription(Logger.shared.totalLogsSubject) { self.totalLogs = $0 }
-    }
-    
-    func updateCombinedLogs() {
-        var combined: [(LogMessage, Int?)] = logs.map { ($0, nil) }
-        combined.append(contentsOf: debugLogs.map { ($0.0, $0.1) })
-        combinedLogs = combined.sorted { $0.0.timestamp > $1.0.timestamp }
     }
 
     func setupSubscription<T>(_ subject: CurrentValueSubject<T, Never>, updateProperty: @escaping (T) -> Void) {
@@ -133,7 +91,7 @@ struct LogListView: View {
                         Text("Total")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        Text(viewModel.uptimeTotalFormatted)
+                        Text(viewModel.uptimeTotalTotal.formattedMilliseconds)
                             .font(.title3)
                             .fontWeight(.medium)
                             .foregroundColor(.primary)
@@ -157,7 +115,7 @@ struct LogListView: View {
                         Text("Today")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        Text(viewModel.uptimeTodayFormatted)
+                        Text(viewModel.uptimeTodayTotal.formattedMilliseconds)
                             .font(.title3)
                             .fontWeight(.medium)
                             .foregroundColor(viewModel.todayUptimeColor)
@@ -181,7 +139,7 @@ struct LogListView: View {
                         Text("Current")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        Text(viewModel.currentSessionTimeFormatted)
+                        Text(viewModel.currentSessionTime.formattedMilliseconds)
                             .font(.title3)
                             .fontWeight(.medium)
                             .foregroundColor(.blue)
@@ -257,7 +215,7 @@ struct LogRowView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                Text(log.formattedTimestamp)
+                Text(log.timestamp.formattedTimestamp)
                     .font(.caption)
                     .foregroundColor(.secondary)
 

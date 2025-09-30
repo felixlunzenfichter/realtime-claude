@@ -16,7 +16,8 @@ fi
 export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
 
 echo "🚀 Starting Logging System Test & Deploy Sequence..."
-cd /Users/felixlunzenfichter/Documents/realtime-claude
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
 # Step 1: Clean up any existing processes
 echo "🧹 Cleaning up existing processes..."

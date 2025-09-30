@@ -44,15 +44,7 @@ struct LogMessage: Identifiable, Codable, Sendable {
     let fileName: String
     let functionName: String
     let message: String
-    
-    var formattedTimestamp: String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_GB")
-        formatter.timeStyle = .medium
-        formatter.dateStyle = .none
-        return formatter.string(from: timestamp)
-    }
-    
+
     var shortFileName: String {
         URL(fileURLWithPath: fileName).lastPathComponent
     }

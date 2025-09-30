@@ -667,6 +667,10 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
     }
 
     func enableMicrophone() {
+        if microphoneEnabledSubject.value {
+            debugLog(id: "enableMicrophone", message: "⚠️ [Audio] Microphone already enabled, ignoring")
+            return
+        }
         stopPlayback()
         installAudioTap()
         log("Microphone enabled")
