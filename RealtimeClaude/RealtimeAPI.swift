@@ -15,8 +15,9 @@ protocol RealtimeAPIProtocol: Sendable {
     func disablePlayback()
 }
 
-class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
-    static let shared: RealtimeAPIProtocol = RealtimeAPI()
+nonisolated(unsafe) let realtimeAPI: RealtimeAPIProtocol = RealtimeAPI()
+
+private class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
     private var webSocketTask: URLSessionWebSocketTask?
     private var urlSession: URLSession?
     private var apiKey = ""
@@ -31,7 +32,7 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
     private var totalBytesSent: Int = 0
     private var totalBytesReceived: Int = 0
 
-    override init() {
+    fileprivate override init() {
         super.init()
         log("WebSocketManager initialized")
 
@@ -643,7 +644,7 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
 
         playerNode.scheduleBuffer(buffer) { [weak self] in
             guard let self = self else {
-                error("RealtimeAPI deallocated during audio playback")
+                error("realtimeAPI deallocated during audio playback")
                 return
             }
         }
@@ -688,7 +689,7 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
         let currentPrompt = lastPromptSubject.value
         if !currentPrompt.isEmpty {
             log("Sending prompt to Claude Code: \(currentPrompt)")
-            Logger.shared.sendPromptToMac(currentPrompt, category: "general")
+            logger.sendPromptToMac(currentPrompt, category: "general")
 
             // Clear the prompt after sending
             lastPromptSubject.send("")
@@ -747,7 +748,7 @@ class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
     deinit {
         stopAudioCapture()
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
-        log("RealtimeAPI deallocated")
+        log("realtimeAPI deallocated")
     }
 }
 

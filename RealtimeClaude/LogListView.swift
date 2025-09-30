@@ -18,7 +18,6 @@ class LogListViewModel {
         return combined.sorted { $0.0.timestamp > $1.0.timestamp }
     }
     private var cancellables = Set<AnyCancellable>()
-    let realtimeAPI = RealtimeAPI.shared
 
     var sessionStartTime: Date? {
         logs.last?.timestamp
@@ -59,13 +58,13 @@ class LogListViewModel {
     }
 
     init() {
-        setupSubscription(Logger.shared.logsSubject) { self.logs = $0 }
-        setupSubscription(Logger.shared.debugLogsSubject) { self.debugLogs = $0 }
-        setupSubscription(Logger.shared.transmittedLogIdsSubject) { self.transmittedLogIds = $0 }
-        setupSubscription(Logger.shared.sessionNumberSubject) { self.sessionNumber = $0 }
-        setupSubscription(Logger.shared.uptimeTodaySubject) { self.uptimeToday = $0 }
-        setupSubscription(Logger.shared.uptimeTotalSubject) { self.uptimeTotal = $0 }
-        setupSubscription(Logger.shared.totalLogsSubject) { self.totalLogs = $0 }
+        setupSubscription(logger.logsSubject) { self.logs = $0 }
+        setupSubscription(logger.debugLogsSubject) { self.debugLogs = $0 }
+        setupSubscription(logger.transmittedLogIdsSubject) { self.transmittedLogIds = $0 }
+        setupSubscription(logger.sessionNumberSubject) { self.sessionNumber = $0 }
+        setupSubscription(logger.uptimeTodaySubject) { self.uptimeToday = $0 }
+        setupSubscription(logger.uptimeTotalSubject) { self.uptimeTotal = $0 }
+        setupSubscription(logger.totalLogsSubject) { self.totalLogs = $0 }
     }
 
     func setupSubscription<T>(_ subject: CurrentValueSubject<T, Never>, updateProperty: @escaping (T) -> Void) {

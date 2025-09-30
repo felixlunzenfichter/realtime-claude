@@ -50,8 +50,9 @@ struct LogMessage: Identifiable, Codable, Sendable {
     }
 }
 
-class Logger: @unchecked Sendable, LoggerProtocol {
-    nonisolated(unsafe) static let shared: LoggerProtocol = Logger()
+nonisolated(unsafe) let logger: LoggerProtocol = Logger()
+
+private class Logger: @unchecked Sendable, LoggerProtocol {
 
     private let connection: NWConnection
     private let macHostname = "Felixs-MacBook-Pro.local"
@@ -71,7 +72,7 @@ class Logger: @unchecked Sendable, LoggerProtocol {
 
     private var sessionNumber: Int = 0
 
-    private init() {
+    fileprivate init() {
         
         let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(macHostname), port: NWEndpoint.Port(rawValue: port)!)
         connection = NWConnection(to: endpoint, using: .tcp)
@@ -259,7 +260,7 @@ class Logger: @unchecked Sendable, LoggerProtocol {
 
     private func handleHandshakeMessage(_ jsonData: [String: Any]) {
         if let apiKey = jsonData["apiKey"] as? String {
-            RealtimeAPI.shared.connect(apiKey: apiKey)
+            realtimeAPI.connect(apiKey: apiKey)
         }
 
         sessionNumber = jsonData["sessionNumber"] as! Int
@@ -331,7 +332,7 @@ func log(
     file: String = #file,
     function: String = #function
 ) {
-    (Logger.shared as! Logger).addLog(message, type: .log, file: file, function: function)
+    (logger as! Logger).addLog(message, type: .log, file: file, function: function)
 }
 
 func error(
@@ -339,7 +340,7 @@ func error(
     file: String = #file,
     function: String = #function
 ) {
-    (Logger.shared as! Logger).addLog(message, type: .error, file: file, function: function)
+    (logger as! Logger).addLog(message, type: .error, file: file, function: function)
 }
 
 func debugLog(
@@ -348,5 +349,5 @@ func debugLog(
     file: String = #file,
     function: String = #function
 ) {
-    (Logger.shared as! Logger).addDebugLog(id: id, message: message, file: file, function: function)
+    (logger as! Logger).addDebugLog(id: id, message: message, file: file, function: function)
 }
