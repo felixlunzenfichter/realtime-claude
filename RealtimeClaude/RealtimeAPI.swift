@@ -32,6 +32,9 @@ private class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
     private var totalBytesSent: Int = 0
     private var totalBytesReceived: Int = 0
     private var scheduledBufferCount: Int = 0
+    private var responseRequestQueue: [() -> Void] = []
+    private var isResponseActive: Bool = false
+    private let responseQueueThread = DispatchQueue(label: "com.realtimeapi.responsequeue", qos: .userInitiated)
 
     fileprivate override init() {
         super.init()
@@ -248,6 +251,10 @@ private class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
 
     func handleResponseDoneEvent(_ json: [String: Any]) {
         log("Response done event received: \(json)")
+        responseQueueThread.async { [weak self] in
+            self?.isResponseActive = false
+            self?.processNextQueuedRequest()
+        }
     }
 
     func handleResponseAudioDelta(_ json: [String: Any]) {
@@ -290,28 +297,32 @@ private class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
     }
 
     func callCreatePromptFunction() {
-        let responseCreate: [String: Any] = [
-            "type": "response.create",
-            "response": [
-                "instructions": """
-                The user just spoke. Extract what they said and call createPrompt function.
-                Format as numbered task list:
-                1. First task
-                2. Second task
-                3. Third task
+        queueResponseRequest { [weak self] in
+            guard let self = self else { return }
 
-                Keep it concise and action-oriented. Remove filler words.
-                """,
-                "tool_choice": [
-                    "type": "function",
-                    "name": "createPrompt"
-                ],
-                "output_modalities": ["text"]
+            let responseCreate: [String: Any] = [
+                "type": "response.create",
+                "response": [
+                    "instructions": """
+                    The user just spoke. Extract what they said exactly and create a prompt from it as a numbered task list.
+
+                    Keep it concise and action-oriented. Remove filler words.
+
+                    Remember that you are just a prompt generator. Whatever you generate will be executed by a command-line agent. This is an interface to a zero-touch computing platform.
+
+                    Do not ever add anything that the user hasn't said. Never leave anything out that the user has said.
+                    """,
+                    "tool_choice": [
+                        "type": "function",
+                        "name": "createPrompt"
+                    ],
+                    "output_modalities": ["text"]
+                ]
             ]
-        ]
 
-        send(event: responseCreate)
-        log("Requesting createPrompt function call after speech stopped")
+            self.send(event: responseCreate)
+            log("Requesting createPrompt function call after speech stopped")
+        }
     }
 
     func sendFunctionCallResult(callId: String, result: [String: Any]) {
@@ -708,7 +719,7 @@ private class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
         if playbackEnabled {
             responsePlayerNode?.play()
             playingAudioSubject.send(true)
-            createResponse()
+            requestAudioResponse()
         }
         log("Microphone disabled")
     }
@@ -733,12 +744,57 @@ private class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
         log("Audio buffer committed")
     }
 
-    func createResponse() {
-        let responseEvent: [String: Any] = [
-            "type": "response.create"
-        ]
-        send(event: responseEvent)
-        log("Response requested")
+    func requestAudioResponse() {
+        queueResponseRequest { [weak self] in
+            guard let self = self else { return }
+
+            let responseEvent: [String: Any] = [
+                "type": "response.create",
+                "response": [
+                    "instructions": """
+                    Summarize the user's statement into one word. Repeat that one word back.
+
+                    If not possible, summarize into a very short sentence with just keywords.
+
+                    The user should not need to look at the screen and should get the quickest possible feedback that clarifies the model understood everything that the user said.
+                    """,
+                    "output_modalities": ["audio"]
+                ]
+            ]
+            self.send(event: responseEvent)
+            log("Requesting one-word audio acknowledgment")
+        }
+    }
+
+    func queueResponseRequest(_ request: @escaping () -> Void) {
+        responseQueueThread.async { [weak self] in
+            guard let self = self else { return }
+
+            if self.isResponseActive {
+                debugLog(id: "responseQueue", message: "⏸️ [Queue] Response in progress, queueing request (queue size: \(self.responseRequestQueue.count))")
+                self.responseRequestQueue.append(request)
+            } else {
+                debugLog(id: "responseQueue", message: "▶️ [Queue] No active response, executing immediately")
+                self.isResponseActive = true
+                request()
+            }
+        }
+    }
+
+    func processNextQueuedRequest() {
+        responseQueueThread.async { [weak self] in
+            guard let self = self else { return }
+
+            guard !self.responseRequestQueue.isEmpty else {
+                debugLog(id: "responseQueue", message: "✅ [Queue] Empty, no pending requests")
+                return
+            }
+
+            let nextRequest = self.responseRequestQueue.removeFirst()
+            debugLog(id: "responseQueue", message: "⏭️ [Queue] Processing next request (remaining: \(self.responseRequestQueue.count))")
+            self.isResponseActive = true
+            nextRequest()
+        }
     }
 
     func disconnect() {
