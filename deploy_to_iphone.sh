@@ -39,6 +39,19 @@ fi
 echo "✅ Node.js: $(node --version)"
 echo "✅ npm: $(npm --version)"
 
+# Check for chokidar module
+echo "🔍 Checking for chokidar module..."
+if ! npm list chokidar >/dev/null 2>&1; then
+    echo "❌ FATAL: chokidar module is not installed!"
+    echo ""
+    echo "📦 To fix this, run:"
+    echo "   npm install"
+    echo ""
+    echo "This will install all dependencies including chokidar."
+    exit 1
+fi
+echo "✅ chokidar module is installed"
+
 # Step 4: Start the test system in background
 echo "🧪 Starting logging system test..."
 node test-system.js &
@@ -85,8 +98,8 @@ else
     TEAM_ARGS=""
 fi
 
-/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild clean -project RealtimeClaude.xcodeproj -scheme RealtimeClaude -destination "platform=iOS,id=$DEVICE_ID"
-/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild build -project RealtimeClaude.xcodeproj -scheme RealtimeClaude -destination "platform=iOS,id=$DEVICE_ID" -allowProvisioningUpdates -allowProvisioningDeviceRegistration CODE_SIGN_IDENTITY="Apple Development" CODE_SIGNING_REQUIRED=YES $TEAM_ARGS
+/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild clean -project RealtimeClaude.xcodeproj -scheme RealtimeClaude -destination "platform=iOS,id=$DEVICE_ID" TARGETED_DEVICE_FAMILY=1
+/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild build -project RealtimeClaude.xcodeproj -scheme RealtimeClaude -destination "platform=iOS,id=$DEVICE_ID" -allowProvisioningUpdates -allowProvisioningDeviceRegistration CODE_SIGN_IDENTITY="Apple Development" CODE_SIGNING_REQUIRED=YES TARGETED_DEVICE_FAMILY=1 $TEAM_ARGS
 
 # Find the built .app in DerivedData
 APP_PATH="/Users/felixlunzenfichter/Library/Developer/Xcode/DerivedData/RealtimeClaude-bbutrzksxnlhcedrvawihvkjxxkh/Build/Products/Debug-iphoneos/RealtimeClaude.app"
