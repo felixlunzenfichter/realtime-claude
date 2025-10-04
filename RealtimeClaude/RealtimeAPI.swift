@@ -173,10 +173,6 @@ private class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
             handleFunctionCallArgumentsDone(json)
         case "response.output_text.delta":
             debugLog(id: "textDelta", message: "⚙️ [WS] Receiving text output")
-        case "response.output_text.done":
-            handleOutputTextDone(json)
-        case "conversation.item.created":
-            handleConversationItemCreated(json)
         case "conversation.item.added":
             handleConversationItemAdded(json)
         case "response.output_audio.delta":
@@ -268,65 +264,7 @@ private class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
     }
 
     func handleResponseDoneEvent(_ json: [String: Any]) {
-        guard let response = json["response"] as? [String: Any] else {
-            error("response.done missing 'response' field")
-            return
-        }
-
-        guard let output = response["output"] as? [[String: Any]] else {
-            error("response.done missing 'output' array")
-            return
-        }
-
-        for item in output {
-            guard let content = item["content"] as? [[String: Any]] else {
-                error("response.done output item missing 'content' array")
-                continue
-            }
-
-            for contentItem in content {
-                guard let contentType = contentItem["type"] as? String else {
-                    error("response.done content item missing 'type' field")
-                    continue
-                }
-
-                if contentType == "output_text" {
-                    guard let text = contentItem["text"] as? String else {
-                        error("response.done text content missing 'text' field")
-                        continue
-                    }
-
-                    // Try to extract prompt from JSON text output
-                    if let textData = text.data(using: .utf8),
-                       let jsonObject = try? JSONSerialization.jsonObject(with: textData) as? [String: Any],
-                       let prompt = jsonObject["prompt"] as? String {
-
-                        // Update the UI with the prompt
-                        lastPromptSubject.send(prompt)
-
-                        // Log only the prompt update
-                        log("Updated prompt with: \(prompt)")
-                    } else {
-                        error("Output text does not contain a valid prompt: \(text)")
-                    }
-
-                    // Always complete and return for output_text
-                    markResponseComplete()
-                    return
-                } else if contentType == "output_audio" {
-                    // Handle audio responses with transcript
-                    if let transcript = contentItem["transcript"] as? String {
-                        log("Audio response transcript: \(transcript)")
-                    }
-                    markResponseComplete()
-                    return
-                } else {
-                    error("Unexpected content type: \(contentType)")
-                    markResponseComplete()
-                    return
-                }
-            }
-        }
+        log("response.done received (function calls handled in handleFunctionCallArgumentsDone)")
     }
 
     func markResponseComplete() {
@@ -380,15 +318,6 @@ private class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
         markResponseComplete()
     }
 
-    func handleOutputTextDone(_ json: [String: Any]) {
-        guard let text = json["text"] as? String else {
-            error("response.output_text.done missing 'text' field")
-            return
-        }
-
-        log("response.output_text.done event received with text: \(text)")
-    }
-
     fileprivate var currentFunctionCallId: String?
 
     func handleResponseOutputItemAdded(_ json: [String: Any]) {
@@ -425,47 +354,8 @@ private class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
         }
     }
 
-    func handleConversationItemCreated(_ json: [String: Any]) {
-        log("conversation.item.created received: \(json)")
-
-        guard let item = json["item"] as? [String: Any] else {
-            error("conversation.item.created missing 'item' field")
-            return
-        }
-
-        guard let itemType = item["type"] as? String else {
-            error("conversation.item.created item missing 'type' field")
-            return
-        }
-
-        log("Item type: \(itemType)")
-
-        if itemType == "function_call" {
-            guard let callId = item["call_id"] as? String else {
-                error("function_call item missing 'call_id' field")
-                return
-            }
-
-            currentFunctionCallId = callId
-            log("✅ Stored function call_id from function_call item: \(callId)")
-
-            if let name = item["name"] as? String {
-                log("Function name: \(name)")
-            }
-
-            if let arguments = item["arguments"] as? String {
-                log("Function arguments: \(arguments)")
-            }
-        }
-    }
-
     func handleConversationItemAdded(_ json: [String: Any]) {
         log("conversation.item.added received: \(json)")
-
-        if let eventId = json["event_id"] as? String {
-            currentFunctionCallId = eventId
-            log("Stored event_id as function call identifier: \(eventId)")
-        }
     }
 
     func callCreatePromptFunction() {
