@@ -247,12 +247,7 @@ private class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
 
     func handleSpeechStopped() {
         log("Voice activity detection stopped")
-
-        guard microphoneEnabledSubject.value else {
-            log("Ignoring speech event - microphone disabled")
-            return
-        }
-
+        // Request the model to extract the user's speech and call createPrompt function
         callCreatePromptFunction()
     }
 

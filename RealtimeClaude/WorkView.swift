@@ -92,7 +92,7 @@ class WorkViewModel {
             handleMicrophoneOverrideChange()
         }
     }
-    var playbackEnabled = false {
+    var playbackEnabled = true {
         didSet {
             handlePlaybackChange()
         }

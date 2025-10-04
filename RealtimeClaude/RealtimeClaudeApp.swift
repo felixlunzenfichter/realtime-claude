@@ -12,7 +12,7 @@ struct RealtimeClaudeApp: App {
 }
 
 struct ContentView: View {
-    @State private var showLogs = true
+    @State private var showLogs = false
 
     var body: some View {
         ZStack {

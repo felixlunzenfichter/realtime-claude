@@ -64,9 +64,6 @@ function processBufferedData(socket, buffer) {
         }
     }
 
-    if (messagesProcessed > 0) {
-        console.log(`📦 Processed ${messagesProcessed} messages, ${remainingBuffer.length} bytes remaining in buffer`);
-    }
 
     return remainingBuffer;
 }
@@ -114,6 +111,13 @@ function handleStartMessage(socket) {
 
 function findLatestConversationFile(dir) {
     try {
+        console.log(`🔎 Checking for conversation files in: ${dir}`);
+
+        if (!fs.existsSync(dir)) {
+            console.log(`📁 Directory doesn't exist: ${dir}`);
+            return null;
+        }
+
         const files = fs.readdirSync(dir)
             .filter(f => f.endsWith('.jsonl'))
             .map(f => ({
@@ -124,13 +128,16 @@ function findLatestConversationFile(dir) {
             .sort((a, b) => b.mtime - a.mtime);
 
         if (files.length === 0) {
-            console.error('❌ No conversation files found');
+            console.log(`❌ No conversation files found in: ${dir}`);
             return null;
         }
 
-        return files[0].path;
+        const latestFile = files[0];
+        const modTime = new Date(latestFile.mtime).toLocaleString();
+        console.log(`✅ Found latest conversation: ${latestFile.name} (modified: ${modTime})`);
+        return latestFile.path;
     } catch (e) {
-        console.error('❌ Error finding conversation file:', e.message);
+        console.error(`❌ Error finding conversation file in ${dir}:`, e.message);
         return null;
     }
 }
@@ -143,20 +150,27 @@ function handlePromptMessage(socket, logData) {
     console.log(`   Prompt: "${prompt}"`);
     console.log(`   Timestamp: ${new Date(timestamp * 1000).toLocaleString()}`);
 
+    // Clean the prompt - remove quotation marks and escape backslashes
+    const cleanedPrompt = prompt
+        .replace(/["']/g, '')  // Remove quotes
+        .replace(/\\/g, '\\\\');  // Escape backslashes for AppleScript
+    console.log(`🧹 Cleaned prompt: "${cleanedPrompt}"`);
+
     // Use Terminal automation (macOS 26 enhanced method)
     console.log('\n🚀 Attempting Terminal automation (macOS 26 enhanced method)...');
-    injectIntoTerminal(prompt, (terminalSuccess, terminalError) => {
+    injectIntoTerminal(cleanedPrompt, (terminalSuccess, terminalError) => {
         if (terminalSuccess) {
             console.log('✅ Terminal automation executed successfully!');
             console.log('🔍 Verifying prompt in conversation file...');
 
             // Wait and verify the prompt actually appears in the conversation
-            const conversationDir = '/Users/felixlunzenfichter/.claude/projects/-Users-felixlunzenfichter-Documents-realtime-claude';
+            // Use the Documents directory where Claude is currently running
+            const conversationDir = '/Users/felixlunzenfichter/.claude/projects/-Users-felixlunzenfichter-Documents';
             const convFile = findLatestConversationFile(conversationDir);
 
             if (!convFile) {
-                console.log('❌ No conversation file found for verification');
-                sendFailureAck('No conversation file found');
+                console.log(`❌ No conversation file found for verification of prompt: '${cleanedPrompt}'`);
+                sendFailureAck(`Failed to inject prompt: '${cleanedPrompt}' - No conversation file found`);
                 return;
             }
 
@@ -171,11 +185,14 @@ function handlePromptMessage(socket, logData) {
                     for (const line of lastLines) {
                         try {
                             const json = JSON.parse(line);
-                            if (json.message && json.message.content &&
-                                JSON.stringify(json.message.content).includes(prompt)) {
-                                foundInConversation = true;
-                                console.log('✅ Verified: Prompt found in conversation!');
-                                break;
+                            if (json.message && json.message.content) {
+                                const contentStr = JSON.stringify(json.message.content);
+
+                                if (contentStr.includes(cleanedPrompt)) {
+                                    foundInConversation = true;
+                                    console.log('✅ Verified: Prompt found in conversation!');
+                                    break;
+                                }
                             }
                         } catch (e) {
                             // Ignore JSON parse errors
@@ -198,17 +215,17 @@ function handlePromptMessage(socket, logData) {
                         console.log('📤 Sent success acknowledgment to iOS app');
                         console.log('🎉 Prompt successfully injected via Terminal automation!');
                     } else {
-                        console.log('❌ Terminal automation executed but prompt not found in conversation');
-                        sendFailureAck('Prompt not found in conversation after Terminal automation');
+                        console.log(`❌ Terminal automation executed but prompt not found in conversation: '${cleanedPrompt}'`);
+                        sendFailureAck(`Failed to inject prompt: '${cleanedPrompt}' - Prompt not found in conversation after Terminal automation`);
                     }
                 } catch (error) {
-                    console.error('❌ Error verifying Terminal automation:', error.message);
-                    sendFailureAck(`Verification error: ${error.message}`);
+                    console.error(`❌ Error verifying Terminal automation for prompt: '${cleanedPrompt}'`, error.message);
+                    sendFailureAck(`Failed to inject prompt: '${cleanedPrompt}' - Verification error: ${error.message}`);
                 }
             }, 2000);
         } else {
-            console.log(`❌ Terminal automation failed: ${terminalError}`);
-            sendFailureAck(`Terminal automation failed: ${terminalError}`);
+            console.log(`❌ Terminal automation failed for prompt: '${cleanedPrompt}' - Error: ${terminalError}`);
+            sendFailureAck(`Failed to inject prompt: '${cleanedPrompt}' - Terminal automation failed: ${terminalError}`);
         }
     });
 
@@ -368,12 +385,10 @@ function reportErrorToConsole(logData) {
 
 function persistLogToFile(logData) {
     writeLogToFile(logData);
-    console.log('Wrote log with ID:', logData.id);
 }
 
 function confirmLogReception(socket, logId) {
     sendAcknowledgment(socket, logId);
-    console.log('Sent ACK for log ID:', logId);
 }
 
 function getSessionCount() {
@@ -400,12 +415,10 @@ function sendAcknowledgment(socket, logId) {
 
 
 function injectIntoTerminal(prompt, callback) {
-    // Escape special characters for AppleScript strings
-    const escapedPrompt = prompt
-        .replace(/\\/g, '\\\\')
-        .replace(/"/g, '\\"');  // Only escape double quotes for AppleScript string
+    // No escaping needed - prompt is already cleaned and escaped
+    const escapedPrompt = prompt;
 
-    console.log(`🔤 Escaped prompt for AppleScript: "${escapedPrompt}"`);
+    console.log(`🔤 Injecting prompt into Terminal: "${escapedPrompt}"`);
 
     // Enhanced AppleScript for macOS 26 Tahoe - using heredoc for safety
     const appleScriptCommand = `osascript <<'EOF'

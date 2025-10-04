@@ -84,9 +84,7 @@ watcher.on('add', (filePath) => {
     });
 
     sessionWatcher.on('change', () => {
-        console.log(`📂 SessionWatcher detected change for session ${sessionNumber}`);
         setTimeout(() => {
-            console.log(`🧪 Running tests for session ${sessionNumber}...`);
             runTestsForSession(sessionNumber);
         }, 100);
     });

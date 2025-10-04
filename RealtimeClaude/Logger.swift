@@ -300,9 +300,27 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
         if status == "success" {
             log("✅ Prompt successfully injected into terminal: \(originalPrompt)")
+
+            // Return function call result to OpenAI
+            if let callId = realtimeAPI.currentFunctionCallId {
+                let result: [String: Any] = [
+                    "status": "success",
+                    "message": "Prompt successfully injected into CLAUDE terminal and executing. (prompt: \(originalPrompt))"
+                ]
+                realtimeAPI.sendFunctionCallResult(callId: callId, result: result)
+            }
         } else {
             let errorMessage = jsonData["error"] as? String ?? "Unknown error"
             error("❌ Failed to inject prompt: \(errorMessage)")
+
+            // Return function call error to OpenAI
+            if let callId = realtimeAPI.currentFunctionCallId {
+                let result: [String: Any] = [
+                    "status": "error",
+                    "message": "Failed to inject prompt: \(errorMessage)"
+                ]
+                realtimeAPI.sendFunctionCallResult(callId: callId, result: result)
+            }
         }
     }
 
