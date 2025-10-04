@@ -247,7 +247,12 @@ private class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
 
     func handleSpeechStopped() {
         log("Voice activity detection stopped")
-        // Request the model to extract the user's speech and call createPrompt function
+
+        guard microphoneEnabledSubject.value else {
+            log("Ignoring speech event - microphone disabled")
+            return
+        }
+
         callCreatePromptFunction()
     }
 
@@ -321,41 +326,28 @@ private class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
     fileprivate var currentFunctionCallId: String?
 
     func handleResponseOutputItemAdded(_ json: [String: Any]) {
-        log("response.output_item.added received: \(json)")
-
         guard let item = json["item"] as? [String: Any] else {
-            log("response.output_item.added has no item field")
             return
         }
 
         guard let itemType = item["type"] as? String else {
-            log("response.output_item.added item has no type field")
             return
         }
 
-        log("Output item type: \(itemType)")
-
         if itemType == "function_call" {
-            guard let callId = item["call_id"] as? String else {
-                error("function_call output item missing 'call_id' field")
+            guard let callId = item["call_id"] as? String,
+                  let name = item["name"] as? String,
+                  let status = item["status"] as? String else {
                 return
             }
 
             currentFunctionCallId = callId
-            log("✅ Stored function call_id from output item: \(callId)")
-
-            if let name = item["name"] as? String {
-                log("Function name: \(name)")
-            }
-
-            if let arguments = item["arguments"] as? String {
-                log("Function arguments: \(arguments)")
-            }
+            log("response.output_item.added: \(name) (\(status))")
         }
     }
 
     func handleConversationItemAdded(_ json: [String: Any]) {
-        log("conversation.item.added received: \(json)")
+        log("conversation.item.added received")
     }
 
     func callCreatePromptFunction() {
@@ -852,10 +844,10 @@ private class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
             guard let self = self else { return }
 
             if self.isResponseActive {
-                debugLog(id: "responseQueue", message: "⏸️ [Queue] Response in progress, queueing request (queue size: \(self.responseRequestQueue.count))")
                 self.responseRequestQueue.append(request)
+                log("Response queue size: \(self.responseRequestQueue.count)")
             } else {
-                debugLog(id: "responseQueue", message: "▶️ [Queue] No active response, executing immediately")
+                log("Response queue: executing immediately")
                 self.isResponseActive = true
                 request()
             }
@@ -867,12 +859,11 @@ private class RealtimeAPI: NSObject, @unchecked Sendable, RealtimeAPIProtocol {
             guard let self = self else { return }
 
             guard !self.responseRequestQueue.isEmpty else {
-                debugLog(id: "responseQueue", message: "✅ [Queue] Empty, no pending requests")
                 return
             }
 
             let nextRequest = self.responseRequestQueue.removeFirst()
-            debugLog(id: "responseQueue", message: "⏭️ [Queue] Processing next request (remaining: \(self.responseRequestQueue.count))")
+            log("Response queue: processing next (remaining: \(self.responseRequestQueue.count))")
             self.isResponseActive = true
             nextRequest()
         }
