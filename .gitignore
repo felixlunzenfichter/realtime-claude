@@ -2,6 +2,7 @@
 private/
 node_modules
 RealtimeClaude.xcodeproj/project.xcworkspace/xcuserdata
+RealtimeClaude.xcodeproj/xcuserdata
 
 # macOS files
 .DS_Store

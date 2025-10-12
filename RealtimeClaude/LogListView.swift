@@ -1,63 +1,124 @@
+/*
+# REFACTORING DOCUMENT: LogListView.swift
+
+## Current State: ✅ PROPERLY ORDERED
+
+### Class: LogListViewModel (@Observable)
+
+#### Properties:
+- logs: [LogMessage] (public, var) = [] → mutated in: setupSubscription(= from logger.logsSubject)
+- debugLogs: [(LogMessage, Int)] (public, var) = [] → mutated in: setupSubscription(= from logger.debugLogsSubject)
+- transmittedLogIds: [String] (public, var) = [] → mutated in: setupSubscription(= from logger.transmittedLogIdsSubject)
+- sessionNumber: Int (public, var) = 0 → mutated in: setupSubscription(= from logger.sessionNumberSubject)
+- uptimeToday: Int (public, var) = 0 → mutated in: setupSubscription(= from logger.uptimeTodaySubject)
+- uptimeTotal: Int (public, var) = 0 → mutated in: setupSubscription(= from logger.uptimeTotalSubject)
+- totalLogs: Int (public, var) = 0 → mutated in: setupSubscription(= from logger.totalLogsSubject)
+- showDebugLogs: Bool (public, var) = false → mutated in: user toggle
+- showRegularLogs: Bool (public, var) = true → mutated in: user toggle
+- showErrorLogs: Bool (public, var) = true → mutated in: user toggle
+- cancellables: Set<AnyCancellable> (private, var) = Set<AnyCancellable>() → mutated in: setupSubscription(store subscription)
+
+#### Computed Properties:
+Line 19: combinedLogs: [(LogMessage, Int?)] (public, get-only) → uses: showRegularLogs, showErrorLogs, showDebugLogs, logs, debugLogs
+Line 39: regularLogsCount: Int (public, get-only) → uses: logs
+Line 43: errorLogsCount: Int (public, get-only) → uses: logs
+Line 49: sessionStartTime: Date? (public, get-only) → uses: logs
+Line 53: currentSessionTime: Int (public, get-only) → uses: sessionStartTime, transmittedLogIds, logs
+Line 64: sessionLogsCount: Int (public, get-only) → uses: transmittedLogIds
+Line 68: uptimeTodayTotal: Int (public, get-only) → uses: uptimeToday, currentSessionTime
+Line 72: uptimeTotalTotal: Int (public, get-only) → uses: uptimeTotal, currentSessionTime
+Line 76: todayUptimeColor: Color (public, get-only) → uses: uptimeTodayTotal
+
+#### Functions:
+Line 87: init() → setupSubscription()
+
+Line 97: setupSubscription(_:updateProperty:) → subject.receive(), subject.sink()
+
+### Struct: LogListView (View)
+
+#### Properties:
+- showLogs: Bool (public, @Binding var) → mutated in: toggle action (binding from parent)
+- viewModel: LogListViewModel (private, @State var) = LogListViewModel() → mutated in: SwiftUI state management
+
+#### Computed Properties:
+Line 112: isIPhone: Bool (public, get-only) → uses: UIDevice.current.userInterfaceIdiom
+Line 116: body: some View (public, get-only) → uses: viewModel, showLogs, isIPhone
+
+### Struct: LogRowView (View)
+
+#### Constants:
+- log: LogMessage (public, let) = passed from parent
+- isTransmitted: Bool (public, let) = passed from parent
+- count: Int? (public, let) = passed from parent (nil for regular logs, Int for debug logs)
+
+#### Computed Properties:
+Line 442: body: some View (public, get-only) → uses: log, isTransmitted, count
+*/
+
 import SwiftUI
 import Combine
 import Observation
 
 @Observable
 class LogListViewModel {
+    var debugLogs: [(LogMessage, Int)] = []
     var logs: [LogMessage] = []
-    var transmittedLogIds: [String] = []
     var sessionNumber: Int = 0
-    var uptimeToday: Int = 0  
-    var uptimeTotal: Int = 0  
+    var showDebugLogs: Bool = false
+    var showErrorLogs: Bool = true
+    var showRegularLogs: Bool = true
     var totalLogs: Int = 0
+    var transmittedLogIds: [String] = []
+    var uptimeToday: Int = 0
+    var uptimeTotal: Int = 0
+
     private var cancellables = Set<AnyCancellable>()
 
-    var sessionStartTime: Date? {
-        logs.last?.timestamp
+    var combinedLogs: [(LogMessage, Int?)] {
+        var combined: [(LogMessage, Int?)] = []
+
+        if showRegularLogs && showErrorLogs {
+            combined.append(contentsOf: logs.map { ($0, nil) })
+        } else if showRegularLogs && !showErrorLogs {
+            let regularLogs = logs.filter { $0.type != .error }
+            combined.append(contentsOf: regularLogs.map { ($0, nil) })
+        } else if !showRegularLogs && showErrorLogs {
+            let errorLogs = logs.filter { $0.type == .error }
+            combined.append(contentsOf: errorLogs.map { ($0, nil) })
+        }
+
+        if showDebugLogs {
+            combined.append(contentsOf: debugLogs.map { ($0.0, $0.1) })
+        }
+
+        return combined.sorted { $0.0.timestamp < $1.0.timestamp }
     }
 
     var currentSessionTime: Int {
         guard let sessionStart = sessionStartTime else { return 0 }
 
         guard let lastAckId = transmittedLogIds.last,
-              let lastAckLog = logs.first(where: { $0.id.uuidString == lastAckId }) else {
+              let lastAckLog = logs.first(where: { $0.id == lastAckId }) else {
             return 0
         }
 
         return Int(lastAckLog.timestamp.timeIntervalSince(sessionStart) * 1000)
     }
 
-    var currentSessionTimeFormatted: String {
-        let milliseconds = currentSessionTime
-        let seconds = milliseconds / 1000
-        let minutes = seconds / 60
-        let hours = minutes / 60
+    var errorLogsCount: Int {
+        return logs.filter { $0.type == .error }.count
+    }
 
-        if hours > 0 {
-            return String(format: "%02d:%02d:%02d", hours, minutes % 60, seconds % 60)
-        } else {
-            return String(format: "%02d:%02d", minutes, seconds % 60)
-        }
+    var regularLogsCount: Int {
+        return logs.count
     }
 
     var sessionLogsCount: Int {
         transmittedLogIds.count
     }
 
-    var uptimeTodayTotal: Int {
-        uptimeToday + currentSessionTime
-    }
-
-    var uptimeTotalTotal: Int {
-        uptimeTotal + currentSessionTime
-    }
-
-    var uptimeTodayFormatted: String {
-        formatMilliseconds(uptimeTodayTotal)
-    }
-
-    var uptimeTotalFormatted: String {
-        formatMilliseconds(uptimeTotalTotal)
+    var sessionStartTime: Date? {
+        logs.last?.timestamp
     }
 
     var todayUptimeColor: Color {
@@ -71,159 +132,359 @@ class LogListViewModel {
         }
     }
 
-    func formatMilliseconds(_ milliseconds: Int) -> String {
-        let seconds = milliseconds / 1000
-        let minutes = seconds / 60
-        let hours = minutes / 60
+    var uptimeTodayTotal: Int {
+        uptimeToday + currentSessionTime
+    }
 
-        if hours > 0 {
-            return String(format: "%dh %dm %ds", hours, minutes % 60, seconds % 60)
-        } else if minutes > 0 {
-            return String(format: "%dm %ds", minutes, seconds % 60)
-        } else {
-            return String(format: "%ds", seconds)
-        }
+    var uptimeTotalTotal: Int {
+        uptimeTotal + currentSessionTime
     }
 
     init() {
-        Logger.shared.logsSubject
-            .sink { [weak self] logs in
-                self?.logs = logs
-            }
-            .store(in: &cancellables)
+        setupSubscription(logger.logsSubject) { self.logs = $0 }
+        setupSubscription(logger.debugLogsSubject) { self.debugLogs = $0 }
+        setupSubscription(logger.transmittedLogIdsSubject) { self.transmittedLogIds = $0 }
+        setupSubscription(logger.sessionNumberSubject) { self.sessionNumber = $0 }
+        setupSubscription(logger.uptimeTodaySubject) { self.uptimeToday = $0 }
+        setupSubscription(logger.uptimeTotalSubject) { self.uptimeTotal = $0 }
+        setupSubscription(logger.totalLogsSubject) { self.totalLogs = $0 }
+    }
 
-        Logger.shared.transmittedLogIdsSubject
-            .sink { [weak self] transmittedIds in
-                self?.transmittedLogIds = transmittedIds
-            }
-            .store(in: &cancellables)
-
-        Logger.shared.sessionNumberSubject
-            .sink { [weak self] sessionNumber in
-                self?.sessionNumber = sessionNumber
-            }
-            .store(in: &cancellables)
-
-        Logger.shared.uptimeTodaySubject
-            .sink { [weak self] uptimeToday in
-                self?.uptimeToday = uptimeToday
-            }
-            .store(in: &cancellables)
-
-        Logger.shared.uptimeTotalSubject
-            .sink { [weak self] uptimeTotal in
-                self?.uptimeTotal = uptimeTotal
-            }
-            .store(in: &cancellables)
-
-        Logger.shared.totalLogsSubject
-            .sink { [weak self] totalLogs in
-                self?.totalLogs = totalLogs
+    func setupSubscription<T>(_ subject: CurrentValueSubject<T, Never>, updateProperty: @escaping (T) -> Void) {
+        subject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] value in
+                guard let self = self else { return }
+                updateProperty(value)
             }
             .store(in: &cancellables)
     }
 }
 
 struct LogListView: View {
+    @Binding var showLogs: Bool
     @State private var viewModel = LogListViewModel()
 
+    var isIPhone: Bool {
+        UIDevice.current.userInterfaceIdiom == .phone
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            TimelineView(.periodic(from: Date(), by: 1)) { _ in
-                HStack(spacing: 20) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Total")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(viewModel.uptimeTotalFormatted)
-                            .font(.title3)
-                            .fontWeight(.medium)
-                            .foregroundColor(.primary)
-                            .frame(minWidth: 90, alignment: .leading)
-                    }
-                    .frame(minWidth: 90)
+        ZStack {
+            Color(UIColor.systemBackground)
+                .ignoresSafeArea()
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("All Logs")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text("\(viewModel.totalLogs + viewModel.sessionLogsCount)")
-                            .font(.title3)
-                            .fontWeight(.medium)
-                            .foregroundColor(.primary)
-                            .frame(minWidth: 60, alignment: .leading)
-                    }
-                    .frame(minWidth: 60)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Today")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(viewModel.uptimeTodayFormatted)
-                            .font(.title3)
-                            .fontWeight(.medium)
-                            .foregroundColor(viewModel.todayUptimeColor)
-                            .frame(minWidth: 90, alignment: .leading)
-                    }
-                    .frame(minWidth: 90)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Session")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text("#\(viewModel.sessionNumber)")
-                            .font(.title3)
-                            .fontWeight(.medium)
-                            .foregroundColor(.purple)
-                            .frame(minWidth: 50, alignment: .leading)
-                    }
-                    .frame(minWidth: 50)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Current")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(viewModel.currentSessionTimeFormatted)
-                            .font(.title3)
-                            .fontWeight(.medium)
-                            .foregroundColor(.blue)
-                            .frame(minWidth: 70, alignment: .leading)
-                    }
-                    .frame(minWidth: 70)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Logs")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text("\(viewModel.sessionLogsCount)")
-                            .font(.title3)
-                            .fontWeight(.medium)
-                            .foregroundColor(.blue)
-                            .frame(minWidth: 50, alignment: .leading)
-                    }
-                    .frame(minWidth: 50)
-
+            if viewModel.combinedLogs.isEmpty {
+                VStack {
+                    Spacer()
+                    Text("No logs yet")
+                        .font(.title2)
+                        .foregroundColor(.secondary.opacity(0.5))
                     Spacer()
                 }
-            }
-            .padding(.horizontal)
-            .padding(.vertical)
-
-            if viewModel.logs.isEmpty {
-                Spacer()
-                Text("No logs yet")
-                    .font(.title2)
-                    .foregroundColor(.secondary)
-                Spacer()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(viewModel.logs) { log in
-                            LogRowView(log: log, transmittedIds: viewModel.transmittedLogIds)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 6) {
+
+                            ForEach(Array(viewModel.combinedLogs.enumerated()), id: \.0) { index, item in
+                                let (log, count) = item
+                                LogRowView(log: log, isTransmitted: viewModel.transmittedLogIds.contains(log.id), count: count)
+                                    .id(index)
+                            }
+
+                            Spacer()
+                                .frame(height: 40)
+                                .id("bottomSpacer")
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.top, isIPhone ? 60 : 40)
+                        .padding(.bottom, 20)
+                    }
+                    .onChange(of: viewModel.combinedLogs.count) { _ in
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                proxy.scrollTo("bottomSpacer", anchor: .top)
+                            }
                         }
                     }
-                    .padding(.horizontal)
+                    .onAppear {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                proxy.scrollTo("bottomSpacer", anchor: .top)
+                            }
+                        }
+                    }
                 }
+            }
+
+
+            VStack {
+                TimelineView(.periodic(from: Date(), by: 1)) { _ in
+                if isIPhone {
+                    VStack(spacing: 4) {
+                        HStack(spacing: 15) {
+                            Spacer()
+
+                            VStack(alignment: .center, spacing: 0) {
+                                Text("Total")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Text(viewModel.uptimeTotalTotal.formattedMilliseconds)
+                                    .font(.system(size: 15))
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.primary)
+                            }
+
+                            VStack(alignment: .center, spacing: 0) {
+                                Text("All Logs")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Text("\(viewModel.totalLogs + viewModel.sessionLogsCount)")
+                                    .font(.system(size: 15))
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.primary)
+                            }
+
+                            VStack(alignment: .center, spacing: 0) {
+                                Text("Today")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Text(viewModel.uptimeTodayTotal.formattedMilliseconds)
+                                    .font(.system(size: 15))
+                                    .fontWeight(.medium)
+                                    .foregroundColor(viewModel.todayUptimeColor)
+                            }
+
+                            Spacer()
+                        }
+                        .padding(.vertical, 4)
+                        .padding(.horizontal)
+
+                        HStack(spacing: 15) {
+                            Spacer()
+
+                            VStack(alignment: .center, spacing: 0) {
+                                Text("Session")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Text("#\(viewModel.sessionNumber)")
+                                    .font(.system(size: 15))
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.purple)
+                            }
+
+                            VStack(alignment: .center, spacing: 0) {
+                                Text("Current")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Text(viewModel.currentSessionTime.formattedMilliseconds)
+                                    .font(.system(size: 15))
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.blue)
+                            }
+
+                            VStack(alignment: .center, spacing: 0) {
+                                Text("Logs")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Text("\(viewModel.sessionLogsCount)")
+                                    .font(.system(size: 15))
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.blue)
+                            }
+
+                            Spacer()
+                        }
+                        .padding(.vertical, 4)
+                        .padding(.horizontal)
+                    }
+                } else {
+                    HStack(spacing: 20) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Total")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Text(viewModel.uptimeTotalTotal.formattedMilliseconds)
+                                .font(.title3)
+                                .fontWeight(.medium)
+                                .foregroundColor(.primary)
+                                .frame(minWidth: 90, alignment: .leading)
+                        }
+                        .frame(minWidth: 90)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("All Logs")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Text("\(viewModel.totalLogs + viewModel.sessionLogsCount)")
+                                .font(.title3)
+                                .fontWeight(.medium)
+                                .foregroundColor(.primary)
+                                .frame(minWidth: 60, alignment: .leading)
+                        }
+                        .frame(minWidth: 60)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Today")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Text(viewModel.uptimeTodayTotal.formattedMilliseconds)
+                                .font(.title3)
+                                .fontWeight(.medium)
+                                .foregroundColor(viewModel.todayUptimeColor)
+                                .frame(minWidth: 90, alignment: .leading)
+                        }
+                        .frame(minWidth: 90)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Session")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Text("#\(viewModel.sessionNumber)")
+                                .font(.title3)
+                                .fontWeight(.medium)
+                                .foregroundColor(.purple)
+                                .frame(minWidth: 50, alignment: .leading)
+                        }
+                        .frame(minWidth: 50)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Current")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Text(viewModel.currentSessionTime.formattedMilliseconds)
+                                .font(.title3)
+                                .fontWeight(.medium)
+                                .foregroundColor(.blue)
+                                .frame(minWidth: 70, alignment: .leading)
+                        }
+                        .frame(minWidth: 70)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Logs")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Text("\(viewModel.sessionLogsCount)")
+                                .font(.title3)
+                                .fontWeight(.medium)
+                                .foregroundColor(.blue)
+                                .frame(minWidth: 50, alignment: .leading)
+                        }
+                        .frame(minWidth: 50)
+
+                        Spacer()
+                    }
+                }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .glassEffect()
+                .offset(y: -34)
+
+                Spacer()
+
+                HStack(spacing: 0) {
+                    Rectangle()
+                        .fill(Color.orange.opacity(0.1))
+                        .overlay(
+                            VStack {
+                                Spacer()
+                                    .frame(height: 20)
+                                HStack(spacing: 8) {
+                                    Toggle(isOn: $viewModel.showDebugLogs) {
+                                        EmptyView()
+                                    }
+                                    .toggleStyle(SwitchToggleStyle(tint: .orange))
+                                    .labelsHidden()
+
+                                    Text("\(viewModel.debugLogs.count)")
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .foregroundColor(.orange)
+                                }
+                                Spacer()
+                            }
+                        )
+                        .onTapGesture {
+                            viewModel.showDebugLogs.toggle()
+                        }
+
+                    Rectangle()
+                        .fill(Color.green.opacity(0.1))
+                        .overlay(
+                            VStack {
+                                Spacer()
+                                    .frame(height: 20)
+                                HStack(spacing: 8) {
+                                    Toggle(isOn: $viewModel.showRegularLogs) {
+                                        EmptyView()
+                                    }
+                                    .toggleStyle(SwitchToggleStyle(tint: .green))
+                                    .labelsHidden()
+
+                                    Text("\(viewModel.regularLogsCount)")
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .foregroundColor(.green)
+                                }
+                                Spacer()
+                            }
+                        )
+                        .onTapGesture {
+                            viewModel.showRegularLogs.toggle()
+                        }
+
+                    Rectangle()
+                        .fill(Color.red.opacity(0.1))
+                        .overlay(
+                            VStack {
+                                Spacer()
+                                    .frame(height: 20)
+                                HStack(spacing: 8) {
+                                    Toggle(isOn: $viewModel.showErrorLogs) {
+                                        EmptyView()
+                                    }
+                                    .toggleStyle(SwitchToggleStyle(tint: .red))
+                                    .labelsHidden()
+
+                                    Text("\(viewModel.errorLogsCount)")
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .foregroundColor(.red)
+                                }
+                                Spacer()
+                            }
+                        )
+                        .onTapGesture {
+                            viewModel.showErrorLogs.toggle()
+                        }
+
+                    Rectangle()
+                        .fill(Color.blue.opacity(0.1))
+                        .overlay(
+                            VStack {
+                                Spacer()
+                                    .frame(height: 20)
+                                HStack(spacing: 8) {
+                                    Toggle(isOn: $showLogs) {
+                                        EmptyView()
+                                    }
+                                    .toggleStyle(SwitchToggleStyle(tint: .blue))
+                                    .labelsHidden()
+
+                                    Image(systemName: showLogs ? "eye.fill" : "eye.slash.fill")
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .foregroundColor(.blue)
+                                }
+                                Spacer()
+                            }
+                        )
+                        .onTapGesture {
+                            showLogs.toggle()
+                        }
+                }
+                .frame(height: 120)
+                .glassEffect()
+                .offset(y: 60)
             }
         }
     }
@@ -231,17 +492,14 @@ struct LogListView: View {
 
 struct LogRowView: View {
     let log: LogMessage
-    let transmittedIds: [String]
-
-    var isTransmitted: Bool {
-        transmittedIds.contains(log.id.uuidString)
-    }
+    let isTransmitted: Bool
+    let count: Int?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Circle()
-                    .fill(isTransmitted ? Color.green : Color.red)
+                    .fill(count != nil ? Color.orange : (isTransmitted ? Color.green : Color.red))
                     .frame(width: 8, height: 8)
 
                 Text(log.type.label)
@@ -249,11 +507,18 @@ struct LogRowView: View {
                     .fontWeight(.bold)
                     .foregroundColor(log.type.color)
 
+                if let count = count {
+                    Text("x\(count)")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.orange)
+                }
+
                 Text("•")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                Text(log.formattedTimestamp)
+                Text(log.timestamp.formattedTimestamp)
                     .font(.caption)
                     .foregroundColor(.secondary)
 
@@ -276,13 +541,27 @@ struct LogRowView: View {
                 Spacer()
             }
 
-            Text(log.message)
-                .font(.body)
-                .foregroundColor(log.type.color)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if count != nil {
+                Text("[\(log.id)] \(log.message)")
+                    .font(.body)
+                    .foregroundColor(Color.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(log.message)
+                    .font(.body)
+                    .foregroundColor(log.type.color)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
-        .padding(10)
-        .background(Color(UIColor.secondarySystemBackground))
-        .cornerRadius(8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(UIColor.secondarySystemBackground).opacity(0.6))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.gray.opacity(0.1), lineWidth: 1)
+        )
     }
 }
