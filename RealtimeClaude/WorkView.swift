@@ -131,6 +131,8 @@ import Combine
 import Observation
 import CoreMotion
 
+let INTERRUPT_MESSAGE = "[Request interrupted by user]"
+
 enum RecordingStatus {
     case disconnected
     case connected
@@ -304,20 +306,50 @@ struct WorkView: View {
 
                             ForEach(viewModel.allMessages) { message in
                                 ZStack(alignment: .bottomTrailing) {
-                                    Text(message.content.isEmpty ? "Recording..." : message.content)
-                                        .font(.body)
-                                        .foregroundColor(message.status.color)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 6)
+                                    if message.content == INTERRUPT_MESSAGE {
+                                        // Special display for interrupt messages
+                                        HStack {
+                                            HStack(spacing: 6) {
+                                                if message.status == .sent {
+                                                    ProgressView()
+                                                        .scaleEffect(0.5)
+                                                        .frame(width: 10, height: 10)
+                                                } else {
+                                                    Image(systemName: message.status == .injected ? "stop.circle.fill" : "hand.raised.circle.fill")
+                                                        .font(.system(size: 10))
+                                                        .foregroundColor(message.status == .injected ? .red : message.status.color)
+                                                }
+                                                Text(message.status == .sent ? "Request interrupt sent" : "Request interrupted")
+                                                    .font(.system(size: 10))
+                                                    .foregroundColor(message.status == .injected ? .red : message.status.color)
+                                            }
 
-                                    Text(message.timestamp, style: .time)
-                                        .font(.system(size: 10))
-                                        .foregroundColor(message.status.color.opacity(0.7))
+                                            Spacer()
+
+                                            Text(message.timestamp, style: .time)
+                                                .font(.system(size: 10))
+                                                .foregroundColor(message.status == .injected ? Color.red.opacity(0.7) : message.status.color.opacity(0.7))
+                                        }
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 2)
+                                    } else {
+                                        Text(message.content.isEmpty ? "Recording..." : message.content)
+                                            .font(.body)
+                                            .foregroundColor(message.status.color)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 6)
+                                    }
+
+                                    if message.content != INTERRUPT_MESSAGE {
+                                        Text(message.timestamp, style: .time)
+                                            .font(.system(size: 10))
+                                            .foregroundColor(message.status.color.opacity(0.7))
+                                    }
                                 }
                                 .background(
                                     RoundedRectangle(cornerRadius: 8)
-                                        .fill(message.status.color.opacity(0.1))
+                                        .fill(message.content == INTERRUPT_MESSAGE && message.status == .injected ? Color.red.opacity(0.1) : message.status.color.opacity(0.1))
                                 )
                                 .id(message.id)
                                 .listRowBackground(Color.clear)
@@ -636,7 +668,7 @@ class WorkViewModel {
 
     func addInterrupt() {
         let interrupt = Message(
-            content: "[Request interrupted by user]",
+            content: INTERRUPT_MESSAGE,
             timestamp: Date(),
             status: .notSent
         )
@@ -651,7 +683,7 @@ class WorkViewModel {
         addInterrupt()
 
         // Send it to Mac for injection like a regular prompt
-        logger.sendPromptToMac("[Request interrupted by user]")
+        logger.sendPromptToMac(INTERRUPT_MESSAGE)
     }
 
     deinit {
