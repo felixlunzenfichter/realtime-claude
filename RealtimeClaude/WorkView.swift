@@ -227,7 +227,7 @@ struct ToggleBar: View {
     let topSpacing: CGFloat
     let yOffset: CGFloat
 
-    init(items: [ToggleItem], height: CGFloat = 120, topSpacing: CGFloat = 20, yOffset: CGFloat = 60) {
+    init(items: [ToggleItem], height: CGFloat = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) * 2, topSpacing: CGFloat = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) / 3, yOffset: CGFloat = -CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM"))) {
         self.items = items
         self.height = height
         self.topSpacing = topSpacing
@@ -368,7 +368,14 @@ struct WorkView: View {
                         .listStyle(PlainListStyle())
                         .scrollContentBackground(.hidden)
                         .environment(\.defaultMinListRowHeight, 0)
-                        .offset(y: -34)
+                        .frame(height: {
+                            let screenHeight = CGFloat(UserDefaults.standard.double(forKey: "SCREEN_HEIGHT"))
+                            let safeTop = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP"))
+                            let safeBottom = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM"))
+                            // Height = screen height + safe area top + safe area bottom
+                            return screenHeight + safeTop + safeBottom
+                        }())
+                        .offset(y: -CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")))
                         .onChange(of: viewModel.allMessages.count) { _ in
                             withAnimation {
                                 proxy.scrollTo("topSpacer", anchor: .top)

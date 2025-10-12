@@ -905,12 +905,30 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                 return
             }
 
-            // Get current value and accumulate
+            // Get current value and check for prefix case
             let currentValue = lastPromptSubject.value
-            let newValue = currentValue.isEmpty ? prompt : currentValue + "\n" + prompt
+            let newValue: String
+
+            if currentValue.isEmpty {
+                // First prompt, just use it
+                newValue = prompt
+                log("📝 First prompt: \(prompt)")
+            } else if prompt.hasPrefix(currentValue) {
+                // Current is a prefix of new prompt - just replace
+                newValue = prompt
+                log("🔄 Replaced prefix: current was contained in new prompt")
+                log("📝 New complete prompt: \(prompt)")
+            } else if currentValue.contains(prompt) {
+                // New prompt is already contained - skip it
+                newValue = currentValue
+                log("⏭️ Skipped duplicate: prompt already contained")
+            } else {
+                // Different prompts - accumulate
+                newValue = currentValue + "\n" + prompt
+                log("📝 Added prompt: \(prompt)")
+            }
 
             lastPromptSubject.send(newValue)
-            log("📝 Added prompt: \(prompt)")
             log("📝 Accumulated: \(newValue)")
 
             let result: [String: Any] = [

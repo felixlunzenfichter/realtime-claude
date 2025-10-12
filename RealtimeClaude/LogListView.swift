@@ -199,9 +199,16 @@ struct LogListView: View {
                                 .id("bottomSpacer")
                         }
                         .padding(.horizontal, 12)
-                        .padding(.top, isIPhone ? 60 : 40)
+                        .padding(.top, CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")))
                         .padding(.bottom, 20)
                     }
+                    .frame(height: {
+                        let screenHeight = CGFloat(UserDefaults.standard.double(forKey: "SCREEN_HEIGHT"))
+                        let safeTop = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP"))
+                        let safeBottom = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM"))
+                        // Height = screen height + safe area top + safe area bottom
+                        return screenHeight + safeTop + safeBottom
+                    }())
                     .onChange(of: viewModel.combinedLogs.count) { _ in
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             withAnimation(.easeInOut(duration: 0.3)) {
@@ -482,9 +489,9 @@ struct LogListView: View {
                             showLogs.toggle()
                         }
                 }
-                .frame(height: 120)
+                .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) * 2)
                 .glassEffect()
-                .offset(y: 60)
+                .offset(y: -CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")))
             }
         }
     }
