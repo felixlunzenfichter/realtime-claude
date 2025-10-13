@@ -1,268 +1,83 @@
 /*
-# REFACTORING DOCUMENT: RealtimeAPI.swift
+# RealtimeAPI - Complete Specification
 
-## Current State: ✅ PROPERLY ORDERED
+## Enum: APIState
+- disconnected, connected, speechDetected, speechStopped, processing
 
-### Protocol: RealtimeAPIProtocol (Sendable)
+## Protocol: RealtimeAPIProtocol (Sendable)
+- apiStateSubject: CurrentValueSubject<APIState, Never>
+- lastPromptSubject: CurrentValueSubject<String, Never>
+- connect(apiKey: String)
+- acknowledgeSuccessfulPromptInjection()
+- acknowledgeSuccessfulInterruptExecution()
+- clearAccumulatedPrompts()
+- processInputAudioBuffer(Data)
 
-#### Properties:
-- microphoneEnabledSubject: CurrentValueSubject<Bool, Never> (public, var)
-- playingAudioSubject: CurrentValueSubject<Bool, Never> (public, var)
-- lastPromptSubject: CurrentValueSubject<String, Never> (public, var)
-- voiceActivityStartedSubject: PassthroughSubject<Date, Never> (public, var)
-- voiceActivityStoppedSubject: PassthroughSubject<Date, Never> (public, var)
-- functionExecutionStartedSubject: PassthroughSubject<Date, Never> (public, var)
+## Global Variable
+- realtimeAPI: RealtimeAPIProtocol = RealtimeAPI()
 
-#### Functions:
-Line 283: connect(apiKey:) → (not documented in protocol)
-Line 284: enableMicrophone() → (not documented in protocol)
-Line 285: disableMicrophone() → (not documented in protocol)
-Line 286: enablePlayback() → (not documented in protocol)
-Line 287: disablePlayback() → (not documented in protocol)
-Line 288: realTimeApiAcknowledgeSuccessful() → (not documented in protocol)
-Line 289: clearAccumulatedPrompts() → (not documented in protocol)
+## Class: RealtimeAPI (private, NSObject, URLSessionWebSocketDelegate, @unchecked Sendable)
 
-### Global Variables:
-Line 22: realtimeAPI: RealtimeAPIProtocol (nonisolated unsafe, let)
+### Constants
+- apiStateSubject: CurrentValueSubject<APIState, Never> = CurrentValueSubject(.disconnected) → handleSessionUpdated(): .connected, handleSpeechStarted(): .speechDetected, handleSpeechStopped(): .speechStopped, handleConversationItemAdded(): .processing, markResponseComplete(): .connected, disconnect(): .disconnected
+- lastPromptSubject: CurrentValueSubject<String, Never> = CurrentValueSubject("") → handleFunctionCallArgumentsDone(): accumulated prompt, acknowledgeSuccessfulPromptInjection(): "", clearAccumulatedPrompts(): ""
+- responseQueueThread: DispatchQueue
 
-### Class: RealtimeAPI (NSObject, URLSessionWebSocketDelegate, @unchecked Sendable, RealtimeAPIProtocol, private)
+### Properties
+- currentFunctionCallId: String? = nil → handleResponseOutputItemAdded(): callId
+- isResponseActive: Bool = false → processNextQueuedRequest(): true, markResponseComplete(): false
+- responseRequestQueue: [() -> Void] = [] → queueResponseRequest(): append, processNextQueuedRequest(): removeFirst
+- totalBytesReceived: Int = 0 → handleTextMessage(): +=size
+- totalBytesSent: Int = 0 → send(): +=size
+- urlSession: URLSession? = nil → init(): URLSession()
+- webSocketTask: URLSessionWebSocketTask? = nil → connect(): task, disconnect(): nil
 
-#### Constants:
-- OPENAI_AUDIO_FORMAT: AVAudioFormat (public, let) = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24000, channels: 1, interleaved: false)!
-- apiStateSubject: CurrentValueSubject<APIState, Never> (public, let) = CurrentValueSubject(.disconnected) → sends states in various handlers
-- lastPromptSubject: CurrentValueSubject<String, Never> (public, let) = CurrentValueSubject("") → sends: lastPromptSubject.send(newValue) in handleFunctionCallArgumentsDone
-- microphoneEnabledSubject: CurrentValueSubject<Bool, Never> (public, let) = CurrentValueSubject(false) → sends: microphoneEnabledSubject.send(true) in installAudioTap, microphoneEnabledSubject.send(false) in uninstallAudioTap
-- playingAudioSubject: CurrentValueSubject<Bool, Never> (public, let) = CurrentValueSubject(false) → sends: playingAudioSubject.send(true/false) in scheduleResponseAudio buffer completion
-- audioEngine: AVAudioEngine (private, let) = AVAudioEngine()
-- audioConverter: AVAudioConverter (private, let) = AVAudioConverter(from: inputFormat, to: OPENAI_AUDIO_FORMAT)!
-- responsePlayerNode: AVAudioPlayerNode (private, let) = AVAudioPlayerNode()
-- responseQueueThread: DispatchQueue (private, let) = DispatchQueue(label: "com.realtimeapi.responsequeue", qos: .userInitiated)
+### Functions
+- init() → URLSession()
+- connect(apiKey) → URL(), URLRequest(Bearer apiKey), urlSession.webSocketTask(), webSocketTask.resume()
+- urlSession(_:didOpenWithProtocol:) → receiveMessage()
+- urlSession(_:didCloseWith:) → (leaf)
+- receiveMessage() → webSocketTask.receive(), handleDataMessage()|handleTextMessage(), receiveMessage(), handleError()
+- handleDataMessage(data) → String(), handleTextMessage()
+- handleTextMessage(text) → parseJSON(), extractMessageType(), totalBytesReceived+=, switch→handlers
+- parseJSON(text) → text.data(), JSONSerialization.jsonObject()
+- extractMessageType(json) → json["type"]
+- handleSessionCreated() → sendSessionUpdate()
+- handleSessionUpdated() → apiStateSubject.send(.connected), audioManager.startAudioEngine()
+- sendSessionUpdate() → send()
+- processInputAudioBuffer(data) → base64EncodedString(), send()
+- send(event) → JSONSerialization.data(), String(), URLSessionWebSocketTask.Message.string(), totalBytesSent+=, webSocketTask.send()
+- handleSpeechStarted() → apiStateSubject.send(.speechDetected)
+- handleSpeechStopped() → apiStateSubject.send(.speechStopped), callCreatePromptFunction()
+- callCreatePromptFunction() → queueResponseRequest(), send()
+- queueResponseRequest(request) → responseRequestQueue.append(), processNextQueuedRequest()
+- handleAudioBufferCommitted() → (leaf)
+- handleResponseCreated() → (leaf)
+- handleResponseDoneEvent(json) → markResponseComplete()
+- markResponseComplete() → responseQueueThread.async(isResponseActive=false, apiStateSubject.send(.connected), processNextQueuedRequest())
+- processNextQueuedRequest() → responseQueueThread.async(if !isResponseActive && !empty: isResponseActive=true, removeFirst(), execute)
+- handleResponseAudioDelta(json) → extract audioBase64, audioManager.scheduleOutputAudioBuffer(audioBase64)
+- handleResponseTextDelta(json) → (leaf)
+- handleResponseTextDone(json) → (leaf)
+- handleFunctionCallArgumentsDone(json) → trimmingCharacters(), replacingOccurrences(), data(), JSONSerialization.jsonObject(), currentValue=lastPromptSubject.value, logic(first|prefix|duplicate|accumulate), lastPromptSubject.send(newValue), JSONSerialization.data(), String(), send()
+- handleConversationItemAdded(json) → if type=="function_call": apiStateSubject.send(.processing)
+- handleConversationItemDone(json) → (leaf)
+- handleResponseOutputItemAdded(json) → if type=="function_call": currentFunctionCallId=callId
+- handleErrorMessage(json) → (leaf)
+- handleError(error) → formatConnectionError()
+- formatConnectionError(nsError) → (leaf)
+- requestAudioResponse(prompt) → queueResponseRequest(), send()
+- acknowledgeSuccessfulPromptInjection() → promptToSummarize=lastPromptSubject.value, lastPromptSubject.send(""), requestAudioResponse(promptToSummarize)
+- acknowledgeSuccessfulInterruptExecution() → (leaf)
+- clearAccumulatedPrompts() → lastPromptSubject.send("")
+- disconnect() → apiStateSubject.send(.disconnected), audioManager.stopAudioEngine(), webSocketTask.cancel(), webSocketTask=nil
+- commitAudioBuffer() → send()
+- deinit() → webSocketTask.cancel()
 
-#### Properties:
-- apiKey: String (private, var) = "" → mutated in: connect(= apiKey parameter)
-- currentFunctionCallId: String? (private, var) = nil → mutated in: handleResponseOutputItemAdded(= callId from JSON)
-- isResponseActive: Bool (private, var) = false → mutated in: queueResponseRequest(= true), markResponseComplete(= false), processNextQueuedRequest(= true)
-- playbackEnabled: Bool (private, var) = true → mutated in: enablePlayback(= true), disablePlayback(= false)
-- responseRequestQueue: [() -> Void] (private, var) = [] → mutated in: queueResponseRequest(append request), processNextQueuedRequest(removeFirst)
-- scheduledBufferCount: Int (private, var) = 0 → mutated in: scheduleResponseAudio(+= 1), buffer completion(-= 1)
-- totalBytesReceived: Int (private, var) = 0 → mutated in: handleSessionCreated(= 0), handleTextMessage(+= messageSize)
-- totalBytesSent: Int (private, var) = 0 → mutated in: handleSessionCreated(= 0), send(+= data.count)
-- urlSession: URLSession? (private, var) = nil → mutated in: init(= URLSession(...))
-- webSocketTask: URLSessionWebSocketTask? (private, var) = nil → mutated in: connect(= session.webSocketTask()), disconnect(= nil)
+## Dependencies
 
-#### Functions:
-Line 319: init() → AVAudioEngine.init(), AVAudioConverter.init(), AVAudioPlayerNode.init(), URLSession.init(), requestMicrophonePermission()
-  → log: "WebSocketManager initialized"
-
-Line 344: requestMicrophonePermission() → AVAudioApplication.requestRecordPermission()
-  → log: "Requesting microphone permission..."
-  → log: "Microphone permission granted"
-  → error: "Microphone permission denied - cannot proceed"
-
-Line 356: connect(apiKey:) → URL.init(), URLRequest.init(), urlSession.webSocketTask(), webSocketTask.resume()
-  → log: "Attempting to connect to OpenAI Realtime API"
-  → log: "Creating WebSocket task..."
-  → log: "Starting WebSocket connection..."
-  → log: "WebSocket connection initiated - waiting for delegate callback"
-  → error: "Invalid WebSocket URL"
-  → error: "URLSession not initialized"
-
-Line 385: urlSession(_:webSocketTask:didOpenWithProtocol:) → receiveMessage()
-  → log: "WebSocket delegate: Connection opened"
-  → log: "Using protocol: \(`protocol`)"
-
-Line 396: urlSession(_:webSocketTask:didCloseWith:reason:) | (leaf)
-  → error: "WebSocket delegate: Connection closed with code \(closeCode.rawValue)"
-  → error: "Close reason: \(reasonString)"
-
-Line 406: receiveMessage() → webSocketTask.receive(), handleDataMessage(), handleTextMessage(), receiveMessage(), handleError()
-  → debug: "📥 [WS] Received data message"
-  → debug: "📥 [WS] Received text message"
-  → error: "Received unknown message type"
-  → error: "WebSocketManager deallocated during receive"
-
-Line 434: handleDataMessage(_:) → String.init(), handleTextMessage()
-  → error: "Binary data received: \(data.count.formattedBytes) - cannot process"
-
-Line 442: handleTextMessage(_:) → parseJSON(), extractMessageType(), handleSessionCreated(), handleSpeechStarted(), handleSpeechStopped(), handleAudioBufferCommitted(), handleResponseCreated(), handleResponseDoneEvent(), handleResponseAudioDelta(), handleResponseTextDelta(), handleResponseTextDone(), handleFunctionCallArgumentsDone(), scheduleResponseAudio(), handleConversationItemAdded(), handleConversationItemDone(), handleResponseOutputItemAdded(), handleErrorMessage()
-  → debug: "📥 [WS] Received \(type): \(messageSize.formattedBytes) (total: \(totalBytesReceived.formattedBytes))"
-  → debug: "⚙️ [WS] Receiving function arguments"
-  → debug: "⚙️ [WS] Receiving text output"
-  → debug: "⚙️ [WS] Receiving audio output"
-  → debug: "📥 [WS] Transcript delta"
-  → debug: "⚙️ [WS] Input audio transcription delta"
-  → debug: "⚙️ [WS] Audio transcript delta"
-  → log: "Audio output completed"
-  → log: "Final transcript: \(transcript)"
-  → log: "Session updated"
-  → log: "response.content_part.added: type=\(type)"
-  → log: "Response content part done"
-  → log: "Response output item done"
-  → log: "Rate limits updated"
-  → log: "Input audio transcription completed"
-  → log: "Unknown event type: \(type) - JSON: \(json)"
-  → error: "Message missing 'type' field: \(text)"
-
-Line 528: parseJSON(from:) → String.data(), JSONSerialization.jsonObject()
-  → error: "Failed to convert text to data"
-  → error: "Failed to parse message as JSON: \(text)"
-
-Line 542: extractMessageType(from:) | (leaf)
-
-Line 546: handleSessionCreated() → sendSessionUpdate()
-  → log: "WebSocket connection established"
-
-Line 554: sendSessionUpdate() → send()
-
-Line 591: send(event:) → JSONSerialization.data(), String.init(), URLSessionWebSocketTask.Message.string(), webSocketTask.send()
-  → log: "Sending event: \(eventType)"
-  → log: "Successfully sent: \(eventType)"
-  → debug: "📤 [WS] Sending \(eventType): \(data.count.formattedBytes) (total: \(totalBytesSent.formattedBytes))"
-  → error: "WebSocket not connected - cannot send event"
-  → error: "Failed to convert event to string"
-  → error: "Failed to send \(eventType): \(sendError.localizedDescription)"
-  → error: "Failed to serialize event: \(serializeError.localizedDescription)"
-
-Line 627: startAudioCapture() → startAudioEngine()
-
-Line 631: startAudioEngine() → audioEngine.start()
-  → log: "Audio engine started successfully"
-  → error: "Failed to start audio engine: \(startError.localizedDescription)"
-
-Line 643: handleSpeechStarted() → apiStateSubject.send(.speechDetected)
-  → log: "Voice activity detection started"
-
-Line 648: handleSpeechStopped() → apiStateSubject.send(.speechStopped), callCreatePromptFunction()
-  → log: "Voice activity detection stopped"
-
-Line 653: callCreatePromptFunction() → queueResponseRequest(), send()
-  → log: "Requesting createPrompt function call after speech stopped"
-
-Line 695: queueResponseRequest(_:) → responseQueueThread.async()
-  → log: "Response queue size: \(self.responseRequestQueue.count)"
-  → log: "Response queue: executing immediately"
-
-Line 710: handleAudioBufferCommitted() | (leaf)
-  → log: "Audio buffer committed"
-
-Line 714: handleResponseCreated() | (leaf)
-  → log: "Response created"
-
-Line 718: handleResponseDoneEvent(_:) → markResponseComplete()
-  → log: "response.done received"
-
-Line 723: markResponseComplete() → responseQueueThread.async(), processNextQueuedRequest()
-
-Line 730: processNextQueuedRequest() → responseQueueThread.async()
-  → log: "Response queue: processing next (remaining: \(self.responseRequestQueue.count))"
-
-Line 745: handleResponseAudioDelta(_:) → scheduleResponseAudio()
-
-Line 751: scheduleResponseAudio(_:) → Data.init(), createPCMBuffer(), responsePlayerNode.scheduleBuffer(), playingAudioSubject.send()
-  → debug: "⛔ [Audio] Playback disabled, skipping audio"
-  → debug: "🎵 [Audio] All buffers finished playing"
-  → log: "Stopped playing response"
-  → log: "Started playing response"
-  → error: "Failed to decode response audio data"
-  → error: "Failed to create PCM buffer from response audio"
-  → error: "realtimeAPI deallocated during audio playback"
-
-Line 790: createPCMBuffer(from:format:) → AVAudioPCMBuffer.init()
-
-Line 807: handleResponseTextDelta(_:) | (leaf)
-  → debug: "📥 [WS] Text delta: \(delta)"
-
-Line 813: handleResponseTextDone(_:) | (leaf)
-  → log: "response.text.done event received"
-
-Line 817: handleFunctionCallArgumentsDone(_:) → String.trimmingCharacters(), String.replacingOccurrences(), String.data(), JSONSerialization.jsonObject(), lastPromptSubject.send(), JSONSerialization.data(), String.init(), send()
-  → log: "function_call_arguments.done: call_id=\(callId), name=\(name)"
-  → log: "📝 Added prompt: \(prompt)"
-  → log: "📝 Accumulated: \(newValue)"
-  → log: "✅ Sent function output"
-  → error: "response.function_call_arguments.done missing 'arguments' field"
-  → error: "response.function_call_arguments.done missing 'call_id' field"
-  → error: "response.function_call_arguments.done missing 'name' field"
-  → error: "Failed to convert arguments to data: \(arguments)"
-  → error: "Failed to extract prompt from arguments"
-  → error: "Failed to convert result to string"
-  → error: "Failed to parse arguments: \(parseError.localizedDescription)"
-  → error: "Arguments that failed to parse: \(arguments)"
-  → error: "Cleaned arguments: \(cleanedArguments)"
-
-Line 893: handleConversationItemAdded(_:) → apiStateSubject.send(.processing)
-  → log: "conversation.item.added: id=\(id), type=\(type)"
-
-Line 904: handleConversationItemDone(_:) | (leaf)
-  → log: "conversation.item.done: id=\(id), status=\(status)"
-
-Line 912: handleResponseOutputItemAdded(_:) | (leaf)
-  → log: "response.output_item.added: \(name) (\(status))"
-
-Line 933: handleErrorMessage(_:) | (leaf)
-  → error: "Error type: \(errorType), message: \(errorMessage)"
-  → error: "Full error event: \(json)"
-
-Line 943: handleError(_:) → formatConnectionError()
-  → error: errorMessage
-
-Line 949: formatConnectionError(_:) | (leaf)
-
-Line 960: enableMicrophone() → stopPlayback(), installAudioTap()
-  → debug: "⚠️ [Audio] Microphone already enabled, ignoring"
-  → log: "Microphone enabled"
-
-Line 970: stopPlayback() → responsePlayerNode.stop()
-
-Line 974: installAudioTap() → audioEngine.inputNode.installTap(), processInputAudioBuffer(), microphoneEnabledSubject.send()
-  → debug: "⛔ [Audio] Microphone disabled, ignoring buffer"
-  → log: "Audio tap installed"
-
-Line 992: processInputAudioBuffer(_:) → convertAudioBuffer(), sendAudioData()
-
-Line 1000: convertAudioBuffer(_:) → AVAudioPCMBuffer.init(), audioConverter.convert()
-  → error: "Failed to create converted buffer"
-  → error: "Audio conversion failed: \(converterError.localizedDescription)"
-
-Line 1024: sendAudioData(_:) → Data.init(), Data.base64EncodedString(), send()
-  → error: "Failed to get channel data"
-
-Line 1042: disableMicrophone() → uninstallAudioTap(), logger.sendPromptToMac()
-  → log: "Sending prompt to Claude Code: \(currentPrompt)"
-  → log: "Microphone disabled"
-
-Line 1054: uninstallAudioTap() → audioEngine.inputNode.removeTap(), microphoneEnabledSubject.send()
-  → log: "Audio tap uninstalled"
-
-Line 1060: requestAudioResponse() → queueResponseRequest(), send()
-  → log: "Requesting one-word audio acknowledgment"
-
-Line 1082: enablePlayback() | (leaf)
-  → log: "Playback enabled"
-
-Line 1087: disablePlayback() → responsePlayerNode.stop()
-  → log: "Playback disabled"
-
-Line 1093: acknowledgeSuccessfulPromptInjection() → lastPromptSubject.send(), responsePlayerNode.play(), requestAudioResponse()
-Line 1107: acknowledgeSuccessfulInterruptExecution() | (leaf)
-  → log: "🧹 Cleared accumulated prompts after successful execution"
-  → log: "Creating voice response"
-  → log: "Voice response skipped - playback disabled"
-
-Line 1106: clearAccumulatedPrompts() → lastPromptSubject.send()
-  → log: "🗑️ Manually cleared accumulated prompts"
-
-Line 1112: disconnect() → stopAudioCapture(), webSocketTask.cancel()
-  → log: "Disconnecting WebSocket..."
-
-Line 1119: stopAudioCapture() → audioEngine.stop(), audioEngine.inputNode.removeTap()
-  → log: "Audio capture stopped"
-
-Line 1125: commitAudioBuffer() → send()
-  → log: "Audio buffer committed"
-
-Line 1133: deinit() → stopAudioCapture(), webSocketTask.cancel()
-  → log: "realtimeAPI deallocated"
+### Logger → RealtimeAPI
+- Logger.handleHandshakeMessage() → realtimeAPI.connect(apiKey)
 */
 
 import Foundation
