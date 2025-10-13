@@ -61,24 +61,6 @@ struct ContentView: View {
                     LogListView(showLogs: $showLogs)
                         .ignoresSafeArea()
                 }
-
-                VStack {
-                    VStack(spacing: 4) {
-                        Text("Screen: \(Int(geometry.size.width)) × \(Int(geometry.size.height))")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundColor(.white)
-                        Text("Safe T:\(Int(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP"))) B:\(Int(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM"))) L:\(Int(UserDefaults.standard.double(forKey: "SAFE_AREA_LEADING"))) R:\(Int(UserDefaults.standard.double(forKey: "SAFE_AREA_TRAILING")))")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundColor(.white)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color.black.opacity(0.7))
-                    .cornerRadius(6)
-                    .offset(y: 40)
-
-                    Spacer()
-                }
             }
             .onAppear {
                 // Capture safe area insets before they're ignored

@@ -804,6 +804,13 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func scheduleResponseAudio(_ audioBase64: String) {
+        // Check if microphone is enabled - if user is speaking, don't play audio
+        if microphoneEnabledSubject.value {
+            log("🎤 Microphone enabled - stopping playback to prevent audio interference")
+            responsePlayerNode.stop()
+            return
+        }
+
         if !playbackEnabled {
             debugLog(id: "scheduleAudio", message: "⛔ [Audio] Playback disabled, skipping audio")
             return

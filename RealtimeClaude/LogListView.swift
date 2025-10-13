@@ -165,6 +165,13 @@ struct LogListView: View {
     @Binding var showLogs: Bool
     @State private var viewModel = LogListViewModel()
 
+    var ACTUAL_SCREEN_HEIGHT: CGFloat {
+        let screenHeight = CGFloat(UserDefaults.standard.double(forKey: "SCREEN_HEIGHT"))
+        let safeTop = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP"))
+        let safeBottom = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM"))
+        return screenHeight + safeTop + safeBottom
+    }
+
     var isIPhone: Bool {
         UIDevice.current.userInterfaceIdiom == .phone
     }
@@ -174,19 +181,24 @@ struct LogListView: View {
             Color(UIColor.systemBackground)
                 .ignoresSafeArea()
 
-            if viewModel.combinedLogs.isEmpty {
-                VStack {
-                    Spacer()
-                    Text("No logs yet")
-                        .font(.title2)
-                        .foregroundColor(.secondary.opacity(0.5))
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
+            VStack {
+                if viewModel.combinedLogs.isEmpty {
+                    VStack {
+                        Spacer()
+                        Text("No logs yet")
+                            .font(.title2)
+                            .foregroundColor(.secondary.opacity(0.5))
+                        Spacer()
+                    }
+                    .frame(height: ACTUAL_SCREEN_HEIGHT)
+                } else {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 6) {
+                            // Top spacer for stats bar
+                            Spacer()
+                                .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")) * 2)
+                                .id("topSpacer")
 
                             ForEach(Array(viewModel.combinedLogs.enumerated()), id: \.0) { index, item in
                                 let (log, count) = item
@@ -194,21 +206,14 @@ struct LogListView: View {
                                     .id(index)
                             }
 
+                            // Bottom spacer for control panel
                             Spacer()
-                                .frame(height: 40)
+                                .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) * 2)
                                 .id("bottomSpacer")
                         }
                         .padding(.horizontal, 12)
-                        .padding(.top, CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")))
-                        .padding(.bottom, 20)
                     }
-                    .frame(height: {
-                        let screenHeight = CGFloat(UserDefaults.standard.double(forKey: "SCREEN_HEIGHT"))
-                        let safeTop = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP"))
-                        let safeBottom = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM"))
-                        // Height = screen height + safe area top + safe area bottom
-                        return screenHeight + safeTop + safeBottom
-                    }())
+                    .frame(height: ACTUAL_SCREEN_HEIGHT)
                     .onChange(of: viewModel.combinedLogs.count) { _ in
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             withAnimation(.easeInOut(duration: 0.3)) {
@@ -224,7 +229,9 @@ struct LogListView: View {
                         }
                     }
                 }
+                }
             }
+            .offset(y: -CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")))
 
 
             VStack {

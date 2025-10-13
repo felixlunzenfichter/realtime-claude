@@ -283,6 +283,13 @@ struct WorkView: View {
     @State private var viewModel = WorkViewModel()
     @Binding var showLogs: Bool
 
+    var ACTUAL_SCREEN_HEIGHT: CGFloat {
+        let screenHeight = CGFloat(UserDefaults.standard.double(forKey: "SCREEN_HEIGHT"))
+        let safeTop = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP"))
+        let safeBottom = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM"))
+        return screenHeight + safeTop + safeBottom
+    }
+
     var body: some View {
         ZStack {
             Color.black
@@ -290,17 +297,21 @@ struct WorkView: View {
 
             VStack {
                 if viewModel.allMessages.isEmpty {
-                    Spacer()
-                    Text("Speak to create a message")
-                        .font(.headline)
-                        .foregroundColor(.gray)
-                    Spacer()
+                    VStack {
+                        Spacer()
+                        Text("Speak to create a message")
+                            .font(.headline)
+                            .foregroundColor(.gray)
+                        Spacer()
+                    }
+                    .frame(height: ACTUAL_SCREEN_HEIGHT)
                 } else {
                     ScrollViewReader { proxy in
                         List {
                             Color.clear
-                                .frame(height: 60)
+                                .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")) * 2)
                                 .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
                                 .listRowInsets(EdgeInsets())
                                 .id("topSpacer")
 
@@ -353,7 +364,7 @@ struct WorkView: View {
                                 )
                                 .id(message.id)
                                 .listRowBackground(Color.clear)
-                                .listRowSeparator(.visible)
+                                .listRowSeparator(.hidden)
                                 .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
                                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                     Button(role: .destructive) {
@@ -364,18 +375,19 @@ struct WorkView: View {
                                     .tint(.red)
                                 }
                             }
+
+                            // Bottom spacer for toggle bar
+                            Color.clear
+                                .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) * 2)
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets())
+                                .id("bottomSpacer")
                         }
                         .listStyle(PlainListStyle())
                         .scrollContentBackground(.hidden)
                         .environment(\.defaultMinListRowHeight, 0)
-                        .frame(height: {
-                            let screenHeight = CGFloat(UserDefaults.standard.double(forKey: "SCREEN_HEIGHT"))
-                            let safeTop = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP"))
-                            let safeBottom = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM"))
-                            // Height = screen height + safe area top + safe area bottom
-                            return screenHeight + safeTop + safeBottom
-                        }())
-                        .offset(y: -CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")))
+                        .frame(height: ACTUAL_SCREEN_HEIGHT)
                         .onChange(of: viewModel.allMessages.count) { _ in
                             withAnimation {
                                 proxy.scrollTo("topSpacer", anchor: .top)
@@ -386,6 +398,7 @@ struct WorkView: View {
             }
             .ignoresSafeArea()
             .frame(maxHeight: .infinity)
+            .offset(y: -CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")))
 
             VStack {
                 Spacer()
@@ -622,10 +635,23 @@ class WorkViewModel {
 
     func addMessage(_ content: String) {
         if let index = messages.firstIndex(where: { $0.status != .injected }) {
-            messages[index].content = content
+            let existingContent = messages[index].content
 
-            log("📝 Replaced message content (status: \(messages[index].status))")
-            log("📝 New content: \(content)")
+            // Check for prefix/duplicate cases
+            if content.hasPrefix(existingContent) {
+                // Existing is a prefix of new content - replace
+                messages[index].content = content
+                log("🔄 Replaced prefix: existing message was contained in new content")
+                log("📝 New content: \(content)")
+            } else if existingContent.contains(content) {
+                // New content is already contained - skip
+                log("⏭️ Skipped duplicate: content already in message")
+            } else if existingContent != content {
+                // Different content - replace
+                messages[index].content = content
+                log("📝 Replaced message content (status: \(messages[index].status))")
+                log("📝 New content: \(content)")
+            }
         } else {
             let message = Message(
                 content: content,
