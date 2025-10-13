@@ -523,7 +523,7 @@ class WorkViewModel {
                 }
             }
 
-        microphoneCancellable = realtimeAPI.microphoneEnabledSubject
+        microphoneCancellable = audioManager.microphoneEnabledSubject
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isEnabled in
                 guard let self = self else { return }
@@ -534,7 +534,7 @@ class WorkViewModel {
                 }
             }
 
-        playingCancellable = realtimeAPI.playingAudioSubject
+        playingCancellable = audioManager.playingAudioSubject
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isPlaying in
                 self?.isPlayingAudio = isPlaying
@@ -586,7 +586,7 @@ class WorkViewModel {
                     if pitchDegrees < -45 {
                         debugLog(id: "deviceTilt", message: "📱 [Motion] Initial tilt detected: \(Int(pitchDegrees))° (enabling mic)")
                         log("Device tilted down > 45 degrees - enabling microphone")
-                        realtimeAPI.enableMicrophone()
+                        audioManager.enableMicrophone()
                         self.isFirstMotionUpdate = false
                     } else {
                         debugLog(id: "deviceTilt", message: "📱 [Motion] Initial position: \(Int(pitchDegrees))° (mic disabled)")
@@ -595,11 +595,16 @@ class WorkViewModel {
                     if pitchDegrees < -45 && !self.isMicrophoneEnabled {
                         debugLog(id: "deviceTilt", message: "📱 [Motion] Tilted down: \(Int(pitchDegrees))° (enabling mic)")
                         log("Device tilted down > 45 degrees - enabling microphone")
-                        realtimeAPI.enableMicrophone()
+                        audioManager.enableMicrophone()
                     } else if pitchDegrees > -45 && self.isMicrophoneEnabled {
                         debugLog(id: "deviceTilt", message: "📱 [Motion] Tilted back: \(Int(pitchDegrees))° (disabling mic)")
                         log("Device tilted back - disabling microphone")
-                        realtimeAPI.disableMicrophone()
+                        audioManager.disableMicrophone()
+                        let currentPrompt = realtimeAPI.lastPromptSubject.value
+                        if !currentPrompt.isEmpty {
+                            log("Sending prompt to Claude Code: \(currentPrompt)")
+                            logger.sendPromptToMac(currentPrompt)
+                        }
                     } else if pitchDegrees < -45 && self.isMicrophoneEnabled {
                         debugLog(id: "deviceTilt", message: "📱 [Motion] Still tilted: \(Int(pitchDegrees))° (mic enabled)")
                     } else {
@@ -615,20 +620,25 @@ class WorkViewModel {
     func handleMicrophoneOverrideChange() {
         if microphoneOverride {
             log("Microphone override ON - enabling microphone manually")
-            realtimeAPI.enableMicrophone()
+            audioManager.enableMicrophone()
         } else {
             log("Microphone override OFF - disabling microphone, tilt detection active")
-            realtimeAPI.disableMicrophone()
+            audioManager.disableMicrophone()
+            let currentPrompt = realtimeAPI.lastPromptSubject.value
+            if !currentPrompt.isEmpty {
+                log("Sending prompt to Claude Code: \(currentPrompt)")
+                logger.sendPromptToMac(currentPrompt)
+            }
         }
     }
 
     func handlePlaybackChange() {
         if playbackEnabled {
             log("Playback enabled")
-            realtimeAPI.enablePlayback()
+            audioManager.enablePlayback()
         } else {
             log("Playback disabled")
-            realtimeAPI.disablePlayback()
+            audioManager.disablePlayback()
         }
     }
 

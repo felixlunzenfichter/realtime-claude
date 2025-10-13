@@ -14,6 +14,7 @@
 		B316EC082D3454C000205812 /* IntFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B316EC082D3454C000205813 /* IntFormatter.swift */; };
 		B316EC092D3454C000205814 /* WorkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B316EC092D3454C000205815 /* WorkView.swift */; };
 		B316EC0A2D3454C000205816 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B316EC0A2D3454C000205817 /* Assets.xcassets */; };
+		B316EC0B2D3454C000205818 /* AudioManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B316EC0B2D3454C000205819 /* AudioManager.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -25,6 +26,7 @@
 		B316EC082D3454C000205813 /* IntFormatter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntFormatter.swift; sourceTree = "<group>"; };
 		B316EC092D3454C000205815 /* WorkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkView.swift; sourceTree = "<group>"; };
 		B316EC0A2D3454C000205817 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B316EC0B2D3454C000205819 /* AudioManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioManager.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -61,6 +63,7 @@
 				B316EC052D3454C000205807 /* Logger.swift */,
 				B316EC062D3454C000205809 /* LogListView.swift */,
 				B316EC072D3454C000205811 /* RealtimeAPI.swift */,
+				B316EC0B2D3454C000205819 /* AudioManager.swift */,
 				B316EC082D3454C000205813 /* IntFormatter.swift */,
 				B316EC092D3454C000205815 /* WorkView.swift */,
 				B316EC0A2D3454C000205817 /* Assets.xcassets */,
@@ -141,6 +144,7 @@
 				B316EC052D3454C000205806 /* Logger.swift in Sources */,
 				B316EC062D3454C000205808 /* LogListView.swift in Sources */,
 				B316EC072D3454C000205810 /* RealtimeAPI.swift in Sources */,
+				B316EC0B2D3454C000205818 /* AudioManager.swift in Sources */,
 				B316EC082D3454C000205812 /* IntFormatter.swift in Sources */,
 				B316EC092D3454C000205814 /* WorkView.swift in Sources */,
 			);

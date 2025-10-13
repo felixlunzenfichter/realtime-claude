@@ -94,55 +94,33 @@ enum APIState {
 
 protocol RealtimeAPIProtocol: Sendable {
     var apiStateSubject: CurrentValueSubject<APIState, Never> { get }
-    var microphoneEnabledSubject: CurrentValueSubject<Bool, Never> { get }
-    var playingAudioSubject: CurrentValueSubject<Bool, Never> { get }
     var lastPromptSubject: CurrentValueSubject<String, Never> { get }
 
     func connect(apiKey: String)
-    func enableMicrophone()
-    func disableMicrophone()
-    func enablePlayback()
-    func disablePlayback()
     func acknowledgeSuccessfulPromptInjection()
     func acknowledgeSuccessfulInterruptExecution()
     func clearAccumulatedPrompts()
+    func processInputAudioBuffer(_ data: Data)
 }
 
 nonisolated(unsafe) let realtimeAPI: RealtimeAPIProtocol = RealtimeAPI()
 
 private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable, RealtimeAPIProtocol {
-    let OPENAI_AUDIO_FORMAT = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24000, channels: 1, interleaved: false)!
     let apiStateSubject = CurrentValueSubject<APIState, Never>(.disconnected)
     let lastPromptSubject = CurrentValueSubject<String, Never>("")
-    let microphoneEnabledSubject = CurrentValueSubject<Bool, Never>(false)
-    let playingAudioSubject = CurrentValueSubject<Bool, Never>(false)
 
-    private let audioConverter: AVAudioConverter
-    private let audioEngine: AVAudioEngine
-    private let responsePlayerNode: AVAudioPlayerNode
     private let responseQueueThread = DispatchQueue(label: "com.realtimeapi.responsequeue", qos: .userInitiated)
 
     private var apiKey = ""
     private var currentFunctionCallId: String?
     private var isResponseActive: Bool = false
-    private var playbackEnabled = true
     private var responseRequestQueue: [() -> Void] = []
-    private var scheduledBufferCount: Int = 0
     private var totalBytesReceived: Int = 0
     private var totalBytesSent: Int = 0
     private var urlSession: URLSession?
     private var webSocketTask: URLSessionWebSocketTask?
 
     fileprivate override init() {
-        audioEngine = AVAudioEngine()
-
-        let inputFormat = audioEngine.inputNode.outputFormat(forBus: 0)
-        audioConverter = AVAudioConverter(from: inputFormat, to: OPENAI_AUDIO_FORMAT)!
-
-        responsePlayerNode = AVAudioPlayerNode()
-        audioEngine.attach(responsePlayerNode)
-        audioEngine.connect(responsePlayerNode, to: audioEngine.mainMixerNode, format: OPENAI_AUDIO_FORMAT)
-
         super.init()
         log("WebSocketManager initialized")
 
@@ -154,20 +132,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             delegate: self,
             delegateQueue: OperationQueue.main
         )
-
-        requestMicrophonePermission()
-    }
-
-    func requestMicrophonePermission() {
-        log("Requesting microphone permission...")
-        Task {
-            let granted = await AVAudioApplication.requestRecordPermission()
-            if granted {
-                log("Microphone permission granted")
-            } else {
-                error("Microphone permission denied - cannot proceed")
-            }
-        }
     }
 
     func connect(apiKey: String) {
@@ -286,7 +250,9 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         case "response.done":
             handleResponseDoneEvent(json)
         case "response.audio.delta":
-            handleResponseAudioDelta(json)
+            if let audioBase64 = json["delta"] as? String {
+                audioManager.scheduleOutputAudioBuffer(audioBase64)
+            }
         case "response.text.delta":
             handleResponseTextDelta(json)
         case "response.text.done":
@@ -302,7 +268,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         case "response.output_audio.delta":
             debugLog(id: "audioOutputDelta", message: "⚙️ [WS] Receiving audio output")
             if let audioBase64 = json["delta"] as? String {
-                scheduleResponseAudio(audioBase64)
+                audioManager.scheduleOutputAudioBuffer(audioBase64)
             }
         case "response.output_audio.done":
             log("Audio output completed")
@@ -317,7 +283,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         case "session.updated":
             log("Session configuration updated successfully")
             apiStateSubject.send(.connected)
-            startAudioCapture()
+            try? audioManager.startAudioEngine()
         case "response.output_item.added":
             handleResponseOutputItemAdded(json)
         case "response.content_part.added":
@@ -493,19 +459,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         }
     }
 
-    func startAudioCapture() {
-        startAudioEngine()
-    }
-
-    func startAudioEngine() {
-        do {
-            try audioEngine.start()
-            log("Audio engine started successfully")
-        } catch let startError {
-            error("Failed to start audio engine: \(startError.localizedDescription)")
-        }
-    }
-
     func handleSpeechStarted() {
         log("Voice activity detection started")
         apiStateSubject.send(.speechDetected)
@@ -610,75 +563,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             self.isResponseActive = true
             nextRequest()
         }
-    }
-
-    func handleResponseAudioDelta(_ json: [String: Any]) {
-        if let audioBase64 = json["delta"] as? String {
-            scheduleResponseAudio(audioBase64)
-        }
-    }
-
-    func scheduleResponseAudio(_ audioBase64: String) {
-        // Check if microphone is enabled - if user is speaking, don't play audio
-        if microphoneEnabledSubject.value {
-            log("🎤 Microphone enabled - stopping playback to prevent audio interference")
-            responsePlayerNode.stop()
-            return
-        }
-
-        if !playbackEnabled {
-            debugLog(id: "scheduleAudio", message: "⛔ [Audio] Playback disabled, skipping audio")
-            return
-        }
-
-        guard let audioData = Data(base64Encoded: audioBase64) else {
-            error("Failed to decode response audio data")
-            return
-        }
-
-        guard let buffer = createPCMBuffer(from: audioData, format: OPENAI_AUDIO_FORMAT) else {
-            error("Failed to create PCM buffer from response audio")
-            return
-        }
-
-        scheduledBufferCount += 1
-
-        responsePlayerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-            guard let self = self else {
-                error("realtimeAPI deallocated during audio playback")
-                return
-            }
-
-            self.scheduledBufferCount -= 1
-
-            if self.scheduledBufferCount == 0 {
-                debugLog(id: "audioPlayback", message: "🎵 [Audio] All buffers finished playing")
-                self.playingAudioSubject.send(false)
-                log("Stopped playing response")
-            } else if self.scheduledBufferCount > 0 {
-                if !self.playingAudioSubject.value {
-                    self.playingAudioSubject.send(true)
-                    log("Started playing response")
-                }
-            }
-        }
-    }
-
-    func createPCMBuffer(from data: Data, format: AVAudioFormat) -> AVAudioPCMBuffer? {
-        let frameLength = UInt32(data.count / MemoryLayout<Int16>.size)
-
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameLength) else {
-            return nil
-        }
-
-        buffer.frameLength = frameLength
-
-        let audioBuffer = buffer.int16ChannelData![0]
-        data.withUnsafeBytes { bytes in
-            audioBuffer.initialize(from: bytes.bindMemory(to: Int16.self).baseAddress!, count: Int(frameLength))
-        }
-
-        return buffer
     }
 
     func handleResponseTextDelta(_ json: [String: Any]) {
@@ -852,78 +736,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         }
     }
 
-    func enableMicrophone() {
-        if microphoneEnabledSubject.value {
-            debugLog(id: "enableMicrophone", message: "⚠️ [Audio] Microphone already enabled, ignoring")
-            return
-        }
-        stopPlayback()
-        installAudioTap()
-        log("Microphone enabled")
-    }
-
-    func stopPlayback() {
-        responsePlayerNode.stop()
-    }
-
-    func installAudioTap() {
-        let inputNode = audioEngine.inputNode
-        let format = inputNode.outputFormat(forBus: 0)
-
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-            guard let self = self else { return }
-
-            if self.microphoneEnabledSubject.value {
-                self.processInputAudioBuffer(buffer)
-            } else {
-                debugLog(id: "inputAudio", message: "⛔ [Audio] Microphone disabled, ignoring buffer")
-            }
-        }
-
-        microphoneEnabledSubject.send(true)
-        log("Audio tap installed")
-    }
-
-    func processInputAudioBuffer(_ buffer: AVAudioPCMBuffer) {
-        guard let convertedBuffer = convertAudioBuffer(buffer) else {
-            return
-        }
-
-        sendAudioData(convertedBuffer)
-    }
-
-    func convertAudioBuffer(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-        let outputFrameCapacity = AVAudioFrameCount(Double(buffer.frameLength) * 24000.0 / buffer.format.sampleRate)
-
-        guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: audioConverter.outputFormat, frameCapacity: outputFrameCapacity) else {
-            error("Failed to create converted buffer")
-            return nil
-        }
-
-        let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
-            outStatus.pointee = .haveData
-            return buffer
-        }
-
-        var converterError: NSError? = nil
-        let status = audioConverter.convert(to: convertedBuffer, error: &converterError, withInputFrom: inputBlock)
-
-        if let converterError = converterError {
-            error("Audio conversion failed: \(converterError.localizedDescription)")
-            return nil
-        }
-
-        return status == .haveData ? convertedBuffer : nil
-    }
-
-    func sendAudioData(_ buffer: AVAudioPCMBuffer) {
-        guard let channelData = buffer.int16ChannelData?[0] else {
-            error("Failed to get channel data")
-            return
-        }
-
-        let frameLength = Int(buffer.frameLength)
-        let data = Data(bytes: channelData, count: frameLength * MemoryLayout<Int16>.size)
+    func processInputAudioBuffer(_ data: Data) {
         let base64Audio = data.base64EncodedString()
 
         let audioEvent: [String: Any] = [
@@ -932,24 +745,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         ]
 
         send(event: audioEvent)
-    }
-
-    func disableMicrophone() {
-        uninstallAudioTap()
-
-        let currentPrompt = lastPromptSubject.value
-        if !currentPrompt.isEmpty {
-            log("Sending prompt to Claude Code: \(currentPrompt)")
-            logger.sendPromptToMac(currentPrompt)
-        }
-
-        log("Microphone disabled")
-    }
-
-    func uninstallAudioTap() {
-        audioEngine.inputNode.removeTap(onBus: 0)
-        microphoneEnabledSubject.send(false)
-        log("Audio tap uninstalled")
     }
 
     func requestAudioResponse(for prompt: String) {
@@ -984,29 +779,13 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         }
     }
 
-    func enablePlayback() {
-        playbackEnabled = true
-        log("Playback enabled")
-    }
-
-    func disablePlayback() {
-        playbackEnabled = false
-        responsePlayerNode.stop()
-        log("Playback disabled")
-    }
-
     func acknowledgeSuccessfulPromptInjection() {
         let promptToSummarize = lastPromptSubject.value
         lastPromptSubject.send("")
         log("🧹 Cleared accumulated prompts after successful prompt injection")
 
-        if playbackEnabled {
-            responsePlayerNode.play()
-            requestAudioResponse(for: promptToSummarize)
-            log("Creating voice response")
-        } else {
-            log("Voice response skipped - playback disabled")
-        }
+        requestAudioResponse(for: promptToSummarize)
+        log("Creating voice response")
     }
 
     func acknowledgeSuccessfulInterruptExecution() {
@@ -1023,15 +802,9 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     func disconnect() {
         log("Disconnecting WebSocket...")
         apiStateSubject.send(.disconnected)
-        stopAudioCapture()
+        audioManager.stopAudioEngine()
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
         webSocketTask = nil
-    }
-
-    func stopAudioCapture() {
-        audioEngine.stop()
-        audioEngine.inputNode.removeTap(onBus: 0)
-        log("Audio capture stopped")
     }
 
     func commitAudioBuffer() {
@@ -1043,7 +816,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     deinit {
-        stopAudioCapture()
+        audioManager.stopAudioEngine()
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
         log("realtimeAPI deallocated")
     }
