@@ -111,7 +111,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
 
     private let responseQueueThread = DispatchQueue(label: "com.realtimeapi.responsequeue", qos: .userInitiated)
 
-    private var apiKey = ""
     private var currentFunctionCallId: String?
     private var isResponseActive: Bool = false
     private var responseRequestQueue: [() -> Void] = []
@@ -136,7 +135,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
 
     func connect(apiKey: String) {
         log("Attempting to connect to OpenAI Realtime API")
-        self.apiKey = apiKey
 
         guard let url = URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime") else {
             error("Invalid WebSocket URL")
