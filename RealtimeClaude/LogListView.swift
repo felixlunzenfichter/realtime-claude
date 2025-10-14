@@ -195,7 +195,6 @@ struct LogListView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 6) {
-                            // Top spacer for stats bar
                             Spacer()
                                 .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")) * 2)
                                 .id("topSpacer")
@@ -206,7 +205,6 @@ struct LogListView: View {
                                     .id(index)
                             }
 
-                            // Bottom spacer for control panel
                             Spacer()
                                 .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) * 2)
                                 .id("bottomSpacer")
@@ -522,7 +520,7 @@ struct LogRowView: View {
                     .foregroundColor(log.type.color)
 
                 if let count = count {
-                    Text("x\(count)")
+                    Text(String(format: "x%4d", count))
                         .font(.caption)
                         .fontWeight(.semibold)
                         .foregroundColor(.orange)

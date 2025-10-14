@@ -280,21 +280,32 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     }
 
     func addDebugLog(id: String, message: String, file: String, function: String) {
-        let logMessage = LogMessage(
-            id: id,
-            type: .log,
-            timestamp: Date(),
-            fileName: file,
-            functionName: function,
-            message: message
-        )
-
         var debugLogs = debugLogsSubject.value
 
         if let index = debugLogs.firstIndex(where: { $0.0.id == id }) {
-            let (_, count) = debugLogs[index]
-            debugLogs[index] = (logMessage, count + 1)
+            let (existingLog, count) = debugLogs[index]
+            let now = Date()
+            let timeSinceLastUpdate = now.timeIntervalSince(existingLog.timestamp)
+            let newTimestamp = timeSinceLastUpdate > 1.0 ? now : existingLog.timestamp
+
+            let updatedLog = LogMessage(
+                id: id,
+                type: .log,
+                timestamp: newTimestamp,
+                fileName: file,
+                functionName: function,
+                message: message
+            )
+            debugLogs[index] = (updatedLog, count + 1)
         } else {
+            let logMessage = LogMessage(
+                id: id,
+                type: .log,
+                timestamp: Date(),
+                fileName: file,
+                functionName: function,
+                message: message
+            )
             debugLogs.insert((logMessage, 1), at: 0)
         }
 
@@ -424,8 +435,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         let originalPrompt = jsonData["originalPrompt"] as? String ?? "Unknown prompt"
 
         if status == "success" {
-            log("✅ Prompt successfully injected into terminal")
-            log("📝 Complete prompt executed: \(originalPrompt)")
+            log("✅ Prompt successfully injected into terminal: \(originalPrompt)")
             promptStatusSubject.send(PromptStatusUpdate(prompt: originalPrompt, status: "injected"))
 
             if originalPrompt == "[Request interrupted by user]" {

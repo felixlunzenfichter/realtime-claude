@@ -53,7 +53,7 @@ protocol AudioManagerProtocol: Sendable {
     var microphoneEnabledSubject: CurrentValueSubject<Bool, Never> { get }
     var playingAudioSubject: CurrentValueSubject<Bool, Never> { get }
 
-    func startAudioEngine() throws
+    func startAudioEngine()
     func stopAudioEngine()
     func enableMicrophone()
     func disableMicrophone()
@@ -101,9 +101,13 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         }
     }
 
-    func startAudioEngine() throws {
-        try audioEngine.start()
-        log("Audio engine started successfully")
+    func startAudioEngine() {
+        do {
+            try audioEngine.start()
+            log("Audio engine started successfully")
+        } catch let startError {
+            error("Failed to start audio engine: \(startError.localizedDescription)")
+        }
     }
 
     func stopAudioEngine() {

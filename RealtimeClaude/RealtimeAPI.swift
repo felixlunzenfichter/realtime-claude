@@ -85,11 +85,11 @@ import Foundation
 import Combine
 
 enum APIState {
-    case disconnected           // Not connected to OpenAI
-    case connected              // Connected, idle (mic may or may not be enabled)
-    case speechDetected         // Voice activity started (VAD triggered)
-    case speechStopped          // Voice activity stopped (VAD ended)
-    case processing             // Function call executing
+    case disconnected
+    case connected
+    case speechDetected
+    case speechStopped
+    case processing
 }
 
 protocol RealtimeAPIProtocol: Sendable {
@@ -281,7 +281,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         case "session.updated":
             log("Session configuration updated successfully")
             apiStateSubject.send(.connected)
-            try? audioManager.startAudioEngine()
+            audioManager.startAudioEngine()
         case "response.output_item.added":
             handleResponseOutputItemAdded(json)
         case "response.content_part.added":
@@ -609,25 +609,19 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                 return
             }
 
-            // Get current value and check for prefix case
             let currentValue = lastPromptSubject.value
             let newValue: String
 
             if currentValue.isEmpty {
-                // First prompt, just use it
                 newValue = prompt
                 log("📝 First prompt: \(prompt)")
             } else if prompt.hasPrefix(currentValue) {
-                // Current is a prefix of new prompt - just replace
                 newValue = prompt
-                log("🔄 Replaced prefix: current was contained in new prompt")
-                log("📝 New complete prompt: \(prompt)")
+                log("🔄 Replaced prefix: current was contained in new prompt - \(prompt)")
             } else if currentValue.contains(prompt) {
-                // New prompt is already contained - skip it
                 newValue = currentValue
                 log("⏭️ Skipped duplicate: prompt already contained")
             } else {
-                // Different prompts - accumulate
                 newValue = currentValue + "\n" + prompt
                 log("📝 Added prompt: \(prompt)")
             }
@@ -780,15 +774,13 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     func acknowledgeSuccessfulPromptInjection() {
         let promptToSummarize = lastPromptSubject.value
         lastPromptSubject.send("")
-        log("🧹 Cleared accumulated prompts after successful prompt injection")
+        log("🧹 Cleared accumulated prompts after successful prompt injection and creating voice response")
 
         requestAudioResponse(for: promptToSummarize)
-        log("Creating voice response")
     }
 
     func acknowledgeSuccessfulInterruptExecution() {
-        log("🛑 Interrupt successfully executed")
-        log("📝 Keeping accumulated prompts (interrupt doesn't clear them)")
+        log("🛑 Interrupt successfully executed - keeping accumulated prompts (interrupt doesn't clear them)")
     }
 
     func clearAccumulatedPrompts() {

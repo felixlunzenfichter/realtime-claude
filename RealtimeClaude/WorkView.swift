@@ -318,7 +318,6 @@ struct WorkView: View {
                             ForEach(viewModel.allMessages) { message in
                                 ZStack(alignment: .bottomTrailing) {
                                     if message.content == INTERRUPT_MESSAGE {
-                                        // Special display for interrupt messages
                                         HStack {
                                             HStack(spacing: 6) {
                                                 if message.status == .sent {
@@ -376,7 +375,6 @@ struct WorkView: View {
                                 }
                             }
 
-                            // Bottom spacer for toggle bar
                             Color.clear
                                 .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) * 2)
                                 .listRowBackground(Color.clear)
@@ -506,7 +504,6 @@ class WorkViewModel {
             .sink { [weak self] apiState in
                 guard let self = self else { return }
 
-                // Map API state to recording status
                 switch apiState {
                 case .disconnected:
                     self.currentRecordingStatus = .disconnected
@@ -528,7 +525,6 @@ class WorkViewModel {
             .sink { [weak self] isEnabled in
                 guard let self = self else { return }
                 self.isMicrophoneEnabled = isEnabled
-                // Update status if we're in connected state
                 if self.currentRecordingStatus == .connected || self.currentRecordingStatus == .microphoneEnabled {
                     self.currentRecordingStatus = isEnabled ? .microphoneEnabled : .connected
                 }
@@ -647,20 +643,14 @@ class WorkViewModel {
         if let index = messages.firstIndex(where: { $0.status != .injected }) {
             let existingContent = messages[index].content
 
-            // Check for prefix/duplicate cases
             if content.hasPrefix(existingContent) {
-                // Existing is a prefix of new content - replace
                 messages[index].content = content
-                log("🔄 Replaced prefix: existing message was contained in new content")
-                log("📝 New content: \(content)")
+                log("🔄 Replaced prefix: existing message was contained in new content - \(content)")
             } else if existingContent.contains(content) {
-                // New content is already contained - skip
                 log("⏭️ Skipped duplicate: content already in message")
             } else if existingContent != content {
-                // Different content - replace
                 messages[index].content = content
-                log("📝 Replaced message content (status: \(messages[index].status))")
-                log("📝 New content: \(content)")
+                log("📝 Replaced message content (status: \(messages[index].status)) - \(content)")
             }
         } else {
             let message = Message(
@@ -725,7 +715,6 @@ class WorkViewModel {
 
         addInterrupt()
 
-        // Send it to Mac for injection like a regular prompt
         logger.sendPromptToMac(INTERRUPT_MESSAGE)
     }
 
