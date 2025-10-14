@@ -514,18 +514,6 @@ struct LogRowView: View {
                     .fill(count != nil ? Color.orange : (isTransmitted ? Color.green : Color.red))
                     .frame(width: 8, height: 8)
 
-                Text(log.type.label)
-                    .font(.caption)
-                    .fontWeight(.bold)
-                    .foregroundColor(log.type.color)
-
-                if let count = count {
-                    Text(String(format: "x%4d", count))
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.orange)
-                }
-
                 Text("•")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -533,6 +521,7 @@ struct LogRowView: View {
                 Text(log.timestamp.formattedTimestamp)
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
 
                 Text("•")
                     .font(.caption)
@@ -541,6 +530,8 @@ struct LogRowView: View {
                 Text(log.shortFileName)
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
 
                 Text("•")
                     .font(.caption)
@@ -549,6 +540,16 @@ struct LogRowView: View {
                 Text(log.functionName)
                     .font(.caption)
                     .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                if let count = count {
+                    Text(String(format: "x%4d", count))
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.orange)
+                        .frame(width: 40, alignment: .leading)
+                }
 
                 Spacer()
             }

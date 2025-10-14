@@ -176,7 +176,7 @@ struct LogMessage: Identifiable, Codable, Sendable {
     let message: String
 
     var shortFileName: String {
-        URL(fileURLWithPath: fileName).lastPathComponent
+        URL(fileURLWithPath: fileName).deletingPathExtension().lastPathComponent
     }
 }
 
