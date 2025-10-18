@@ -1,129 +1,96 @@
 /*
-# REFACTORING DOCUMENT: WorkView.swift
+# WorkView - Complete Specification
 
-## Current State: ✅ PROPERLY ORDERED
+## Global Constant
+- INTERRUPT_MESSAGE: String = "[Request interrupted by user]"
 
-### Enum: MessageStatus
+## Enum: RecordingStatus
 
-#### Computed Properties:
-Line 15: color: Color (public, get-only) → uses: self
-Line 27: statusText: String (public, get-only) → uses: self
+### Computed Properties
+- color: Color → uses: self
+- statusText: String → uses: self
 
-### Struct: Message (Identifiable)
+## Enum: MessageStatus
 
-#### Constants:
-- id: UUID (public, let) = UUID()
-- timestamp: Date (public, let) = passed at initialization
+### Computed Properties
+- color: Color → uses: self
+- statusText: String → uses: self
 
-#### Properties:
-- content: String (public, var) = passed at initialization
-- status: MessageStatus (public, var) = passed at initialization → mutated in: updateMessageStatus(= new status)
+## Struct: Message (Identifiable)
 
-### Struct: ToggleBar (View)
+### Constants
+- id: UUID = UUID()
+- timestamp: Date
 
-#### Struct: ToggleItem
+### Properties
+- content: String
+- status: MessageStatus → updateMessageStatus(): =
 
-#### Constants:
-- color: Color (public, let) = passed from parent
-- icon: String? (public, let) = passed from parent
-- text: String? (public, let) = passed from parent
-- action: () -> Void (public, let) = passed from parent
+## Struct: ToggleBar (View)
 
-#### Properties:
-- isOn: Bool (public, @Binding var) → mutated in: user toggle (binding from parent)
+### Struct: ToggleItem
+- color: Color
+- icon: String?
+- text: String?
+- action: () -> Void
+- isOn: Bool (@Binding)
 
-#### Constants:
-- items: [ToggleItem] (public, let) = passed from parent
-- height: CGFloat (public, let) = 120 (default)
-- topSpacing: CGFloat (public, let) = 20 (default)
-- yOffset: CGFloat (public, let) = 60 (default)
+### Constants
+- items: [ToggleItem]
+- height: CGFloat = 120
+- topSpacing: CGFloat = 20
+- yOffset: CGFloat = 60
 
-#### Functions:
-Line 65: init(items:height:topSpacing:yOffset:) | (leaf)
+### Functions
+- init(items, height, topSpacing, yOffset) → (leaf)
 
-#### Computed Properties:
-Line 72: body: some View (public, get-only) → uses: items, height, topSpacing, yOffset
+### Computed Properties
+- body: some View → uses: items, height, topSpacing, yOffset
 
-### Struct: WorkView (View)
+## Struct: WorkView (View)
 
-#### Properties:
-- viewModel: WorkViewModel (private, @State var) = WorkViewModel() → mutated in: SwiftUI state management
-- showLogs: Bool (public, @Binding var) → mutated in: toggle action (binding from parent)
+### Properties
+- viewModel: WorkViewModel (@State) = WorkViewModel()
+- showLogs: Bool (@Binding)
 
-#### Computed Properties:
-Line 119: body: some View (public, get-only) → uses: viewModel, showLogs
-  → log: "Log view shown"
-  → log: "Log view hidden"
+### Computed Properties
+- body: some View → uses: viewModel, showLogs
 
-### Class: WorkViewModel (@Observable)
+## Class: WorkViewModel (@Observable)
 
-#### Properties:
-- isMicrophoneEnabled: Bool (public, var) = true → mutated in: init subscription(= from realtimeAPI.microphoneEnabledSubject)
-- isPlayingAudio: Bool (public, var) = false → mutated in: init subscription(= from realtimeAPI.playingAudioSubject)
-- messages: [Message] (public, var) = [] → mutated in: addMessage(insert message at 0)
-- pitch: Double (public, var) = 0 → mutated in: startMotionDetection(= attitude.pitch)
-- roll: Double (public, var) = 0 → mutated in: startMotionDetection(= attitude.roll)
-- microphoneCancellable: AnyCancellable? (private, var) = nil → mutated in: init(= subscription)
-- playingCancellable: AnyCancellable? (private, var) = nil → mutated in: init(= subscription)
-- promptCancellable: AnyCancellable? (private, var) = nil → mutated in: init(= subscription)
-- statusCancellable: AnyCancellable? (private, var) = nil → mutated in: init(= subscription)
-- voiceStartedCancellable: AnyCancellable? (private, var) = nil → mutated in: init(= subscription)
-- voiceStoppedCancellable: AnyCancellable? (private, var) = nil → mutated in: init(= subscription)
-- functionStartedCancellable: AnyCancellable? (private, var) = nil → mutated in: init(= subscription)
-- motionManager: CMMotionManager (private, let) = CMMotionManager()
-- isFirstMotionUpdate: Bool (private, var) = true → mutated in: startMotionDetection(= false when mic enabled)
-- currentRecordingId: UUID? (public, var) = nil → mutated in: handleVoiceStarted(= UUID()), addMessage(= nil)
-- currentRecordingStatus: MessageStatus? (public, var) = nil → mutated in: handleVoiceStarted(= .recording), handleVoiceStopped(= .stopped), handleFunctionStarted(= .processing), addMessage(= nil)
-- currentRecordingTimestamp: Date? (public, var) = nil → mutated in: handleVoiceStarted(= Date()), addMessage(= nil)
+### Constants
+- motionManager: CMMotionManager = CMMotionManager()
+- realtimeAPI: RealtimeAPIProtocol
+- audioManager: AudioManagerProtocol
+- logger: LoggerProtocol
 
-#### Properties (with didSet):
-Line 252: microphoneOverride: Bool (public, var) = false → mutated in: user toggle, didSet calls handleMicrophoneOverrideChange()
-Line 257: playbackEnabled: Bool (public, var) = true → mutated in: user toggle, didSet calls handlePlaybackChange()
+### Properties
+- isMicrophoneEnabled: Bool = true → init subscription: realtimeAPI.microphoneEnabledSubject
+- isPlayingAudio: Bool = false → init subscription: realtimeAPI.playingAudioSubject
+- messages: [Message] = [] → addMessage(): insert, deleteMessage(): remove
+- pitch: Double = 0 → startMotionDetection(): =
+- roll: Double = 0 → startMotionDetection(): =
+- currentRecordingStatus: RecordingStatus = .disconnected → init subscription: realtimeAPI.apiStateSubject
+- microphoneCancellable: AnyCancellable? → init: =
+- apiStateCancellable: AnyCancellable? → init: =
+- promptCancellable: AnyCancellable? → init: =
+- statusCancellable: AnyCancellable? → init: =
+- isFirstMotionUpdate: Bool = true → startMotionDetection(): false
+- microphoneOverride: Bool = false (didSet: handleMicrophoneOverrideChange())
+- playbackEnabled: Bool = true (didSet: handlePlaybackChange())
 
-#### Functions:
-Line 415: init() → realtimeAPI.microphoneEnabledSubject.sink(), realtimeAPI.playingAudioSubject.sink(), realtimeAPI.lastPromptSubject.sink(), logger.promptStatusSubject.sink(), realtimeAPI.voiceActivityStartedSubject.sink(), realtimeAPI.voiceActivityStoppedSubject.sink(), realtimeAPI.functionExecutionStartedSubject.sink(), addMessage(), updateMessageStatus()
-
-Line 471: startMotionDetection() → motionManager.startDeviceMotionUpdates(), realtimeAPI.enableMicrophone(), realtimeAPI.disableMicrophone()
-  → log: "Device motion not available"
-  → log: "Device tilted down > 45 degrees - enabling microphone"
-  → log: "Device tilted back - disabling microphone"
-  → debug: "📱 [Motion] Initial tilt detected: \(Int(pitchDegrees))° (enabling mic)"
-  → debug: "📱 [Motion] Initial position: \(Int(pitchDegrees))° (mic disabled)"
-  → debug: "📱 [Motion] Tilted down: \(Int(pitchDegrees))° (enabling mic)"
-  → debug: "📱 [Motion] Tilted back: \(Int(pitchDegrees))° (disabling mic)"
-  → debug: "📱 [Motion] Still tilted: \(Int(pitchDegrees))° (mic enabled)"
-  → debug: "📱 [Motion] Still upright: \(Int(pitchDegrees))° (mic disabled)"
-  → debug: "⛔ [Motion] Tilt detection disabled (override ON)"
-
-Line 525: handleMicrophoneOverrideChange() → realtimeAPI.enableMicrophone(), realtimeAPI.disableMicrophone()
-  → log: "Microphone override ON - enabling microphone manually"
-  → log: "Microphone override OFF - disabling microphone, tilt detection active"
-
-Line 535: handlePlaybackChange() → realtimeAPI.enablePlayback(), realtimeAPI.disablePlayback()
-  → log: "Playback enabled"
-  → log: "Playback disabled"
-
-Line 545: handleVoiceStarted(_:) | (leaf)
-
-Line 551: handleVoiceStopped(_:) | (leaf)
-
-Line 555: handleFunctionStarted(_:) | (leaf)
-
-Line 559: addMessage(_:) → messages.firstIndex(), messages.insert()
-  → log: "📝 Replaced message content (status: \(messages[index].status))"
-  → log: "📝 New content: \(content)"
-  → log: "📝 Created new message (all previous are injected)"
-
-Line 585: updateMessageStatus(_:status:) → messages.firstIndex()
-
-Line 591: deleteMessage(_:) → messages.firstIndex(), realtimeAPI.clearAccumulatedPrompts(), messages.remove()
-  → log: "🗑️ Deleted current message and cleared accumulated prompts"
-  → log: "⚠️ Cannot delete successfully injected message"
-  → log: "⚠️ Can only delete the current (first) message"
-
-Line 608: deinit() → stopMotionDetection()
-
-Line 612: stopMotionDetection() → motionManager.stopDeviceMotionUpdates()
+### Functions
+- init() → realtimeAPI.apiStateSubject.sink(), realtimeAPI.microphoneEnabledSubject.sink(), realtimeAPI.lastPromptSubject.sink(), logger.promptStatusSubject.sink(), startMotionDetection()
+- startMotionDetection() → motionManager.startDeviceMotionUpdates(), pitch=, roll=, if !microphoneOverride: if tilt>-45: audioManager.enableMicrophone(), else: audioManager.disableMicrophone(), logger.sendPromptToMac()
+- stopMotionDetection() → motionManager.stopDeviceMotionUpdates()
+- handleMicrophoneOverrideChange() → if microphoneOverride: audioManager.enableMicrophone(), else: audioManager.disableMicrophone(), logger.sendPromptToMac()
+- handlePlaybackChange() → if playbackEnabled: audioManager.enablePlayback(), else: audioManager.disablePlayback()
+- addMessage(content) → if exists: messages[index].content=, else: messages.insert()
+- updateMessageStatus(prompt, status) → messages.firstIndex(), messages[index].status=
+- deleteMessage(message) → if index==0 && status!=.injected: realtimeAPI.clearAccumulatedPrompts(), messages.remove(), else if status==.injected: noop, else: noop
+- addInterrupt() → messages.insert(Message(INTERRUPT_MESSAGE, .sent))
+- stopClaudeCode() → addInterrupt(), logger.sendPromptToMac(INTERRUPT_MESSAGE)
+- deinit() → stopMotionDetection()
 */
 
 import SwiftUI

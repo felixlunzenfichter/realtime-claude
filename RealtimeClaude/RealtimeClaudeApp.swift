@@ -1,20 +1,19 @@
 /*
-# REFACTORING DOCUMENT: RealtimeClaudeApp.swift
+# RealtimeClaudeApp - Complete Specification
 
-## Current State: ✅ PROPERLY ORDERED
+## Struct: RealtimeClaudeApp (@main, App)
 
-### Struct: RealtimeClaudeApp (@main, App)
+### Computed Properties
+- body: some Scene → uses: ContentView
 
-#### Computed Properties:
-Line 5: body: some Scene (public, get-only) → uses: none
+## Struct: ContentView (View)
 
-### Struct: ContentView (View)
+### Properties
+- showLogs: Bool (@State) = false → WorkView, LogListView bindings
+- safeAreaInsets: EdgeInsets (@State) = .init() → onAppear: =
 
-#### Properties:
-- showLogs: Bool (private, @State var) → mutated in: WorkView binding, LogListView binding
-
-#### Computed Properties:
-Line 18: body: some View (public, get-only) → uses: showLogs
+### Computed Properties
+- body: some View → uses: showLogs, safeAreaInsets
 */
 
 import SwiftUI

@@ -1,58 +1,55 @@
 /*
-# REFACTORING DOCUMENT: LogListView.swift
+# LogListView - Complete Specification
 
-## Current State: ✅ PROPERLY ORDERED
+## Class: LogListViewModel (@Observable)
 
-### Class: LogListViewModel (@Observable)
+### Properties
+- logs: [LogMessage] = [] → setupSubscription(): logger.logsSubject
+- debugLogs: [(LogMessage, Int)] = [] → setupSubscription(): logger.debugLogsSubject
+- transmittedLogIds: [String] = [] → setupSubscription(): logger.transmittedLogIdsSubject
+- sessionNumber: Int = 0 → setupSubscription(): logger.sessionNumberSubject
+- uptimeToday: Int = 0 → setupSubscription(): logger.uptimeTodaySubject
+- uptimeTotal: Int = 0 → setupSubscription(): logger.uptimeTotalSubject
+- totalLogs: Int = 0 → setupSubscription(): logger.totalLogsSubject
+- showDebugLogs: Bool = false → user toggle
+- showRegularLogs: Bool = true → user toggle
+- showErrorLogs: Bool = true → user toggle
+- cancellables: Set<AnyCancellable> = [] → setupSubscription(): store
 
-#### Properties:
-- logs: [LogMessage] (public, var) = [] → mutated in: setupSubscription(= from logger.logsSubject)
-- debugLogs: [(LogMessage, Int)] (public, var) = [] → mutated in: setupSubscription(= from logger.debugLogsSubject)
-- transmittedLogIds: [String] (public, var) = [] → mutated in: setupSubscription(= from logger.transmittedLogIdsSubject)
-- sessionNumber: Int (public, var) = 0 → mutated in: setupSubscription(= from logger.sessionNumberSubject)
-- uptimeToday: Int (public, var) = 0 → mutated in: setupSubscription(= from logger.uptimeTodaySubject)
-- uptimeTotal: Int (public, var) = 0 → mutated in: setupSubscription(= from logger.uptimeTotalSubject)
-- totalLogs: Int (public, var) = 0 → mutated in: setupSubscription(= from logger.totalLogsSubject)
-- showDebugLogs: Bool (public, var) = false → mutated in: user toggle
-- showRegularLogs: Bool (public, var) = true → mutated in: user toggle
-- showErrorLogs: Bool (public, var) = true → mutated in: user toggle
-- cancellables: Set<AnyCancellable> (private, var) = Set<AnyCancellable>() → mutated in: setupSubscription(store subscription)
+### Computed Properties
+- combinedLogs: [(LogMessage, Int?)] → uses: showRegularLogs, showErrorLogs, showDebugLogs, logs, debugLogs
+- regularLogsCount: Int → uses: logs
+- errorLogsCount: Int → uses: logs
+- sessionStartTime: Date? → uses: logs
+- currentSessionTime: Int → uses: sessionStartTime, transmittedLogIds, logs
+- sessionLogsCount: Int → uses: transmittedLogIds
+- uptimeTodayTotal: Int → uses: uptimeToday, currentSessionTime
+- uptimeTotalTotal: Int → uses: uptimeTotal, currentSessionTime
+- todayUptimeColor: Color → uses: uptimeTodayTotal
 
-#### Computed Properties:
-Line 19: combinedLogs: [(LogMessage, Int?)] (public, get-only) → uses: showRegularLogs, showErrorLogs, showDebugLogs, logs, debugLogs
-Line 39: regularLogsCount: Int (public, get-only) → uses: logs
-Line 43: errorLogsCount: Int (public, get-only) → uses: logs
-Line 49: sessionStartTime: Date? (public, get-only) → uses: logs
-Line 53: currentSessionTime: Int (public, get-only) → uses: sessionStartTime, transmittedLogIds, logs
-Line 64: sessionLogsCount: Int (public, get-only) → uses: transmittedLogIds
-Line 68: uptimeTodayTotal: Int (public, get-only) → uses: uptimeToday, currentSessionTime
-Line 72: uptimeTotalTotal: Int (public, get-only) → uses: uptimeTotal, currentSessionTime
-Line 76: todayUptimeColor: Color (public, get-only) → uses: uptimeTodayTotal
+### Functions
+- init() → setupSubscription()
+- setupSubscription() → subject.receive(), subject.sink(), cancellables.insert()
 
-#### Functions:
-Line 87: init() → setupSubscription()
+## Struct: LogListView (View)
 
-Line 97: setupSubscription(_:updateProperty:) → subject.receive(), subject.sink()
+### Properties
+- showLogs: Bool (@Binding)
+- viewModel: LogListViewModel (@State) = LogListViewModel()
 
-### Struct: LogListView (View)
+### Computed Properties
+- isIPhone: Bool → uses: UIDevice.current.userInterfaceIdiom
+- body: some View → uses: viewModel, showLogs, isIPhone
 
-#### Properties:
-- showLogs: Bool (public, @Binding var) → mutated in: toggle action (binding from parent)
-- viewModel: LogListViewModel (private, @State var) = LogListViewModel() → mutated in: SwiftUI state management
+## Struct: LogRowView (View)
 
-#### Computed Properties:
-Line 112: isIPhone: Bool (public, get-only) → uses: UIDevice.current.userInterfaceIdiom
-Line 116: body: some View (public, get-only) → uses: viewModel, showLogs, isIPhone
+### Constants
+- log: LogMessage
+- isTransmitted: Bool
+- count: Int?
 
-### Struct: LogRowView (View)
-
-#### Constants:
-- log: LogMessage (public, let) = passed from parent
-- isTransmitted: Bool (public, let) = passed from parent
-- count: Int? (public, let) = passed from parent (nil for regular logs, Int for debug logs)
-
-#### Computed Properties:
-Line 442: body: some View (public, get-only) → uses: log, isTransmitted, count
+### Computed Properties
+- body: some View → uses: log, isTransmitted, count
 */
 
 import SwiftUI

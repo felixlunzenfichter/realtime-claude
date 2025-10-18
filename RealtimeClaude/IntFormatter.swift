@@ -1,20 +1,18 @@
 /*
-# REFACTORING DOCUMENT: IntFormatter.swift
+# IntFormatter - Complete Specification
 
-## Current State: ✅ PROPERLY ORDERED
+## Extension: Int
 
-### Extension: Int
+### Computed Properties
+- formattedBytes: String → uses: self
+- formattedDuration: String → uses: self
+- formattedSeconds: String → uses: formattedDuration
+- formattedMilliseconds: String → uses: self, formattedDuration
 
-#### Computed Properties:
-Line 23: formattedBytes: String (public, get-only) → uses: self
-Line 57: formattedDuration: String (public, get-only) → uses: self
-Line 71: formattedSeconds: String (public, get-only) → uses: formattedDuration
-Line 75: formattedMilliseconds: String (public, get-only) → uses: self, formattedDuration
+## Extension: Date
 
-### Extension: Date
-
-#### Computed Properties:
-Line 81: formattedTimestamp: String (public, get-only) → uses: self
+### Computed Properties
+- formattedTimestamp: String → uses: self
 */
 
 import Foundation

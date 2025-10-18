@@ -1,125 +1,90 @@
 /*
-# REFACTORING DOCUMENT: Logger.swift
+# Logger - Complete Specification
 
-## Current State: ✅ PROPERLY ORDERED
+## Struct: PromptStatusUpdate
+- prompt: String
+- status: String
 
-### Struct: PromptStatusUpdate
+## Protocol: LoggerProtocol
+- logsSubject: CurrentValueSubject<[LogMessage], Never>
+- debugLogsSubject: CurrentValueSubject<[(LogMessage, Int)], Never>
+- transmittedLogIdsSubject: CurrentValueSubject<[String], Never>
+- sessionNumberSubject: CurrentValueSubject<Int, Never>
+- uptimeTodaySubject: CurrentValueSubject<Int, Never>
+- uptimeTotalSubject: CurrentValueSubject<Int, Never>
+- totalLogsSubject: CurrentValueSubject<Int, Never>
+- promptStatusSubject: PassthroughSubject<PromptStatusUpdate, Never>
+- sendPromptToMac(String)
 
-#### Constants:
-- prompt: String (public, let)
-- status: String (public, let)
+## Enum: LogType (Codable)
+- log, error
 
-### Protocol: LoggerProtocol
+### Computed Properties
+- color: Color → uses: self
+- label: String → uses: self
 
-#### Properties:
-- logsSubject: CurrentValueSubject<[LogMessage], Never> (public, var)
-- debugLogsSubject: CurrentValueSubject<[(LogMessage, Int)], Never> (public, var)
-- transmittedLogIdsSubject: CurrentValueSubject<[String], Never> (public, var)
-- sessionNumberSubject: CurrentValueSubject<Int, Never> (public, var)
-- uptimeTodaySubject: CurrentValueSubject<Int, Never> (public, var)
-- uptimeTotalSubject: CurrentValueSubject<Int, Never> (public, var)
-- totalLogsSubject: CurrentValueSubject<Int, Never> (public, var)
-- promptStatusSubject: PassthroughSubject<PromptStatusUpdate, Never> (public, var)
+## Struct: LogMessage (Identifiable, Codable, Sendable)
 
-#### Functions:
-Line 145: sendPromptToMac(_:) → (not documented in protocol)
+### Constants
+- type: LogType
+- timestamp: Date
+- fileName: String
+- functionName: String
+- message: String
 
-### Enum: LogType (Codable)
+### Properties
+- id: String → UUID().uuidString
 
-#### Computed Properties:
-Line 29: color: Color (public, get-only) → uses: self
-Line 38: label: String (public, get-only) → uses: self
+### Computed Properties
+- shortFileName: String → uses: fileName
 
-### Struct: LogMessage (Identifiable, Codable, Sendable)
+## Global Variable
+- logger: LoggerProtocol = Logger()
 
-#### Properties:
-- id: String (public, var) → mutated in: init
+## Class: Logger (private, @unchecked Sendable, LoggerProtocol)
 
-#### Constants:
-- type: LogType (public, let)
-- timestamp: Date (public, let)
-- fileName: String (public, let)
-- functionName: String (public, let)
-- message: String (public, let)
+### Constants
+- connection: NWConnection
+- macHostname: String = "Felixs-MacBook-Pro.local"
+- port: UInt16 = 8082
+- tcpProcessingQueue: DispatchQueue
+- logsSubject: CurrentValueSubject<[LogMessage], Never> → addLogMessage(): send
+- transmittedLogIdsSubject: CurrentValueSubject<[String], Never> → acknowledgeTransmission(): send
+- sessionNumberSubject: CurrentValueSubject<Int, Never> → handleHandshakeMessage(): send
+- uptimeTodaySubject: CurrentValueSubject<Int, Never> → handleHandshakeMessage(): send
+- uptimeTotalSubject: CurrentValueSubject<Int, Never> → handleHandshakeMessage(): send
+- totalLogsSubject: CurrentValueSubject<Int, Never> → handleHandshakeMessage(): send
+- debugLogsSubject: CurrentValueSubject<[(LogMessage, Int)], Never> → addDebugLog(): send
+- promptStatusSubject: PassthroughSubject<PromptStatusUpdate, Never> → handlePromptAckMessage(), sendPromptToMac(): send
 
-#### Computed Properties:
-Line 55: shortFileName: String (public, get-only) → uses: fileName
+### Properties
+- dataBuffer: Data = Data() → handleIncomingData(): append, processAllBufferedMessages(): removeSubrange
+- totalBytesReceived: Int = 0 → handleIncomingData(): +=
+- totalBytesSentToMac: Int = 0 → sendMessage(): +=
+- sessionNumber: Int = 0 → handleHandshakeMessage(): =
 
-### Global Variables:
-Line 60: logger: LoggerProtocol (nonisolated unsafe, let)
+### Functions
+- init() → NWConnection(), connection.start(), startReceiving()
+- addLog(type, file, function) → LogMessage(), addLogMessage(), sendLog()
+- addLogMessage(log) → logsSubject.send()
+- sendLog(log) → JSONEncoder.encode(), sendMessage()
+- sendMessage(messageType, logMessage) → tcpProcessingQueue.async(), JSONEncoder.encode(), connection.send(), totalBytesSentToMac+=
+- addDebugLog(id, message, file, function) → LogMessage(), debugLogsSubject.send()
+- startReceiving() → connection.receive(), handleIncomingData(), startReceiving()
+- handleIncomingData(data) → dataBuffer.append(), totalBytesReceived+=, processAllBufferedMessages()
+- processAllBufferedMessages() → dataBuffer.firstIndex(), dataBuffer.removeSubrange(), JSONSerialization.jsonObject(), routeIncomingMessage()
+- routeIncomingMessage(json) → handleAckMessage()|handleHandshakeMessage()|handlePromptAckMessage()
+- handleAckMessage(json) → acknowledgeTransmission()
+- handleHandshakeMessage(json) → realtimeAPI.connect(), sessionNumber=, sessionNumberSubject.send(), totalLogsSubject.send(), uptimeTotalSubject.send(), uptimeTodaySubject.send()
+- acknowledgeTransmission(logId) → transmittedLogIdsSubject.send()
+- handlePromptAckMessage(json) → if success: realtimeAPI.acknowledgeSuccessfulPromptInjection()|realtimeAPI.acknowledgeSuccessfulInterruptExecution(), promptStatusSubject.send()
+- sendStartMessage() → JSONSerialization.data(), sendMessage()
+- sendPromptToMac(prompt) → JSONSerialization.data(), sendMessage(), promptStatusSubject.send()
 
-### Class: Logger (@unchecked Sendable, LoggerProtocol, private)
-
-#### Constants:
-- connection: NWConnection (private, let) = NWConnection(to: "Felixs-MacBook-Pro.local:8082", using: .tcp)
-- macHostname: String (private, let) = "Felixs-MacBook-Pro.local"
-- port: UInt16 (private, let) = 8082
-- tcpProcessingQueue: DispatchQueue (private, let) = DispatchQueue(label: "logger.tcp.processing", qos: .userInitiated)
-- logsSubject: CurrentValueSubject<[LogMessage], Never> (public, let) = CurrentValueSubject([]) → sends: logsSubject.send(newArray) in addLogMessage
-- transmittedLogIdsSubject: CurrentValueSubject<[String], Never> (public, let) = CurrentValueSubject([]) → sends: transmittedLogIdsSubject.send(updatedArray) in acknowledgeTransmission
-- sessionNumberSubject: CurrentValueSubject<Int, Never> (public, let) = CurrentValueSubject(0) → sends: sessionNumberSubject.send(sessionNumber) in handleHandshakeMessage
-- uptimeTodaySubject: CurrentValueSubject<Int, Never> (public, let) = CurrentValueSubject(0) → sends: uptimeTodaySubject.send(today) in handleHandshakeMessage
-- uptimeTotalSubject: CurrentValueSubject<Int, Never> (public, let) = CurrentValueSubject(0) → sends: uptimeTotalSubject.send(total) in handleHandshakeMessage
-- totalLogsSubject: CurrentValueSubject<Int, Never> (public, let) = CurrentValueSubject(0) → sends: totalLogsSubject.send(logs) in handleHandshakeMessage
-- debugLogsSubject: CurrentValueSubject<[(LogMessage, Int)], Never> (public, let) = CurrentValueSubject([]) → sends: debugLogsSubject.send(updatedArray) in addDebugLog
-- promptStatusSubject: PassthroughSubject<PromptStatusUpdate, Never> (public, let) = PassthroughSubject() → sends: in handlePromptAckMessage, sendPromptToMac
-
-#### Properties:
-- dataBuffer: Data (private, var) = Data() → mutated in: handleIncomingData(append data), processAllBufferedMessages(removeSubrange)
-- totalBytesReceived: Int (private, var) = 0 → mutated in: init(0), handleIncomingData(+= data.count)
-- totalBytesSentToMac: Int (private, var) = 0 → mutated in: init(0), sendMessage(+= jsonData.count)
-- sessionNumber: Int (private, var) = 0 → mutated in: handleHandshakeMessage(= from JSON)
-
-#### Functions:
-Line 206: init() → NWConnection.init(), connection.start()
-
-Line 226: addLog(_:type:file:function:) → LogMessage.init(), addLogMessage(), sendLog()
-
-Line 244: addLogMessage(_:) → logsSubject.send()
-
-Line 250: sendLog(_:) → JSONEncoder.init(), sendMessage()
-
-Line 258: sendMessage(_:messageType:logMessage:) → tcpProcessingQueue.async(), connection.send()
-  → debug: "📤 [iOS→macOS] Sending \(messageType): \(jsonData.count.formattedBytes) (total: \(self.totalBytesSentToMac.formattedBytes))"
-
-Line 282: addDebugLog(id:message:file:function:) → LogMessage.init(), debugLogsSubject.send()
-
-Line 304: startReceiving() → connection.receive(), tcpProcessingQueue.async(), handleIncomingData(), startReceiving()
-
-Line 324: handleIncomingData(_:) → dataBuffer.append(), processAllBufferedMessages()
-  → debug: "📥 [TCP] Buffered packet: \(data.count.formattedBytes) (buffer: \(dataBuffer.count.formattedBytes), total: \(totalBytesReceived.formattedBytes))"
-
-Line 334: processAllBufferedMessages() → dataBuffer.firstIndex(), dataBuffer.removeSubrange(), JSONSerialization.jsonObject(), routeIncomingMessage()
-  → debug: "⚙️ [TCP] Processed \(messagesProcessed) messages (\(dataBuffer.count.formattedBytes) remaining)"
-
-Line 359: routeIncomingMessage(_:) → JSONSerialization.data(), handleAckMessage(), handleHandshakeMessage(), handlePromptAckMessage()
-  → debug: "📥 [macOS→iOS] Received \(messageType): \(messageSize.formattedBytes) (total: \(totalBytesReceived.formattedBytes))"
-
-Line 380: handleAckMessage(_:) → acknowledgeTransmission()
-  → debug: "✅ [TCP] ACK received for log: \(logId)"
-
-Line 392: handleHandshakeMessage(_:) → realtimeAPI.connect(), sessionNumberSubject.send(), totalLogsSubject.send(), uptimeTotalSubject.send(), uptimeTodaySubject.send()
-  → log: "Successful handshake: Session #\(sessionNumber), Total: \(totalUptime)ms, Today: \(todayUptime)ms, Logs: \(totalLogs)"
-
-Line 386: acknowledgeTransmission(for:) → transmittedLogIdsSubject.send()
-
-Line 422: handlePromptAckMessage(_:) → realtimeAPI.realTimeApiAcknowledgeSuccessful(), promptStatusSubject.send()
-  → log: "✅ Prompt successfully injected into terminal"
-  → log: "📝 Complete prompt executed: \(originalPrompt)"
-  → error: "❌ Failed to inject prompt: \(errorMessage)"
-
-Line 439: sendStartMessage() → JSONSerialization.data(), sendMessage()
-  → log: "📤 [iOS → macOS] Sending start message"
-
-Line 446: sendPromptToMac(_:) → JSONSerialization.data(), sendMessage(), promptStatusSubject.send()
-  → log: "📤 [iOS → macOS] Sending prompt: \(prompt)"
-
-### Global Functions:
-Line 461: log(_:file:function:) → Logger.addLog()
-
-Line 469: error(_:file:function:) → Logger.addLog()
-
-Line 477: debugLog(id:message:file:function:) → Logger.addDebugLog()
+## Global Functions
+- log(message, file, function) → logger.addLog()
+- error(message, file, function) → logger.addLog()
+- debugLog(id, message, file, function) → logger.addDebugLog()
 */
 
 import Foundation
