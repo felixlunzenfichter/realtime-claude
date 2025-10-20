@@ -43,9 +43,9 @@ Each task = 3 commits:
 - Clean up any TODO items from implementation phase
 - Code should read like well-written prose
 
-## Spezifikationen
+## Specifications
 
-Jede Swift-Datei beginnt mit einem Spezifikations-Kommentar. See AudioManager.swift and RealtimeAPI.swift for examples.
+Each Swift file begins with a specification comment.
 
 ```swift
 /*
@@ -84,6 +84,7 @@ Jede Swift-Datei beginnt mit einem Spezifikations-Kommentar. See AudioManager.sw
 - **Properties**: `→` shows all mutations
 - **Inline Syntax**: `property=value`, `if x: action`, `property++`
 - **`(leaf)`**: Function makes no calls
+- **NEVER include logging functions**: Don't mention `log()`, `error()`, or `debugLog()` as dependencies
 
 ## Run
 

@@ -37,9 +37,9 @@
 
 ### Constants
 - items: [ToggleItem]
-- height: CGFloat = 120
-- topSpacing: CGFloat = 20
-- yOffset: CGFloat = 60
+- height: CGFloat = UserDefaults("SAFE_AREA_TOP") * 2
+- topSpacing: CGFloat = UserDefaults("SAFE_AREA_TOP") / 3
+- yOffset: CGFloat = -UserDefaults("SAFE_AREA_BOTTOM")
 
 ### Functions
 - init(items, height, topSpacing, yOffset) → (leaf)

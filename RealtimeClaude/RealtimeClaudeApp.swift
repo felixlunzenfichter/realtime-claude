@@ -4,16 +4,15 @@
 ## Struct: RealtimeClaudeApp (@main, App)
 
 ### Computed Properties
-- body: some Scene → uses: ContentView
+- body: some Scene → GeometryReader, ContentView, onAppear: UserDefaults.set("SCREEN_HEIGHT", "SAFE_AREA_TOP", "SAFE_AREA_BOTTOM")
 
 ## Struct: ContentView (View)
 
 ### Properties
 - showLogs: Bool (@State) = false → WorkView, LogListView bindings
-- safeAreaInsets: EdgeInsets (@State) = .init() → onAppear: =
 
 ### Computed Properties
-- body: some View → uses: showLogs, safeAreaInsets
+- body: some View → uses: showLogs
 */
 
 import SwiftUI
@@ -35,6 +34,8 @@ struct RealtimeClaudeApp: App {
                         UserDefaults.standard.set(screenHeight, forKey: "SCREEN_HEIGHT")
                         UserDefaults.standard.set(safeTop, forKey: "SAFE_AREA_TOP")
                         UserDefaults.standard.set(safeBottom, forKey: "SAFE_AREA_BOTTOM")
+
+                        log("📱 Screen height: \(Int(screenHeight)), top safe area: \(Int(safeTop)), bottom safe area: \(Int(safeBottom))")
                     }
             }
         }
@@ -43,7 +44,6 @@ struct RealtimeClaudeApp: App {
 
 struct ContentView: View {
     @State private var showLogs = false
-    @State private var safeAreaInsets: EdgeInsets = .init()
 
     var body: some View {
         GeometryReader { geometry in
@@ -58,17 +58,6 @@ struct ContentView: View {
                     LogListView(showLogs: $showLogs)
                         .ignoresSafeArea()
                 }
-            }
-            .onAppear {
-                safeAreaInsets = geometry.safeAreaInsets
-
-                let screenHeight = Int(geometry.size.height)
-
-                UserDefaults.standard.set(screenHeight, forKey: "SCREEN_HEIGHT")
-                UserDefaults.standard.set(Int(safeAreaInsets.top), forKey: "SAFE_AREA_TOP")
-                UserDefaults.standard.set(Int(safeAreaInsets.bottom), forKey: "SAFE_AREA_BOTTOM")
-
-                log("📱 Screen height: \(screenHeight), top safe area: \(Int(safeAreaInsets.top)), bottom safe area: \(Int(safeAreaInsets.bottom))")
             }
         }
     }
