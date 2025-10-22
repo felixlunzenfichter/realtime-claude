@@ -5,12 +5,14 @@
 - INTERRUPT_MESSAGE: String = "[Request interrupted by user]"
 
 ## Enum: RecordingStatus
+- cases: disconnected, connected, microphoneEnabled, speechDetected, speechStopped, processing
 
 ### Computed Properties
 - color: Color → uses: self
 - statusText: String → uses: self
 
 ## Enum: MessageStatus
+- cases: recording, stopped, processing, notSent, sent, injected, failed
 
 ### Computed Properties
 - color: Color → uses: self
@@ -23,19 +25,19 @@
 - timestamp: Date
 
 ### Properties
-- content: String
+- content: String → addMessage(): =
 - status: MessageStatus → updateMessageStatus(): =
 
 ## Struct: ToggleBar (View)
 
-### Struct: ToggleItem
+### Nested Struct: ToggleItem
 - color: Color
+- isOn: Binding<Bool>?
 - icon: String?
 - text: String?
 - action: () -> Void
-- isOn: Bool (@Binding)
 
-### Constants
+### Properties
 - items: [ToggleItem]
 - height: CGFloat = UserDefaults("SAFE_AREA_TOP") * 2
 - topSpacing: CGFloat = UserDefaults("SAFE_AREA_TOP") / 3
@@ -45,7 +47,7 @@
 - init(items, height, topSpacing, yOffset) → (leaf)
 
 ### Computed Properties
-- body: some View → uses: items, height, topSpacing, yOffset
+- body: some View → HStack with ForEach(items), Rectangle.fill(), Toggle/Image/Text overlays, frame(height), glassEffect(), offset(yOffset)
 
 ## Struct: WorkView (View)
 
@@ -54,42 +56,47 @@
 - showLogs: Bool (@Binding)
 
 ### Computed Properties
-- body: some View → uses: viewModel, showLogs
+- ACTUAL_SCREEN_HEIGHT: CGFloat → UserDefaults("SCREEN_HEIGHT") + UserDefaults("SAFE_AREA_TOP") + UserDefaults("SAFE_AREA_BOTTOM")
+- body: some View → ZStack: Color.black, VStack with message list/empty state, ToggleBar at bottom, status text at top
 
 ## Class: WorkViewModel (@Observable)
 
 ### Constants
 - motionManager: CMMotionManager = CMMotionManager()
-- realtimeAPI: RealtimeAPIProtocol
-- audioManager: AudioManagerProtocol
-- logger: LoggerProtocol
 
 ### Properties
-- isMicrophoneEnabled: Bool = true → init subscription: realtimeAPI.microphoneEnabledSubject
-- isPlayingAudio: Bool = false → init subscription: realtimeAPI.playingAudioSubject
-- messages: [Message] = [] → addMessage(): insert, deleteMessage(): remove
+- currentRecordingId: UUID?
+- currentRecordingStatus: RecordingStatus = .disconnected → init apiStateCancellable: =
+- currentRecordingTimestamp: Date?
+- isMicrophoneEnabled: Bool = false → init microphoneCancellable: =
+- isPlayingAudio: Bool = false → init playingCancellable: =
+- messages: [Message] = [] → addMessage(): insert/update, deleteMessage(): remove
+- interrupts: [Message] = [] → addInterrupt(): insert
+- microphoneOverride: Bool = false (didSet: handleMicrophoneOverrideChange())
 - pitch: Double = 0 → startMotionDetection(): =
+- playbackEnabled: Bool = true (didSet: handlePlaybackChange())
 - roll: Double = 0 → startMotionDetection(): =
-- currentRecordingStatus: RecordingStatus = .disconnected → init subscription: realtimeAPI.apiStateSubject
-- microphoneCancellable: AnyCancellable? → init: =
 - apiStateCancellable: AnyCancellable? → init: =
+- isFirstMotionUpdate: Bool = true → startMotionDetection(): false
+- microphoneCancellable: AnyCancellable? → init: =
+- playingCancellable: AnyCancellable? → init: =
 - promptCancellable: AnyCancellable? → init: =
 - statusCancellable: AnyCancellable? → init: =
-- isFirstMotionUpdate: Bool = true → startMotionDetection(): false
-- microphoneOverride: Bool = false (didSet: handleMicrophoneOverrideChange())
-- playbackEnabled: Bool = true (didSet: handlePlaybackChange())
+
+### Computed Properties
+- allMessages: [Message] → messages + interrupts sorted by timestamp descending
 
 ### Functions
-- init() → realtimeAPI.apiStateSubject.sink(), realtimeAPI.microphoneEnabledSubject.sink(), realtimeAPI.lastPromptSubject.sink(), logger.promptStatusSubject.sink(), startMotionDetection()
-- startMotionDetection() → motionManager.startDeviceMotionUpdates(), pitch=, roll=, if !microphoneOverride: if tilt>-45: audioManager.enableMicrophone(), else: audioManager.disableMicrophone(), logger.sendPromptToMac()
-- stopMotionDetection() → motionManager.stopDeviceMotionUpdates()
-- handleMicrophoneOverrideChange() → if microphoneOverride: audioManager.enableMicrophone(), else: audioManager.disableMicrophone(), logger.sendPromptToMac()
+- init() → realtimeAPI.apiStateSubject.sink(), audioManager.microphoneEnabledSubject.sink(), audioManager.playingAudioSubject.sink(), realtimeAPI.lastPromptSubject.sink(), logger.promptStatusSubject.sink()
+- startMotionDetection() → motionManager.startDeviceMotionUpdates(), pitch=, roll=, if !microphoneOverride: if tilt<-45: audioManager.enableMicrophone(), else: audioManager.disableMicrophone()
+- handleMicrophoneOverrideChange() → if microphoneOverride: audioManager.enableMicrophone(), else: audioManager.disableMicrophone()
 - handlePlaybackChange() → if playbackEnabled: audioManager.enablePlayback(), else: audioManager.disablePlayback()
-- addMessage(content) → if exists: messages[index].content=, else: messages.insert()
-- updateMessageStatus(prompt, status) → messages.firstIndex(), messages[index].status=
-- deleteMessage(message) → if index==0 && status!=.injected: realtimeAPI.clearAccumulatedPrompts(), messages.remove(), else if status==.injected: noop, else: noop
-- addInterrupt() → messages.insert(Message(INTERRUPT_MESSAGE, .sent))
+- addMessage(content) → if exists non-injected: messages[index].content=, else: messages.insert(at: 0)
+- updateMessageStatus(prompt, status) → messages.firstIndex() or interrupts.firstIndex(), status=
+- deleteMessage(id) → if index==0 && status!=.injected: realtimeAPI.clearAccumulatedPrompts(), messages.remove()
+- addInterrupt() → interrupts.insert(Message(INTERRUPT_MESSAGE, .notSent), at: 0)
 - stopClaudeCode() → addInterrupt(), logger.sendPromptToMac(INTERRUPT_MESSAGE)
+- stopMotionDetection() → motionManager.stopDeviceMotionUpdates()
 - deinit() → stopMotionDetection()
 */
 
@@ -192,13 +199,11 @@ struct ToggleBar: View {
     let items: [ToggleItem]
     let height: CGFloat
     let topSpacing: CGFloat
-    let yOffset: CGFloat
 
-    init(items: [ToggleItem], height: CGFloat = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) * 2, topSpacing: CGFloat = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) / 3, yOffset: CGFloat = -CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM"))) {
+    init(items: [ToggleItem], height: CGFloat = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) * 2, topSpacing: CGFloat = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) / 3) {
         self.items = items
         self.height = height
         self.topSpacing = topSpacing
-        self.yOffset = yOffset
     }
 
     var body: some View {
@@ -242,7 +247,6 @@ struct ToggleBar: View {
         }
         .frame(height: height)
         .glassEffect()
-        .offset(y: yOffset)
     }
 }
 
@@ -250,30 +254,19 @@ struct WorkView: View {
     @State private var viewModel = WorkViewModel()
     @Binding var showLogs: Bool
 
-    var ACTUAL_SCREEN_HEIGHT: CGFloat {
-        let screenHeight = CGFloat(UserDefaults.standard.double(forKey: "SCREEN_HEIGHT"))
-        let safeTop = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP"))
-        let safeBottom = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM"))
-        return screenHeight + safeTop + safeBottom
-    }
-
     var body: some View {
         ZStack {
-            Color.black
-                .ignoresSafeArea()
-
-            VStack {
-                if viewModel.allMessages.isEmpty {
-                    VStack {
-                        Spacer()
-                        Text("Speak to create a message")
-                            .font(.headline)
-                            .foregroundColor(.gray)
-                        Spacer()
-                    }
-                    .frame(height: ACTUAL_SCREEN_HEIGHT)
-                } else {
-                    ScrollViewReader { proxy in
+            if viewModel.allMessages.isEmpty {
+                VStack {
+                    Spacer()
+                    Text("Speak to create a message")
+                        .font(.headline)
+                        .foregroundColor(.gray)
+                    Spacer()
+                }
+                .frame(height: ACTUAL_SCREEN_HEIGHT)
+            } else {
+                ScrollViewReader { proxy in
                         List {
                             Color.clear
                                 .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")) * 2)
@@ -360,10 +353,6 @@ struct WorkView: View {
                         }
                     }
                 }
-            }
-            .ignoresSafeArea()
-            .frame(maxHeight: .infinity)
-            .offset(y: -CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")))
 
             VStack {
                 Spacer()
@@ -416,7 +405,6 @@ struct WorkView: View {
                     .frame(height: 60)
                     .background(viewModel.currentRecordingStatus.color)
                     .glassEffect()
-                    .offset(y: -34)
 
                 Spacer()
             }

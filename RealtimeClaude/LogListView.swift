@@ -162,13 +162,6 @@ struct LogListView: View {
     @Binding var showLogs: Bool
     @State private var viewModel = LogListViewModel()
 
-    var ACTUAL_SCREEN_HEIGHT: CGFloat {
-        let screenHeight = CGFloat(UserDefaults.standard.double(forKey: "SCREEN_HEIGHT"))
-        let safeTop = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP"))
-        let safeBottom = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM"))
-        return screenHeight + safeTop + safeBottom
-    }
-
     var isIPhone: Bool {
         UIDevice.current.userInterfaceIdiom == .phone
     }
@@ -178,20 +171,19 @@ struct LogListView: View {
             Color(UIColor.systemBackground)
                 .ignoresSafeArea()
 
-            VStack {
-                if viewModel.combinedLogs.isEmpty {
-                    VStack {
-                        Spacer()
-                        Text("No logs yet")
-                            .font(.title2)
-                            .foregroundColor(.secondary.opacity(0.5))
-                        Spacer()
-                    }
-                    .frame(height: ACTUAL_SCREEN_HEIGHT)
-                } else {
+            if viewModel.combinedLogs.isEmpty {
+                VStack {
+                    Spacer()
+                    Text("No logs yet")
+                        .font(.title2)
+                        .foregroundColor(.secondary.opacity(0.5))
+                    Spacer()
+                }
+                .frame(height: ACTUAL_SCREEN_HEIGHT)
+            } else {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 6) {
+                        LazyVStack(alignment: .leading, spacing: 6) {
                             Spacer()
                                 .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")) * 2)
                                 .id("topSpacer")
@@ -224,15 +216,13 @@ struct LogListView: View {
                         }
                     }
                 }
-                }
             }
-            .offset(y: -CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")))
 
 
             VStack {
                 TimelineView(.periodic(from: Date(), by: 1)) { _ in
                 if isIPhone {
-                    VStack(spacing: 4) {
+                    VStack(spacing: 0) {
                         HStack(spacing: 15) {
                             Spacer()
 
@@ -268,7 +258,6 @@ struct LogListView: View {
 
                             Spacer()
                         }
-                        .padding(.vertical, 4)
                         .padding(.horizontal)
 
                         HStack(spacing: 15) {
@@ -306,7 +295,6 @@ struct LogListView: View {
 
                             Spacer()
                         }
-                        .padding(.vertical, 4)
                         .padding(.horizontal)
                     }
                 } else {
@@ -387,10 +375,8 @@ struct LogListView: View {
                     }
                 }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")) * 2)
                 .glassEffect()
-                .offset(y: -34)
 
                 Spacer()
 
@@ -493,7 +479,6 @@ struct LogListView: View {
                 }
                 .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) * 2)
                 .glassEffect()
-                .offset(y: -CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")))
             }
         }
     }
