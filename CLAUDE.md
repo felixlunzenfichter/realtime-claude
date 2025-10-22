@@ -45,7 +45,9 @@ Each task = 3 commits:
 
 ## Specifications
 
-Each Swift file begins with a specification comment.
+Each Swift file begins with a specification comment that **exactly reflects the structure of the file**. The specification must mirror the actual order of elements as they appear in the code.
+
+### Possible Elements (use these in whatever order they appear in the file):
 
 ```swift
 /*

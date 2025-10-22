@@ -1,103 +1,96 @@
+
 /*
 # WorkView - Complete Specification
 
-## Global Constant
+## External Dependencies (Global Singletons)
+- audioManager: AudioManagerProtocol (from AudioManager.swift)
+- realtimeAPI: RealtimeAPIProtocol (from RealtimeAPI.swift)
+- logger: LoggerProtocol (from Logger.swift)
+
+## Global Variable
 - INTERRUPT_MESSAGE: String = "[Request interrupted by user]"
 
 ## Enum: RecordingStatus
-- cases: disconnected, connected, microphoneEnabled, speechDetected, speechStopped, processing
-
-### Computed Properties
-- color: Color → uses: self
-- statusText: String → uses: self
+- disconnected, connected, microphoneEnabled, speechDetected, speechStopped, processing
+- color: Color → (leaf)
+- statusText: String → (leaf)
 
 ## Enum: MessageStatus
-- cases: recording, stopped, processing, notSent, sent, injected, failed
-
-### Computed Properties
-- color: Color → uses: self
-- statusText: String → uses: self
+- notSent, sent, injected, failed
+- color: Color → (leaf)
+- statusText: String → (leaf)
 
 ## Struct: Message (Identifiable)
-
-### Constants
 - id: UUID = UUID()
+- content: String
 - timestamp: Date
-
-### Properties
-- content: String → addMessage(): =
-- status: MessageStatus → updateMessageStatus(): =
+- status: MessageStatus
 
 ## Struct: ToggleBar (View)
 
-### Nested Struct: ToggleItem
+### Struct: ToggleItem
 - color: Color
 - isOn: Binding<Bool>?
 - icon: String?
 - text: String?
 - action: () -> Void
+- init(color, isOn?, icon?, text?, action)
 
 ### Properties
 - items: [ToggleItem]
-- height: CGFloat = UserDefaults("SAFE_AREA_TOP") * 2
-- topSpacing: CGFloat = UserDefaults("SAFE_AREA_TOP") / 3
-- yOffset: CGFloat = -UserDefaults("SAFE_AREA_BOTTOM")
+- height: CGFloat
+- topSpacing: CGFloat
 
 ### Functions
-- init(items, height, topSpacing, yOffset) → (leaf)
-
-### Computed Properties
-- body: some View → HStack with ForEach(items), Rectangle.fill(), Toggle/Image/Text overlays, frame(height), glassEffect(), offset(yOffset)
+- init(items, height = UserDefaults.standard.double("SAFE_AREA_TOP") * 2, topSpacing = UserDefaults.standard.double("SAFE_AREA_TOP") / 3)
+- body: View → ForEach(), Toggle(), SwitchToggleStyle(), Image(), Text(), onTapGesture(), glassEffect()
 
 ## Struct: WorkView (View)
 
 ### Properties
-- viewModel: WorkViewModel (@State) = WorkViewModel()
-- showLogs: Bool (@Binding)
+- viewModel: WorkViewModel = WorkViewModel() → startMotionDetection()
+- showLogs: Binding<Bool> → showLogs.toggle()
 
-### Computed Properties
-- ACTUAL_SCREEN_HEIGHT: CGFloat → UserDefaults("SCREEN_HEIGHT") + UserDefaults("SAFE_AREA_TOP") + UserDefaults("SAFE_AREA_BOTTOM")
-- body: some View → ZStack: Color.black, VStack with message list/empty state, ToggleBar at bottom, status text at top
+### Functions
+- body: View → viewModel.allMessages.isEmpty, ScrollViewReader(), List(), ForEach(), ZStack(), Text(), ProgressView(), Image(), swipeActions(), deleteMessage(), ToggleBar(), viewModel.isPlaybackEnabled.toggle(), viewModel.isMicrophoneEnabled.toggle(), stopClaudeCode(), showLogs.toggle(), onAppear(), onDisappear()
 
-## Class: WorkViewModel (@Observable)
+## Class: WorkViewModel (Observable)
 
-### Constants
+### Properties - Audio/Recording State
+- currentRecordingStatus: RecordingStatus = .disconnected → currentRecordingStatus=.disconnected, currentRecordingStatus=.connected/.microphoneEnabled, currentRecordingStatus=.speechDetected, currentRecordingStatus=.speechStopped, currentRecordingStatus=.processing
+- isRecordingAudio: Bool = false → isRecordingAudio=isEnabled
+- isPlayingAudio: Bool = false → isPlayingAudio=isPlaying
+- isMicrophoneEnabled: Bool = false → handleMicrophoneToggle()
+- isPlaybackEnabled: Bool = true → handlePlaybackToggle()
+
+### Properties - Motion
 - motionManager: CMMotionManager = CMMotionManager()
+- pitch: Double = 0 → pitch=attitude.pitch
+- roll: Double = 0 → roll=attitude.roll
+- isFirstMotionUpdate: Bool = true → isFirstMotionUpdate=false
 
-### Properties
-- currentRecordingId: UUID?
-- currentRecordingStatus: RecordingStatus = .disconnected → init apiStateCancellable: =
-- currentRecordingTimestamp: Date?
-- isMicrophoneEnabled: Bool = false → init microphoneCancellable: =
-- isPlayingAudio: Bool = false → init playingCancellable: =
-- messages: [Message] = [] → addMessage(): insert/update, deleteMessage(): remove
-- interrupts: [Message] = [] → addInterrupt(): insert
-- microphoneOverride: Bool = false (didSet: handleMicrophoneOverrideChange())
-- pitch: Double = 0 → startMotionDetection(): =
-- playbackEnabled: Bool = true (didSet: handlePlaybackChange())
-- roll: Double = 0 → startMotionDetection(): =
-- apiStateCancellable: AnyCancellable? → init: =
-- isFirstMotionUpdate: Bool = true → startMotionDetection(): false
-- microphoneCancellable: AnyCancellable? → init: =
-- playingCancellable: AnyCancellable? → init: =
-- promptCancellable: AnyCancellable? → init: =
-- statusCancellable: AnyCancellable? → init: =
+### Properties - Messages
+- messages: [Message] = [] → messages[index].content=content, messages[index].status=status, messages.insert(), messages.remove()
+- interrupts: [Message] = [] → interrupts[index].status=status, interrupts.insert()
+
+### Properties - Internal
+- cancellables: Set<AnyCancellable> = []
 
 ### Computed Properties
-- allMessages: [Message] → messages + interrupts sorted by timestamp descending
+- allMessages: [Message] → uses: messages, interrupts
 
 ### Functions
 - init() → realtimeAPI.apiStateSubject.sink(), audioManager.microphoneEnabledSubject.sink(), audioManager.playingAudioSubject.sink(), realtimeAPI.lastPromptSubject.sink(), logger.promptStatusSubject.sink()
-- startMotionDetection() → motionManager.startDeviceMotionUpdates(), pitch=, roll=, if !microphoneOverride: if tilt<-45: audioManager.enableMicrophone(), else: audioManager.disableMicrophone()
-- handleMicrophoneOverrideChange() → if microphoneOverride: audioManager.enableMicrophone(), else: audioManager.disableMicrophone()
-- handlePlaybackChange() → if playbackEnabled: audioManager.enablePlayback(), else: audioManager.disablePlayback()
-- addMessage(content) → if exists non-injected: messages[index].content=, else: messages.insert(at: 0)
-- updateMessageStatus(prompt, status) → messages.firstIndex() or interrupts.firstIndex(), status=
-- deleteMessage(id) → if index==0 && status!=.injected: realtimeAPI.clearAccumulatedPrompts(), messages.remove()
-- addInterrupt() → interrupts.insert(Message(INTERRUPT_MESSAGE, .notSent), at: 0)
-- stopClaudeCode() → addInterrupt(), logger.sendPromptToMac(INTERRUPT_MESSAGE)
+- startMotionDetection() → motionManager.isDeviceMotionAvailable, motionManager.startDeviceMotionUpdates(), audioManager.enableMicrophone(), audioManager.disableMicrophone(), logger.sendPromptToMac(), realtimeAPI.lastPromptSubject.value
+- handleMicrophoneToggle() → audioManager.enableMicrophone(), audioManager.disableMicrophone(), logger.sendPromptToMac(), realtimeAPI.lastPromptSubject.value
+- handlePlaybackToggle() → audioManager.enablePlayback(), audioManager.disablePlayback()
+- addMessage(content) → messages.firstIndex(), messages[index].content=content, Message(), messages.insert(), currentRecordingId=nil, currentRecordingTimestamp=nil
+- updateMessageStatus(prompt, status) → messages.firstIndex(), messages[index].status=status, interrupts.firstIndex(), interrupts[index].status=status
+- deleteMessage(id) → messages.firstIndex(), realtimeAPI.clearAccumulatedPrompts(), messages.remove(), interrupts.firstIndex()
+- addInterrupt() → Message(), interrupts.insert()
+- stopClaudeCode() → addInterrupt(), logger.sendPromptToMac()
+- deinit → stopMotionDetection()
 - stopMotionDetection() → motionManager.stopDeviceMotionUpdates()
-- deinit() → stopMotionDetection()
 */
 
 import SwiftUI
@@ -360,18 +353,18 @@ struct WorkView: View {
                 ToggleBar(items: [
                     ToggleBar.ToggleItem(
                         color: .blue,
-                        isOn: $viewModel.playbackEnabled,
+                        isOn: $viewModel.isPlaybackEnabled,
                         icon: viewModel.isPlayingAudio ? "speaker.wave.3.fill" : "speaker.slash.fill",
                         action: {
-                            viewModel.playbackEnabled.toggle()
+                            viewModel.isPlaybackEnabled.toggle()
                         }
                     ),
                     ToggleBar.ToggleItem(
                         color: .green,
-                        isOn: $viewModel.microphoneOverride,
-                        icon: viewModel.isMicrophoneEnabled ? "mic.fill" : "mic.slash.fill",
+                        isOn: $viewModel.isMicrophoneEnabled,
+                        icon: viewModel.isRecordingAudio ? "mic.fill" : "mic.slash.fill",
                         action: {
-                            viewModel.microphoneOverride.toggle()
+                            viewModel.isMicrophoneEnabled.toggle()
                         }
                     ),
                     ToggleBar.ToggleItem(
@@ -422,39 +415,35 @@ struct WorkView: View {
 class WorkViewModel {
     private let motionManager = CMMotionManager()
 
-    var currentRecordingId: UUID?
     var currentRecordingStatus: RecordingStatus = .disconnected
-    var currentRecordingTimestamp: Date?
-    var isMicrophoneEnabled = false
+    var isRecordingAudio = false
     var isPlayingAudio = false
+    var isMicrophoneEnabled = false {
+        didSet {
+            handleMicrophoneToggle()
+        }
+    }
+    var isPlaybackEnabled = true {
+        didSet {
+            handlePlaybackToggle()
+        }
+    }
+
+    var pitch: Double = 0
+    var roll: Double = 0
+    var isFirstMotionUpdate = true
+
     var messages: [Message] = []
     var interrupts: [Message] = []
 
     var allMessages: [Message] {
         (messages + interrupts).sorted { $0.timestamp > $1.timestamp }
     }
-    var microphoneOverride = false {
-        didSet {
-            handleMicrophoneOverrideChange()
-        }
-    }
-    var pitch: Double = 0
-    var playbackEnabled = true {
-        didSet {
-            handlePlaybackChange()
-        }
-    }
-    var roll: Double = 0
 
-    private var apiStateCancellable: AnyCancellable?
-    private var isFirstMotionUpdate = true
-    private var microphoneCancellable: AnyCancellable?
-    private var playingCancellable: AnyCancellable?
-    private var promptCancellable: AnyCancellable?
-    private var statusCancellable: AnyCancellable?
+    private var cancellables = Set<AnyCancellable>()
 
     init() {
-        apiStateCancellable = realtimeAPI.apiStateSubject
+        realtimeAPI.apiStateSubject
             .receive(on: DispatchQueue.main)
             .sink { [weak self] apiState in
                 guard let self = self else { return }
@@ -463,42 +452,44 @@ class WorkViewModel {
                 case .disconnected:
                     self.currentRecordingStatus = .disconnected
                 case .connected:
-                    self.currentRecordingStatus = self.isMicrophoneEnabled ? .microphoneEnabled : .connected
+                    self.currentRecordingStatus = self.isRecordingAudio ? .microphoneEnabled : .connected
                 case .speechDetected:
                     self.currentRecordingStatus = .speechDetected
-                    self.currentRecordingId = UUID()
-                    self.currentRecordingTimestamp = Date()
                 case .speechStopped:
                     self.currentRecordingStatus = .speechStopped
                 case .processing:
                     self.currentRecordingStatus = .processing
                 }
             }
+            .store(in: &cancellables)
 
-        microphoneCancellable = audioManager.microphoneEnabledSubject
+        audioManager.microphoneEnabledSubject
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isEnabled in
                 guard let self = self else { return }
-                self.isMicrophoneEnabled = isEnabled
+                self.isRecordingAudio = isEnabled
                 if self.currentRecordingStatus == .connected || self.currentRecordingStatus == .microphoneEnabled {
                     self.currentRecordingStatus = isEnabled ? .microphoneEnabled : .connected
                 }
             }
+            .store(in: &cancellables)
 
-        playingCancellable = audioManager.playingAudioSubject
+        audioManager.playingAudioSubject
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isPlaying in
                 self?.isPlayingAudio = isPlaying
             }
+            .store(in: &cancellables)
 
-        promptCancellable = realtimeAPI.lastPromptSubject
+        realtimeAPI.lastPromptSubject
             .receive(on: DispatchQueue.main)
             .sink { [weak self] prompt in
                 guard !prompt.isEmpty else { return }
                 self?.addMessage(prompt)
             }
+            .store(in: &cancellables)
 
-        statusCancellable = logger.promptStatusSubject
+        logger.promptStatusSubject
             .receive(on: DispatchQueue.main)
             .sink { [weak self] statusUpdate in
                 let messageStatus: MessageStatus
@@ -514,6 +505,7 @@ class WorkViewModel {
                 }
                 self?.updateMessageStatus(statusUpdate.prompt, status: messageStatus)
             }
+            .store(in: &cancellables)
     }
 
     func startMotionDetection() {
@@ -532,7 +524,7 @@ class WorkViewModel {
 
             let pitchDegrees = attitude.pitch * (180 / .pi)
 
-            if !self.microphoneOverride {
+            if !self.isMicrophoneEnabled {
                 if self.isFirstMotionUpdate {
                     if pitchDegrees < -45 {
                         debugLog(id: "deviceTilt", message: "📱 [Motion] Initial tilt detected: \(Int(pitchDegrees))° (enabling mic)")
@@ -543,11 +535,11 @@ class WorkViewModel {
                         debugLog(id: "deviceTilt", message: "📱 [Motion] Initial position: \(Int(pitchDegrees))° (mic disabled)")
                     }
                 } else {
-                    if pitchDegrees < -45 && !self.isMicrophoneEnabled {
+                    if pitchDegrees < -45 && !self.isRecordingAudio {
                         debugLog(id: "deviceTilt", message: "📱 [Motion] Tilted down: \(Int(pitchDegrees))° (enabling mic)")
                         log("Device tilted down > 45 degrees - enabling microphone")
                         audioManager.enableMicrophone()
-                    } else if pitchDegrees > -45 && self.isMicrophoneEnabled {
+                    } else if pitchDegrees > -45 && self.isRecordingAudio {
                         debugLog(id: "deviceTilt", message: "📱 [Motion] Tilted back: \(Int(pitchDegrees))° (disabling mic)")
                         log("Device tilted back - disabling microphone")
                         audioManager.disableMicrophone()
@@ -556,7 +548,7 @@ class WorkViewModel {
                             log("Sending prompt to Claude Code: \(currentPrompt)")
                             logger.sendPromptToMac(currentPrompt)
                         }
-                    } else if pitchDegrees < -45 && self.isMicrophoneEnabled {
+                    } else if pitchDegrees < -45 && self.isRecordingAudio {
                         debugLog(id: "deviceTilt", message: "📱 [Motion] Still tilted: \(Int(pitchDegrees))° (mic enabled)")
                     } else {
                         debugLog(id: "deviceTilt", message: "📱 [Motion] Still upright: \(Int(pitchDegrees))° (mic disabled)")
@@ -568,8 +560,8 @@ class WorkViewModel {
         }
     }
 
-    func handleMicrophoneOverrideChange() {
-        if microphoneOverride {
+    func handleMicrophoneToggle() {
+        if isMicrophoneEnabled {
             log("Microphone override ON - enabling microphone manually")
             audioManager.enableMicrophone()
         } else {
@@ -583,8 +575,8 @@ class WorkViewModel {
         }
     }
 
-    func handlePlaybackChange() {
-        if playbackEnabled {
+    func handlePlaybackToggle() {
+        if isPlaybackEnabled {
             log("Playback enabled")
             audioManager.enablePlayback()
         } else {
@@ -610,16 +602,13 @@ class WorkViewModel {
         } else {
             let message = Message(
                 content: content,
-                timestamp: currentRecordingTimestamp ?? Date(),
+                timestamp: Date(),
                 status: .notSent
             )
             messages.insert(message, at: 0)
 
             log("📝 Created new message (all previous are injected)")
         }
-
-        currentRecordingId = nil
-        currentRecordingTimestamp = nil
     }
 
     func updateMessageStatus(_ prompt: String, status: MessageStatus) {
