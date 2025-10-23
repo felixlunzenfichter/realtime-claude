@@ -84,7 +84,7 @@
 - startMotionDetection() → motionManager.isDeviceMotionAvailable, motionManager.startDeviceMotionUpdates(), audioManager.enableMicrophone(), audioManager.disableMicrophone(), logger.sendPromptToMac(), realtimeAPI.lastPromptSubject.value
 - handleMicrophoneToggle() → audioManager.enableMicrophone(), audioManager.disableMicrophone(), logger.sendPromptToMac(), realtimeAPI.lastPromptSubject.value
 - handlePlaybackToggle() → audioManager.enablePlayback(), audioManager.disablePlayback()
-- addMessage(content) → messages.firstIndex(), messages[index].content=content, Message(), messages.insert(), currentRecordingId=nil, currentRecordingTimestamp=nil
+- addMessage(content) → messages.firstIndex(), messages[index].content=content, Message(), messages.insert()
 - updateMessageStatus(prompt, status) → messages.firstIndex(), messages[index].status=status, interrupts.firstIndex(), interrupts[index].status=status
 - deleteMessage(id) → messages.firstIndex(), realtimeAPI.clearAccumulatedPrompts(), messages.remove(), interrupts.firstIndex()
 - addInterrupt() → Message(), interrupts.insert()
@@ -132,9 +132,6 @@ enum RecordingStatus {
 }
 
 enum MessageStatus {
-    case recording
-    case stopped
-    case processing
     case notSent
     case sent
     case injected
@@ -142,9 +139,6 @@ enum MessageStatus {
 
     var color: Color {
         switch self {
-        case .recording: return .white
-        case .stopped: return .white
-        case .processing: return .white
         case .notSent: return .white
         case .sent: return .orange
         case .injected: return .green
@@ -154,9 +148,6 @@ enum MessageStatus {
 
     var statusText: String {
         switch self {
-        case .recording: return "Recording..."
-        case .stopped: return "Recording stopped"
-        case .processing: return "Processing..."
         case .notSent: return ""
         case .sent: return "Sending..."
         case .injected: return ""
