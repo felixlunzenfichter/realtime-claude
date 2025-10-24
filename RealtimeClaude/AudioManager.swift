@@ -2,8 +2,8 @@
 # AudioManager - Complete Specification
 
 ## Protocol: AudioManagerProtocol (Sendable)
-- microphoneEnabledSubject: CurrentValueSubject<Bool, Never>
-- playingAudioSubject: CurrentValueSubject<Bool, Never>
+- isRecordingAudioSubject: CurrentValueSubject<Bool, Never>
+- isPlayingAudioSubject: CurrentValueSubject<Bool, Never>
 - startAudioEngine() throws
 - stopAudioEngine()
 - enableMicrophone()
@@ -18,8 +18,8 @@
 ## Class: AudioManager (final, @unchecked Sendable)
 
 ### Constants
-- microphoneEnabledSubject: CurrentValueSubject<Bool, Never> = CurrentValueSubject(false) → installInputAudioTap(): true, removeInputAudioTap(): false
-- playingAudioSubject: CurrentValueSubject<Bool, Never> = CurrentValueSubject(false) → scheduleAudio() completion: true if count>0, false if count==0
+- isRecordingAudioSubject: CurrentValueSubject<Bool, Never> = CurrentValueSubject(false) → installInputAudioTap(): true, removeInputAudioTap(): false
+- isPlayingAudioSubject: CurrentValueSubject<Bool, Never> = CurrentValueSubject(false) → scheduleAudio() completion: true if count>0, false if count==0
 - audioEngine: AVAudioEngine
 - responsePlayerNode: AVAudioPlayerNode
 - audioConverter: AVAudioConverter
@@ -41,8 +41,8 @@
 - scheduleOutputAudioBuffer(audioBase64) → Data(), AVAudioPCMBuffer(), responsePlayerNode.scheduleBuffer(completion: scheduledBufferCount--, if micEnabled: responsePlayerNode.stop(), if count>0: if already true: debugLog("already playing"), else: send(true) + log("Started playing"), if count==0: send(false) + log("Stopped playing")), scheduledBufferCount++, if count==1 && isPlaybackEnabled && !micEnabled && !playingAudioSubject.value: responsePlayerNode.play()
 - convertToOpenAIFormat(buffer) → AVAudioPCMBuffer(), audioConverter.convert()
 - bufferToData(buffer) → stride(), Data()
-- installInputAudioTap() → inputNode.installTap(→ convertToOpenAIFormat(), bufferToData(), realtimeAPI.processInputAudioBuffer()), microphoneEnabledSubject.send(true)
-- removeInputAudioTap() → inputNode.removeTap(), microphoneEnabledSubject.send(false)
+- installInputAudioTap() → inputNode.installTap(→ convertToOpenAIFormat(), bufferToData(), realtimeAPI.processInputAudioBuffer()), isRecordingAudioSubject.send(true)
+- removeInputAudioTap() → inputNode.removeTap(), isRecordingAudioSubject.send(false)
 */
 
 import Foundation
@@ -50,8 +50,8 @@ import Foundation
 import Combine
 
 protocol AudioManagerProtocol: Sendable {
-    var microphoneEnabledSubject: CurrentValueSubject<Bool, Never> { get }
-    var playingAudioSubject: CurrentValueSubject<Bool, Never> { get }
+    var isRecordingAudioSubject: CurrentValueSubject<Bool, Never> { get }
+    var isPlayingAudioSubject: CurrentValueSubject<Bool, Never> { get }
 
     func startAudioEngine()
     func stopAudioEngine()
@@ -65,8 +65,8 @@ protocol AudioManagerProtocol: Sendable {
 nonisolated(unsafe) let audioManager: AudioManagerProtocol = AudioManager()
 
 final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
-    let microphoneEnabledSubject = CurrentValueSubject<Bool, Never>(false)
-    let playingAudioSubject = CurrentValueSubject<Bool, Never>(false)
+    let isRecordingAudioSubject = CurrentValueSubject<Bool, Never>(false)
+    let isPlayingAudioSubject = CurrentValueSubject<Bool, Never>(false)
 
     private let audioEngine: AVAudioEngine
     private let responsePlayerNode: AVAudioPlayerNode
@@ -116,7 +116,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     }
 
     func enableMicrophone() {
-        if microphoneEnabledSubject.value {
+        if isRecordingAudioSubject.value {
             debugLog(id: "enableMicrophone", message: "⚠️ [Audio] Microphone already enabled, ignoring")
             return
         }
@@ -127,11 +127,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
 
     func disableMicrophone() {
         removeInputAudioTap()
-
-        if isPlaybackEnabled {
-            responsePlayerNode.play()
-        }
-
         log("Microphone disabled")
     }
 
@@ -147,7 +142,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     }
 
     func scheduleOutputAudioBuffer(_ audioBase64: String) {
-        if microphoneEnabledSubject.value {
+        if isRecordingAudioSubject.value {
             log("🎤 Microphone enabled - stopping playback to prevent audio interference")
             responsePlayerNode.stop()
             return
@@ -176,26 +171,26 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
 
             self.scheduledBufferCount -= 1
 
-            if self.microphoneEnabledSubject.value {
+            if self.isRecordingAudioSubject.value {
                 self.responsePlayerNode.stop()
             }
 
             if self.scheduledBufferCount > 0 {
-                if self.playingAudioSubject.value {
+                if self.isPlayingAudioSubject.value {
                     debugLog(id: "audioPlayback", message: "🎵 [Audio] Already playing")
                 } else {
-                    self.playingAudioSubject.send(true)
+                    self.isPlayingAudioSubject.send(true)
                     log("Started playing response")
                 }
             } else if self.scheduledBufferCount == 0 {
-                self.playingAudioSubject.send(false)
+                self.isPlayingAudioSubject.send(false)
                 log("Stopped playing response")
             }
         }
 
         scheduledBufferCount += 1
 
-        if scheduledBufferCount == 1 && isPlaybackEnabled && !microphoneEnabledSubject.value && !playingAudioSubject.value {
+        if scheduledBufferCount == 1 && isPlaybackEnabled && !isRecordingAudioSubject.value && !isPlayingAudioSubject.value {
             responsePlayerNode.play()
         }
     }
@@ -259,28 +254,28 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             guard let self = self else { return }
 
-            if self.microphoneEnabledSubject.value {
-                guard let convertedBuffer = self.convertToOpenAIFormat(buffer) else {
-                    return
-                }
-
-                guard let data = self.bufferToData(convertedBuffer) else {
-                    return
-                }
-
-                realtimeAPI.processInputAudioBuffer(data)
-            } else {
-                debugLog(id: "inputAudio", message: "⛔ [Audio] Microphone disabled, ignoring buffer")
+            // Set recording state to true right when we start processing audio
+            if !self.isRecordingAudioSubject.value {
+                self.isRecordingAudioSubject.send(true)
             }
+
+            guard let convertedBuffer = self.convertToOpenAIFormat(buffer) else {
+                return
+            }
+
+            guard let data = self.bufferToData(convertedBuffer) else {
+                return
+            }
+
+            realtimeAPI.processInputAudioBuffer(data)
         }
 
-        microphoneEnabledSubject.send(true)
         log("Audio tap installed")
     }
 
     func removeInputAudioTap() {
         audioEngine.inputNode.removeTap(onBus: 0)
-        microphoneEnabledSubject.send(false)
+        isRecordingAudioSubject.send(false)
         log("Audio tap uninstalled")
     }
 }

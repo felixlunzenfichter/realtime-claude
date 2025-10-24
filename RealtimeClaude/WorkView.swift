@@ -57,7 +57,7 @@
 ## Class: WorkViewModel (Observable)
 
 ### Properties - Audio/Recording State
-- currentRecordingStatus: RecordingStatus = .disconnected → realtimeAPI.apiStateSubject, audioManager.microphoneEnabledSubject
+- currentRecordingStatus: RecordingStatus = .disconnected → realtimeAPI.apiStateSubject, audioManager.isRecordingAudioSubject
 - isRecordingAudio: Bool = false → isRecordingAudio=isEnabled
 - isPlayingAudio: Bool = false → isPlayingAudio=isPlaying
 - isMicrophoneEnabled: Bool = false → handleMicrophoneToggle()
@@ -80,7 +80,7 @@
 - allMessages: [Message] → uses: messages, interrupts
 
 ### Functions
-- init() → realtimeAPI.apiStateSubject.sink(), audioManager.microphoneEnabledSubject.sink(), audioManager.playingAudioSubject.sink(), realtimeAPI.lastPromptSubject.sink(), logger.promptStatusSubject.sink()
+- init() → realtimeAPI.apiStateSubject.sink(), audioManager.isRecordingAudioSubject.sink(), audioManager.isPlayingAudioSubject.sink(), realtimeAPI.lastPromptSubject.sink(), logger.promptStatusSubject.sink()
 - startMotionDetection() → motionManager.isDeviceMotionAvailable, motionManager.startDeviceMotionUpdates(), audioManager.enableMicrophone(), audioManager.disableMicrophone(), logger.sendPromptToMac(), realtimeAPI.lastPromptSubject.value
 - handleMicrophoneToggle() → audioManager.enableMicrophone(), audioManager.disableMicrophone(), logger.sendPromptToMac(), realtimeAPI.lastPromptSubject.value
 - handlePlaybackToggle() → audioManager.enablePlayback(), audioManager.disablePlayback()
@@ -213,6 +213,7 @@ struct ToggleBar: View {
                                     Image(systemName: icon)
                                         .font(.system(size: 16, weight: .semibold))
                                         .foregroundColor(item.color)
+                                        .frame(width: 24, height: 24)
                                 }
 
                                 if let text = item.text {
@@ -457,7 +458,7 @@ class WorkViewModel {
             }
             .store(in: &cancellables)
 
-        audioManager.microphoneEnabledSubject
+        audioManager.isRecordingAudioSubject
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isEnabled in
                 guard let self = self else { return }
@@ -469,7 +470,7 @@ class WorkViewModel {
             }
             .store(in: &cancellables)
 
-        audioManager.playingAudioSubject
+        audioManager.isPlayingAudioSubject
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isPlaying in
                 self?.isPlayingAudio = isPlaying
