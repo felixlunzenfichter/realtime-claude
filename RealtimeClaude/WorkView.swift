@@ -11,7 +11,7 @@
 - INTERRUPT_MESSAGE: String = "[Request interrupted by user]"
 
 ## Enum: RecordingStatus
-- disconnected, connected, microphoneEnabled, speechDetected, speechStopped, processing
+- disconnected, connected, isRecording, speechDetected, speechStopped, processing
 - color: Color → (leaf)
 - statusText: String → (leaf)
 
@@ -57,21 +57,21 @@
 ## Class: WorkViewModel (Observable)
 
 ### Properties - Audio/Recording State
-- currentRecordingStatus: RecordingStatus = .disconnected → currentRecordingStatus=.disconnected, currentRecordingStatus=.connected/.microphoneEnabled, currentRecordingStatus=.speechDetected, currentRecordingStatus=.speechStopped, currentRecordingStatus=.processing
+- currentRecordingStatus: RecordingStatus = .disconnected → realtimeAPI.apiStateSubject, audioManager.microphoneEnabledSubject
 - isRecordingAudio: Bool = false → isRecordingAudio=isEnabled
 - isPlayingAudio: Bool = false → isPlayingAudio=isPlaying
 - isMicrophoneEnabled: Bool = false → handleMicrophoneToggle()
 - isPlaybackEnabled: Bool = true → handlePlaybackToggle()
 
-### Properties - Motion
+### Properties - Messages
+- messages: [Message] = [] → messages[index].content=content, messages[index].status=status, messages.insert(), messages.remove()
+- interrupts: [Message] = [] → interrupts[index].status=status, interrupts.insert()
+
+### Properties - Motion (Private)
 - motionManager: CMMotionManager = CMMotionManager()
 - pitch: Double = 0 → pitch=attitude.pitch
 - roll: Double = 0 → roll=attitude.roll
 - isFirstMotionUpdate: Bool = true → isFirstMotionUpdate=false
-
-### Properties - Messages
-- messages: [Message] = [] → messages[index].content=content, messages[index].status=status, messages.insert(), messages.remove()
-- interrupts: [Message] = [] → interrupts[index].status=status, interrupts.insert()
 
 ### Properties - Internal
 - cancellables: Set<AnyCancellable> = []
@@ -103,7 +103,7 @@ let INTERRUPT_MESSAGE = "[Request interrupted by user]"
 enum RecordingStatus {
     case disconnected
     case connected
-    case microphoneEnabled
+    case isRecording
     case speechDetected
     case speechStopped
     case processing
@@ -112,7 +112,7 @@ enum RecordingStatus {
         switch self {
         case .disconnected: return .red
         case .connected: return .blue
-        case .microphoneEnabled: return .green
+        case .isRecording: return .green
         case .speechDetected: return .yellow
         case .speechStopped: return .orange
         case .processing: return .purple
@@ -123,7 +123,7 @@ enum RecordingStatus {
         switch self {
         case .disconnected: return "Disconnected"
         case .connected: return "Connected"
-        case .microphoneEnabled: return "Recording"
+        case .isRecording: return "Recording"
         case .speechDetected: return "Voice Activity Detected"
         case .speechStopped: return "Voice Activity Stopped"
         case .processing: return "Processing..."
@@ -404,8 +404,7 @@ struct WorkView: View {
 
 @Observable
 class WorkViewModel {
-    private let motionManager = CMMotionManager()
-
+    // Audio/Recording State
     var currentRecordingStatus: RecordingStatus = .disconnected
     var isRecordingAudio = false
     var isPlayingAudio = false
@@ -420,10 +419,7 @@ class WorkViewModel {
         }
     }
 
-    var pitch: Double = 0
-    var roll: Double = 0
-    var isFirstMotionUpdate = true
-
+    // Messages
     var messages: [Message] = []
     var interrupts: [Message] = []
 
@@ -431,6 +427,13 @@ class WorkViewModel {
         (messages + interrupts).sorted { $0.timestamp > $1.timestamp }
     }
 
+    // Motion (Private)
+    private let motionManager = CMMotionManager()
+    var pitch: Double = 0
+    var roll: Double = 0
+    private var isFirstMotionUpdate = true
+
+    // Internal
     private var cancellables = Set<AnyCancellable>()
 
     init() {
@@ -443,7 +446,7 @@ class WorkViewModel {
                 case .disconnected:
                     self.currentRecordingStatus = .disconnected
                 case .connected:
-                    self.currentRecordingStatus = self.isRecordingAudio ? .microphoneEnabled : .connected
+                    self.currentRecordingStatus = self.isRecordingAudio ? .isRecording : .connected
                 case .speechDetected:
                     self.currentRecordingStatus = .speechDetected
                 case .speechStopped:
@@ -459,8 +462,9 @@ class WorkViewModel {
             .sink { [weak self] isEnabled in
                 guard let self = self else { return }
                 self.isRecordingAudio = isEnabled
-                if self.currentRecordingStatus == .connected || self.currentRecordingStatus == .microphoneEnabled {
-                    self.currentRecordingStatus = isEnabled ? .microphoneEnabled : .connected
+                // Update recording status when microphone state changes
+                if self.currentRecordingStatus == .connected || self.currentRecordingStatus == .isRecording {
+                    self.currentRecordingStatus = isEnabled ? .isRecording : .connected
                 }
             }
             .store(in: &cancellables)
