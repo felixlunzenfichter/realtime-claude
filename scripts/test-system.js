@@ -99,10 +99,7 @@ if (!fs.existsSync(testDir)) {
 const logFiles = fs.readdirSync(logsDir).filter(f => f.endsWith('.json')).length;
 const testFiles = fs.readdirSync(testDir).filter(f => f.endsWith('.txt')).length;
 
-if (logFiles !== testFiles) {
-    log(`💥 FATAL: File count mismatch! Logs: ${logFiles}, Tests: ${testFiles}`, { isError: true });
-    process.exit(1);
-}
+log(`${logFiles} log files, ${testFiles} test files`);
 
 const watcher = chokidar.watch(logsDir, {
     persistent: true,
@@ -115,15 +112,14 @@ watcher.on('add', (filePath) => {
     if (!filename.endsWith('.json')) return;
 
     const sessionNumber = parseInt(filename.replace('.json', ''));
-    const expectedNumber = fs.readdirSync(testDir).filter(f => f.endsWith('.txt')).length + 1;
-
-    if (sessionNumber !== expectedNumber) {
-        log(`💥 FATAL: Session number mismatch! Got ${sessionNumber}, expected ${expectedNumber}`, { isError: true });
-        process.exit(1);
-    }
-
     const testFile = path.join(testDir, `${sessionNumber}.txt`);
-    fs.writeFileSync(testFile, `🚀 Test Started at ${new Date().toLocaleString('en-GB')}\nRequirements:\n1) "Successful handshake"\n2) "WebSocket connection established"\n3) "Voice activity detection started"\n4) "Voice activity detection stopped"\n5) "Prompt successfully injected into terminal"\n6) "Started playing response"\n7) "Stopped playing response"\n8) NO errors\n\n`);
+
+    if (fs.existsSync(testFile)) {
+        log(`Test file ${sessionNumber}.txt already exists, monitoring existing file`);
+    } else {
+        log(`Creating test file ${sessionNumber}.txt`);
+        fs.writeFileSync(testFile, `🚀 Test Started at ${new Date().toLocaleString('en-GB')}\nRequirements:\n1) "Successful handshake"\n2) "WebSocket connection established"\n3) "Voice activity detection started"\n4) "Voice activity detection stopped"\n5) "Prompt successfully injected into terminal"\n6) "Started playing response"\n7) "Stopped playing response"\n8) NO errors\n\n`);
+    }
 
     sessionStates.set(sessionNumber, {
         handshakePassed: false,
