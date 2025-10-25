@@ -81,8 +81,8 @@
 
 ### Functions
 - init() → realtimeAPI.apiStateSubject.sink(), audioManager.isRecordingAudioSubject.sink(), audioManager.isPlayingAudioSubject.sink(), realtimeAPI.lastPromptSubject.sink(), logger.promptStatusSubject.sink()
-- startMotionDetection() → motionManager.isDeviceMotionAvailable, motionManager.startDeviceMotionUpdates(), audioManager.enableMicrophone(), audioManager.disableMicrophone(), logger.sendPromptToMac(), realtimeAPI.lastPromptSubject.value
-- handleMicrophoneToggle() → audioManager.enableMicrophone(), audioManager.disableMicrophone(), logger.sendPromptToMac(), realtimeAPI.lastPromptSubject.value
+- startMotionDetection() → motionManager.isDeviceMotionAvailable, motionManager.startDeviceMotionUpdates(), audioManager.startRecording(), audioManager.stopRecording(), logger.sendPromptToMac(), realtimeAPI.lastPromptSubject.value
+- handleMicrophoneToggle() → audioManager.startRecording(), audioManager.stopRecording(), logger.sendPromptToMac(), realtimeAPI.lastPromptSubject.value
 - handlePlaybackToggle() → audioManager.enablePlayback(), audioManager.disablePlayback()
 - addMessage(content) → messages.firstIndex(), messages[index].content=content, Message(), messages.insert()
 - updateMessageStatus(prompt, status) → messages.firstIndex(), messages[index].status=status, interrupts.firstIndex(), interrupts[index].status=status
@@ -405,7 +405,6 @@ struct WorkView: View {
 
 @Observable
 class WorkViewModel {
-    // Audio/Recording State
     var currentRecordingStatus: RecordingStatus = .disconnected
     var isRecordingAudio = false
     var isPlayingAudio = false
@@ -420,7 +419,6 @@ class WorkViewModel {
         }
     }
 
-    // Messages
     var messages: [Message] = []
     var interrupts: [Message] = []
 
@@ -428,13 +426,11 @@ class WorkViewModel {
         (messages + interrupts).sorted { $0.timestamp > $1.timestamp }
     }
 
-    // Motion (Private)
     private let motionManager = CMMotionManager()
     var pitch: Double = 0
     var roll: Double = 0
     private var isFirstMotionUpdate = true
 
-    // Internal
     private var cancellables = Set<AnyCancellable>()
 
     init() {
@@ -463,7 +459,6 @@ class WorkViewModel {
             .sink { [weak self] isEnabled in
                 guard let self = self else { return }
                 self.isRecordingAudio = isEnabled
-                // Update recording status when microphone state changes
                 if self.currentRecordingStatus == .connected || self.currentRecordingStatus == .isRecording {
                     self.currentRecordingStatus = isEnabled ? .isRecording : .connected
                 }
@@ -525,7 +520,7 @@ class WorkViewModel {
                     if pitchDegrees < -45 {
                         debugLog(id: "deviceTilt", message: "📱 [Motion] Initial tilt detected: \(Int(pitchDegrees))° (enabling mic)")
                         log("Device tilted down > 45 degrees - enabling microphone")
-                        audioManager.enableMicrophone()
+                        audioManager.startRecording()
                         self.isFirstMotionUpdate = false
                     } else {
                         debugLog(id: "deviceTilt", message: "📱 [Motion] Initial position: \(Int(pitchDegrees))° (mic disabled)")
@@ -534,11 +529,11 @@ class WorkViewModel {
                     if pitchDegrees < -45 && !self.isRecordingAudio {
                         debugLog(id: "deviceTilt", message: "📱 [Motion] Tilted down: \(Int(pitchDegrees))° (enabling mic)")
                         log("Device tilted down > 45 degrees - enabling microphone")
-                        audioManager.enableMicrophone()
+                        audioManager.startRecording()
                     } else if pitchDegrees > -45 && self.isRecordingAudio {
                         debugLog(id: "deviceTilt", message: "📱 [Motion] Tilted back: \(Int(pitchDegrees))° (disabling mic)")
                         log("Device tilted back - disabling microphone")
-                        audioManager.disableMicrophone()
+                        audioManager.stopRecording()
                         let currentPrompt = realtimeAPI.lastPromptSubject.value
                         if !currentPrompt.isEmpty {
                             log("Sending prompt to Claude Code: \(currentPrompt)")
@@ -559,10 +554,10 @@ class WorkViewModel {
     func handleMicrophoneToggle() {
         if isMicrophoneEnabled {
             log("Microphone override ON - enabling microphone manually")
-            audioManager.enableMicrophone()
+            audioManager.startRecording()
         } else {
             log("Microphone override OFF - disabling microphone, tilt detection active")
-            audioManager.disableMicrophone()
+            audioManager.stopRecording()
             let currentPrompt = realtimeAPI.lastPromptSubject.value
             if !currentPrompt.isEmpty {
                 log("Sending prompt to Claude Code: \(currentPrompt)")

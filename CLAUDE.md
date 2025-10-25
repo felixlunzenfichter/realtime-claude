@@ -45,7 +45,16 @@ Each task = 3 commits:
 
 ## Specifications
 
+**IMPORTANT: Specifications are the first source of truth. Always update the specification FIRST before making any code changes.**
+
 Each Swift file begins with a specification comment that **exactly reflects the structure of the file**. The specification must mirror the actual order of elements as they appear in the code.
+
+### Specification-First Development Process:
+1. **Update the specification comment FIRST** to reflect intended changes
+2. **Then update the actual code** to match the specification
+3. **Verify the specification and code are in sync** before committing
+
+This ensures the specification remains accurate and serves as the authoritative documentation of the file's structure.
 
 ### Possible Elements (use these in whatever order they appear in the file):
 

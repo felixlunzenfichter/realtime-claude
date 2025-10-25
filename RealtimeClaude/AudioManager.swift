@@ -4,10 +4,10 @@
 ## Protocol: AudioManagerProtocol (Sendable)
 - isRecordingAudioSubject: CurrentValueSubject<Bool, Never>
 - isPlayingAudioSubject: CurrentValueSubject<Bool, Never>
-- startAudioEngine() throws
+- startAudioEngine()
 - stopAudioEngine()
-- enableMicrophone()
-- disableMicrophone()
+- startRecording()
+- stopRecording()
 - enablePlayback()
 - disablePlayback()
 - scheduleOutputAudioBuffer(String)
@@ -34,15 +34,14 @@
 - requestMicrophonePermission() → AVAudioApplication.requestRecordPermission()
 - startAudioEngine() → audioEngine.start()
 - stopAudioEngine() → audioEngine.stop()
-- enableMicrophone() → installInputAudioTap()
-- disableMicrophone() → removeInputAudioTap(), if isPlaybackEnabled: responsePlayerNode.play()
+- startRecording() → responsePlayerNode.stop(), installInputAudioTap()
+- stopRecording() → audioEngine.inputNode.removeTap(), isRecordingAudioSubject.send(false)
 - enablePlayback() → isPlaybackEnabled=true
 - disablePlayback() → responsePlayerNode.stop(), isPlaybackEnabled=false
 - scheduleOutputAudioBuffer(audioBase64) → Data(), AVAudioPCMBuffer(), responsePlayerNode.scheduleBuffer(completion: scheduledBufferCount--, if micEnabled: responsePlayerNode.stop(), if count>0: if already true: debugLog("already playing"), else: send(true) + log("Started playing"), if count==0: send(false) + log("Stopped playing")), scheduledBufferCount++, if count==1 && isPlaybackEnabled && !micEnabled && !playingAudioSubject.value: responsePlayerNode.play()
 - convertToOpenAIFormat(buffer) → AVAudioPCMBuffer(), audioConverter.convert()
 - bufferToData(buffer) → stride(), Data()
 - installInputAudioTap() → inputNode.installTap(→ convertToOpenAIFormat(), bufferToData(), realtimeAPI.processInputAudioBuffer()), isRecordingAudioSubject.send(true)
-- removeInputAudioTap() → inputNode.removeTap(), isRecordingAudioSubject.send(false)
 */
 
 import Foundation
@@ -55,8 +54,8 @@ protocol AudioManagerProtocol: Sendable {
 
     func startAudioEngine()
     func stopAudioEngine()
-    func enableMicrophone()
-    func disableMicrophone()
+    func startRecording()
+    func stopRecording()
     func enablePlayback()
     func disablePlayback()
     func scheduleOutputAudioBuffer(_ audioBase64: String)
@@ -115,19 +114,20 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         log("Audio engine stopped")
     }
 
-    func enableMicrophone() {
+    func startRecording() {
         if isRecordingAudioSubject.value {
-            debugLog(id: "enableMicrophone", message: "⚠️ [Audio] Microphone already enabled, ignoring")
+            debugLog(id: "startRecording", message: "⚠️ [Audio] Already recording, ignoring")
             return
         }
         responsePlayerNode.stop()
         installInputAudioTap()
-        log("Microphone enabled")
+        log("Started recording")
     }
 
-    func disableMicrophone() {
-        removeInputAudioTap()
-        log("Microphone disabled")
+    func stopRecording() {
+        audioEngine.inputNode.removeTap(onBus: 0)
+        isRecordingAudioSubject.send(false)
+        log("Stopped recording")
     }
 
     func enablePlayback() {
@@ -143,7 +143,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
 
     func scheduleOutputAudioBuffer(_ audioBase64: String) {
         if isRecordingAudioSubject.value {
-            log("🎤 Microphone enabled - stopping playback to prevent audio interference")
+            debugLog(id: "scheduleAudio", message: "🎤 [Audio] Microphone enabled - not playing audio")
             responsePlayerNode.stop()
             return
         }
@@ -254,7 +254,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             guard let self = self else { return }
 
-            // Set recording state to true right when we start processing audio
             if !self.isRecordingAudioSubject.value {
                 self.isRecordingAudioSubject.send(true)
             }
@@ -271,11 +270,5 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         }
 
         log("Audio tap installed")
-    }
-
-    func removeInputAudioTap() {
-        audioEngine.inputNode.removeTap(onBus: 0)
-        isRecordingAudioSubject.send(false)
-        log("Audio tap uninstalled")
     }
 }
