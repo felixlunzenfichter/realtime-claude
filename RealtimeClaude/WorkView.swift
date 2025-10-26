@@ -472,6 +472,8 @@ class WorkViewModel {
                 self.isRecordingAudio = isRecording
                 if isRecording {
                     self.currentRecordingStatus = .isRecording
+                } else if !isRecording && self.currentRecordingStatus == .isRecording {
+                    self.currentRecordingStatus = .connected
                 }
             }
             .store(in: &cancellables)
@@ -545,11 +547,6 @@ class WorkViewModel {
                         debugLog(id: "deviceTilt", message: "📱 [Motion] Tilted back: \(Int(pitchDegrees))° (disabling mic)")
                         log("Device tilted back - disabling microphone")
                         audioManager.stopRecording()
-                        let currentPrompt = realtimeAPI.lastPromptSubject.value
-                        if !currentPrompt.isEmpty {
-                            log("Sending prompt to Claude Code: \(currentPrompt)")
-                            logger.sendPromptToMac(currentPrompt)
-                        }
                     } else if pitchDegrees < -45 && self.isRecordingAudio {
                         debugLog(id: "deviceTilt", message: "📱 [Motion] Still tilted: \(Int(pitchDegrees))° (mic enabled)")
                     } else {
@@ -569,11 +566,6 @@ class WorkViewModel {
         } else {
             log("Microphone override OFF - disabling microphone, tilt detection active")
             audioManager.stopRecording()
-            let currentPrompt = realtimeAPI.lastPromptSubject.value
-            if !currentPrompt.isEmpty {
-                log("Sending prompt to Claude Code: \(currentPrompt)")
-                logger.sendPromptToMac(currentPrompt)
-            }
         }
     }
 
