@@ -71,7 +71,6 @@
 - acknowledgeSuccessfulInterruptExecution() → (leaf)
 - clearAccumulatedPrompts() → lastPromptSubject.send("")
 - disconnect() → apiStateSubject.send(.disconnected), audioManager.stopAudioEngine(), webSocketTask.cancel(), webSocketTask=nil
-- commitAudioBuffer() → send()
 - deinit() → webSocketTask.cancel()
 
 ## Dependencies
@@ -279,7 +278,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         case "conversation.item.done":
             handleConversationItemDone(json)
         case "session.updated":
-            log("Session configuration updated successfully")
+            log("Session configuration updated successfully - 🔵 Setting API state to .connected")
             apiStateSubject.send(.connected)
             audioManager.startAudioEngine()
         case "response.output_item.added":
@@ -400,10 +399,13 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                         "turn_detection": [
                             "type": "server_vad",
                             "threshold": 0.5,
-                            "prefix_padding_ms": 300,
+                            "prefix_padding_ms": 100,
                             "silence_duration_ms": 200,
                             "create_response": false,
                             "interrupt_response": true
+                        ],
+                        "noise_reduction": [
+                            "type": "near_field"
                         ]
                     ],
                     "output": [
@@ -458,12 +460,12 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func handleSpeechStarted() {
-        log("Voice activity detection started")
+        log("Voice activity detection started - 🟡 Setting API state to .speechDetected")
         apiStateSubject.send(.speechDetected)
     }
 
     func handleSpeechStopped() {
-        log("Voice activity detection stopped")
+        log("Voice activity detection stopped - 🟠 Setting API state to .speechStopped")
         apiStateSubject.send(.speechStopped)
         callCreatePromptFunction()
     }
@@ -542,6 +544,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         responseQueueThread.async { [weak self] in
             self?.isResponseActive = false
             if self?.apiStateSubject.value == .processing {
+                log("Response complete - 🔵 Setting API state to .connected")
                 self?.apiStateSubject.send(.connected)
             }
             self?.processNextQueuedRequest()
@@ -667,6 +670,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             log("conversation.item.added: id=\(id), type=\(type)")
 
             if type == "function_call" {
+                log("🟣 Setting API state to .processing (from handleConversationItemAdded)")
                 apiStateSubject.send(.processing)
             }
         }
@@ -790,19 +794,11 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
 
 
     func disconnect() {
-        log("Disconnecting WebSocket...")
+        log("Disconnecting WebSocket - ⚫ Setting API state to .disconnected")
         apiStateSubject.send(.disconnected)
         audioManager.stopAudioEngine()
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
         webSocketTask = nil
-    }
-
-    func commitAudioBuffer() {
-        let commitEvent: [String: Any] = [
-            "type": "input_audio_buffer.commit"
-        ]
-        send(event: commitEvent)
-        log("Audio buffer committed")
     }
 
     deinit {

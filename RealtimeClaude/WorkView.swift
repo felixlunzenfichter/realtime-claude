@@ -80,9 +80,9 @@
 - allMessages: [Message] → uses: messages, interrupts
 
 ### Functions
-- init() → realtimeAPI.apiStateSubject.sink(), audioManager.isRecordingAudioSubject.sink(), audioManager.isPlayingAudioSubject.sink(), realtimeAPI.lastPromptSubject.sink(), logger.promptStatusSubject.sink()
-- startMotionDetection() → motionManager.isDeviceMotionAvailable, motionManager.startDeviceMotionUpdates(), audioManager.startRecording(), audioManager.stopRecording(), logger.sendPromptToMac(), realtimeAPI.lastPromptSubject.value
-- handleMicrophoneToggle() → audioManager.startRecording(), audioManager.stopRecording(), logger.sendPromptToMac(), realtimeAPI.lastPromptSubject.value
+- init() → realtimeAPI.apiStateSubject.sink(→ if .connected && !lastPrompt.isEmpty: logger.sendPromptToMac(lastPrompt)), audioManager.isRecordingAudioSubject.sink(), audioManager.isPlayingAudioSubject.sink(), realtimeAPI.lastPromptSubject.sink(), logger.promptStatusSubject.sink()
+- startMotionDetection() → motionManager.isDeviceMotionAvailable, motionManager.startDeviceMotionUpdates(), audioManager.startRecording(), audioManager.stopRecording()
+- handleMicrophoneToggle() → audioManager.startRecording(), audioManager.stopRecording()
 - handlePlaybackToggle() → audioManager.enablePlayback(), audioManager.disablePlayback()
 - addMessage(content) → messages.firstIndex(), messages[index].content=content, Message(), messages.insert()
 - updateMessageStatus(prompt, status) → messages.firstIndex(), messages[index].status=status, interrupts.firstIndex(), interrupts[index].status=status
@@ -405,7 +405,17 @@ struct WorkView: View {
 
 @Observable
 class WorkViewModel {
-    var currentRecordingStatus: RecordingStatus = .disconnected
+    var currentRecordingStatus: RecordingStatus = .disconnected {
+        didSet {
+            if currentRecordingStatus == .connected {
+                let currentPrompt = realtimeAPI.lastPromptSubject.value
+                if !currentPrompt.isEmpty {
+                    log("Sending prompt to Claude Code: \(currentPrompt)")
+                    logger.sendPromptToMac(currentPrompt)
+                }
+            }
+        }
+    }
     var isRecordingAudio = false
     var isPlayingAudio = false
     var isMicrophoneEnabled = false {
@@ -438,6 +448,7 @@ class WorkViewModel {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] apiState in
                 guard let self = self else { return }
+                log("API State changed: \(apiState)")
 
                 switch apiState {
                 case .disconnected:
@@ -456,11 +467,11 @@ class WorkViewModel {
 
         audioManager.isRecordingAudioSubject
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] isEnabled in
+            .sink { [weak self] isRecording in
                 guard let self = self else { return }
-                self.isRecordingAudio = isEnabled
-                if self.currentRecordingStatus == .connected || self.currentRecordingStatus == .isRecording {
-                    self.currentRecordingStatus = isEnabled ? .isRecording : .connected
+                self.isRecordingAudio = isRecording
+                if isRecording {
+                    self.currentRecordingStatus = .isRecording
                 }
             }
             .store(in: &cancellables)
@@ -578,7 +589,7 @@ class WorkViewModel {
 
 
     func addMessage(_ content: String) {
-        if let index = messages.firstIndex(where: { $0.status != .injected }) {
+        if let index = messages.firstIndex(where: { $0.status == .notSent }) {
             let existingContent = messages[index].content
 
             if content.hasPrefix(existingContent) {
