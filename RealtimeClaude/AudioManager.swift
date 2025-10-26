@@ -128,7 +128,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     func stopRecording() {
         audioEngine.inputNode.removeTap(onBus: 0)
 
-        // Send 300ms of silence to VAD to ensure proper speech end detection (VAD detects at 200ms)
         let silenceData = generateSilenceBuffer(durationMs: 300)
         realtimeAPI.processInputAudioBuffer(silenceData)
 
@@ -137,7 +136,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     }
 
     private func generateSilenceBuffer(durationMs: Int) -> Data {
-        // 24kHz * durationMs / 1000 = number of samples (24000 * 300 / 1000 = 7200 samples for 300ms)
         let sampleRate = 24000
         let numSamples = (sampleRate * durationMs) / 1000
         var silenceBuffer = [Int16](repeating: 0, count: numSamples)
