@@ -35,7 +35,8 @@
 - startAudioEngine() → audioEngine.start()
 - stopAudioEngine() → audioEngine.stop()
 - startRecording() → responsePlayerNode.stop(), installInputAudioTap()
-- stopRecording() → audioEngine.inputNode.removeTap(), isRecordingAudioSubject.send(false)
+- stopRecording() → audioEngine.inputNode.removeTap(), generateSilenceBuffer(200ms), realtimeAPI.processInputAudioBuffer(silence), isRecordingAudioSubject.send(false)
+- generateSilenceBuffer(durationMs) → [Int16](repeating: 0), Data() (leaf)
 - enablePlayback() → isPlaybackEnabled=true
 - disablePlayback() → responsePlayerNode.stop(), isPlaybackEnabled=false
 - scheduleOutputAudioBuffer(audioBase64) → Data(), AVAudioPCMBuffer(), responsePlayerNode.scheduleBuffer(completion: scheduledBufferCount--, if micEnabled: responsePlayerNode.stop(), if count>0: if already true: debugLog("already playing"), else: send(true) + log("Started playing"), if count==0: send(false) + log("Stopped playing")), scheduledBufferCount++, if count==1 && isPlaybackEnabled && !micEnabled && !playingAudioSubject.value: responsePlayerNode.play()
@@ -126,8 +127,22 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
 
     func stopRecording() {
         audioEngine.inputNode.removeTap(onBus: 0)
+
+        // Send 200ms of silence to VAD to ensure proper speech end detection
+        let silenceData = generateSilenceBuffer(durationMs: 200)
+        realtimeAPI.processInputAudioBuffer(silenceData)
+
         isRecordingAudioSubject.send(false)
         log("Stopped recording")
+    }
+
+    private func generateSilenceBuffer(durationMs: Int) -> Data {
+        // 24kHz * 0.2s = 4800 samples for 200ms
+        let sampleRate = 24000
+        let numSamples = (sampleRate * durationMs) / 1000
+        var silenceBuffer = [Int16](repeating: 0, count: numSamples)
+        let data = Data(bytes: &silenceBuffer, count: silenceBuffer.count * MemoryLayout<Int16>.size)
+        return data
     }
 
     func enablePlayback() {
