@@ -258,9 +258,9 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                 "type": "realtime",
                 "output_modalities": ["audio"],
                 "instructions": """
-                You are an interface for a fully voice-controlled computer setup. You are GPT real-time. You are the ears and the mouth of the computer agent.
+                You are an interface for a fully voice-controlled computer setup. You are GPT real-time. You are the ears of the computer agent.
 
-                You are converting speech to prompts for a command-line agent (similar to Claude Code or Codex). The only problem is that the command-line agent only works with text. The best models only work with text and they are not multimodal, but you can serve as a bridge between speaking, listening, and text.
+                You are converting speech to text for a command-line agent (similar to Claude Code or Codex). The only problem is that the command-line agent only works with text. The best models only work with text and they are not multimodal, but you can serve as a bridge between speaking, listening, and text.
 
                 This is the first time that a person sitting in a wheelchair can use a computer just by speaking. Never suggest mouse clicks or keyboard functionality - everything must be voice-controlled.
 
@@ -268,46 +268,21 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
 
                 It is really crucial for eye health - looking at the screen can be very harmful. You should minimize the amount of times that the user has to look at the screen. Of course, code will have to be read, but we can save a lot of screen time and improve our eye health if you just read out the most crucial things, and we don't even have to check and read.
 
-                The exact flow:
-                1. We start the session and connect to you, the real-time API
-                2. Then we tilt up the device
-                3. Then the microphone is on
-                4. When we speak, you hear us - we capture the voice and send it to you, and you're listening
-                5. Voice activity detection started
-                6. Stopped when we stop speaking
-                7. You call the createPrompt function
-                8. That's where you create whatever is being sent to the agent
-                9. Every time we speak, this happens again (accumulating prompts)
-                10. You create the prompts every time, reflecting exactly what the user said
-                11. When we tilt down the device, it is sent to the command-line agent
-                12. When you receive an acknowledgment that the prompt is executing
-                13. You create an audio response
-                14. That contains a very condensed reading of the prompt
-                15. So that in the best case, we do not even have to look at the screen to see if the correct prompt was sent (this is really crucial for eye health)
-
                 The cycle repeats:
-                - Tilt up → Microphone on → Speak → You hear our voice → VAD starts/stops → You create prompt → Prompt added
-                - Continue speaking multiple times (each adds to the accumulated prompts)
-                - Tilt down → Microphone off → All prompts sent to Claude Code
-                - Acknowledgment that prompt is executing → You create audio response with condensed prompt summary
+                - Tilt up → Microphone on → Speak → You hear our voice → VAD starts/stops → You create the transcription → Transcription added
+                - Continue speaking multiple times (each adds to the accumulated transcriptions)
+                - Tilt down → Microphone off → All transcriptions sent to Claude Code
+                - Acknowledgment that transcription is executing → You create audio response with condensed transcription summary
                 - Never touching anything - pure voice and motion control
                 - Never needing to look at screen - protecting eye health
 
-                Your strict rules:
-                1. NEVER remove anything the user said (except explicit corrections or duplications)
-                2. NEVER add anything the user didn't say
-                3. Give an overview of the flow: the user speaks, you convert it into a prompt, when ready, they send it to Claude Code
-                4. And then Claude Code executes the commands
-                5. Yes, preserve everything exactly
-                6. Only remove things if they are duplicated or if it's a correction
-
                 Example of correction handling:
                 - User says: "Send this to Cloud code" (spelled C-L-O-U-D code)
-                - User then says: "No, it's not cloud code, it's Claude code, C-L-A-U-D-E"
+                - User then says: "No, it's not cloud code, it's C-L-A-U-D-E code"
                 - You correct it to: "Send this to Claude code"
-                - The correction overrides the original mistake
+                - Your next transcription, if they repeat it, should be: "Send this to Claude code"
 
-                Remember: You are enabling full computer control through voice for users who cannot use traditional input methods. Accuracy is critical - every word matters. The audio confirmation should be extremely condensed and as short as possible - basically just keywords - so that in the minimal amount of words, we know that you have understood what we said. This is crucial for eye health - users should never need to look at the screen.
+                Accuracy is critical - every word matters. The audio confirmation should be extremely condensed and as short as possible - basically just keywords - so that in the minimal amount of words, we know that you have understood what we said. This is crucial for eye health - users should never need to look at the screen.
                 """,
                 "audio": [
                     "input": [
@@ -386,10 +361,10 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     func handleSpeechStopped() {
         log("Voice activity detection stopped - 🟠 Setting API state to .speechStopped")
         apiStateSubject.send(.speechStopped)
-        callCreatePromptFunction()
+        callTranscriptionDeltaFunction()
     }
 
-    func callCreatePromptFunction() {
+    func callTranscriptionDeltaFunction() {
         queueResponseRequest { [weak self] in
             guard let self = self else { return }
 
@@ -399,25 +374,19 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                     "tools": [
                         [
                             "type": "function",
-                            "name": "createPrompt",
+                            "name": "transcriptionDelta",
                             "description": """
-                            Single prompt, ready to execute, convert user's speech into a precise prompt.
-
-                            If unsure, make it verbatim.
-
-                            This prompt will be executed by a command line agent.
-
-                            Follow your comprehensive instructions - never add or remove anything (except corrections/duplicates).
+                            Whatever you heard since creating the last transcription. Please give an exact transcription of that. Don't repeat yourself if you have already transcribed something.
                             """,
                             "parameters": [
                                 "type": "object",
                                 "properties": [
-                                    "prompt": [
+                                    "transcription": [
                                         "type": "string",
-                                        "description": "Single executable prompt for command line agent"
+                                        "description": "Exact transcription of what was heard"
                                     ]
                                 ],
-                                "required": ["prompt"],
+                                "required": ["transcription"],
                                 "additionalProperties": false
                             ]
                         ]
@@ -427,7 +396,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             ]
 
             self.send(event: responseCreate)
-            log("Requesting createPrompt function call after speech stopped")
+            log("Requesting transcriptionDelta function call after speech stopped")
         }
     }
 
@@ -526,8 +495,8 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             let jsonObject = try JSONSerialization.jsonObject(with: argumentsData, options: [])
 
             guard let dict = jsonObject as? [String: Any],
-                  let prompt = dict["prompt"] as? String else {
-                error("Failed to extract prompt from arguments")
+                  let transcription = dict["transcription"] as? String else {
+                error("Failed to extract transcription from arguments")
                 return
             }
 
@@ -535,26 +504,17 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             let newValue: String
 
             if currentValue.isEmpty {
-                newValue = prompt
-                log("📝 First prompt: \(prompt)")
-            } else if prompt.hasPrefix(currentValue) {
-                newValue = prompt
-                log("🔄 Replaced prefix: current was contained in new prompt - \(prompt)")
-            } else if currentValue.contains(prompt) {
-                newValue = currentValue
-                log("⏭️ Skipped duplicate: prompt already contained")
+                newValue = transcription
             } else {
-                newValue = currentValue + "\n" + prompt
-                log("📝 Added prompt: \(prompt)")
+                newValue = currentValue + "\n" + transcription
             }
 
             lastPromptSubject.send(newValue)
-            log("📝 Accumulated: \(newValue)")
 
             let result: [String: Any] = [
                 "status": "success",
-                "accumulated_prompt": newValue,
-                "latest_addition": prompt
+                "accumulated_transcription": newValue,
+                "latest_addition": transcription
             ]
 
             let outputData = try JSONSerialization.data(withJSONObject: result)
