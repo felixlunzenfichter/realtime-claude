@@ -1,57 +1,3 @@
-/*
-# LogListView - Complete Specification
-
-## Class: LogListViewModel (@Observable)
-
-### Properties
-- logs: [LogMessage] = [] → setupSubscription(): logger.logsSubject
-- debugLogs: [(LogMessage, Int)] = [] → setupSubscription(): logger.debugLogsSubject
-- transmittedLogIds: [String] = [] → setupSubscription(): logger.transmittedLogIdsSubject
-- sessionNumber: Int = 0 → setupSubscription(): logger.sessionNumberSubject
-- uptimeToday: Int = 0 → setupSubscription(): logger.uptimeTodaySubject
-- uptimeTotal: Int = 0 → setupSubscription(): logger.uptimeTotalSubject
-- totalLogs: Int = 0 → setupSubscription(): logger.totalLogsSubject
-- showDebugLogs: Bool = false → user toggle
-- showRegularLogs: Bool = true → user toggle
-- showErrorLogs: Bool = true → user toggle
-- cancellables: Set<AnyCancellable> = [] → setupSubscription(): store
-
-### Computed Properties
-- combinedLogs: [(LogMessage, Int?)] → uses: showRegularLogs, showErrorLogs, showDebugLogs, logs, debugLogs
-- regularLogsCount: Int → uses: logs
-- errorLogsCount: Int → uses: logs
-- sessionStartTime: Date? → uses: logs
-- currentSessionTime: Int → uses: sessionStartTime, transmittedLogIds, logs
-- sessionLogsCount: Int → uses: transmittedLogIds
-- uptimeTodayTotal: Int → uses: uptimeToday, currentSessionTime
-- uptimeTotalTotal: Int → uses: uptimeTotal, currentSessionTime
-- todayUptimeColor: Color → uses: uptimeTodayTotal
-
-### Functions
-- init() → setupSubscription()
-- setupSubscription() → subject.receive(), subject.sink(), cancellables.insert()
-
-## Struct: LogListView (View)
-
-### Properties
-- showLogs: Bool (@Binding)
-- viewModel: LogListViewModel (@State) = LogListViewModel()
-
-### Computed Properties
-- isIPhone: Bool → uses: UIDevice.current.userInterfaceIdiom
-- body: some View → uses: viewModel, showLogs, isIPhone
-
-## Struct: LogRowView (View)
-
-### Constants
-- log: LogMessage
-- isTransmitted: Bool
-- count: Int?
-
-### Computed Properties
-- body: some View → uses: log, isTransmitted, count
-*/
-
 import SwiftUI
 import Combine
 import Observation
@@ -160,7 +106,7 @@ class LogListViewModel {
 
 struct LogListView: View {
     @Binding var showLogs: Bool
-    @State private var viewModel = LogListViewModel()
+    @Bindable var viewModel: LogListViewModel
 
     var isIPhone: Bool {
         UIDevice.current.userInterfaceIdiom == .phone

@@ -48,7 +48,6 @@ server.listen(8082, '0.0.0.0', () => {
     console.log('Logs directory:', logsDir);
     console.log('Existing sessions:', getSessionCount());
 
-    // Initialize Claude conversation monitoring
     initializeClaudeMonitoring();
 });
 
@@ -56,7 +55,6 @@ function processBufferedData(socket, buffer) {
     let messagesProcessed = 0;
     let remainingBuffer = buffer;
 
-    // Process ALL complete messages in the buffer
     while (remainingBuffer.indexOf('\n') !== -1) {
         const newlineIndex = remainingBuffer.indexOf('\n');
         const line = remainingBuffer.substring(0, newlineIndex);
@@ -72,7 +70,6 @@ function processBufferedData(socket, buffer) {
             }
         }
     }
-
 
     return remainingBuffer;
 }
@@ -158,13 +155,11 @@ function handlePromptMessage(socket, logData) {
     console.log(`   Prompt: "${prompt}"`);
     console.log(`   Timestamp: ${new Date(timestamp * 1000).toLocaleString()}`);
 
-    // Clean the prompt - remove quotation marks and escape backslashes
     const cleanedPrompt = prompt
-        .replace(/["']/g, '')  // Remove quotes
-        .replace(/\\/g, '\\\\');  // Escape backslashes for AppleScript
+        .replace(/["']/g, '')
+        .replace(/\\/g, '\\\\');
     console.log(`🧹 Cleaned prompt: "${cleanedPrompt}"`);
 
-    // Store prompt WITHOUT socket reference
     pendingPrompts.set(cleanedPrompt, {
         originalPrompt: prompt,
         timestamp: Date.now(),
@@ -172,11 +167,9 @@ function handlePromptMessage(socket, logData) {
     });
     console.log(`📝 Added prompt to tracking (${pendingPrompts.size} total)`);
 
-    // Check if this is the stop signal
     if (prompt === '[Request interrupted by user]') {
         console.log('🛑 Detected stop signal - sending ESC instead of typing text');
 
-        // Send ESC key instead of typing the text
         const escapeCommand = `osascript <<'EOF'
             tell application "Terminal"
                 activate
@@ -205,18 +198,15 @@ EOF`;
                 pendingPrompts.delete(cleanedPrompt);
             } else {
                 console.log('✅ ESC key sent to Terminal');
-                // File watcher will automatically detect when the message appears
             }
         });
 
-        return;  // Don't continue to normal injection
+        return;
     }
 
-    // Normal prompt injection for all other messages
     injectIntoTerminal(cleanedPrompt, (terminalSuccess, terminalError) => {
         if (terminalSuccess) {
             console.log('✅ Terminal automation executed successfully!');
-            // File watcher will automatically detect when the prompt appears
         } else {
             console.log(`❌ Terminal automation failed: ${terminalError}`);
 
@@ -403,9 +393,7 @@ function sendAcknowledgment(socket, logId) {
     socket.write(ackMessage);
 }
 
-
-// Global variables for prompt monitoring
-let pendingPrompts = new Map(); // Map: cleanedPrompt -> {originalPrompt, timestamp, verified}
+let pendingPrompts = new Map();
 
 function initializeClaudeMonitoring() {
     const claudeProjectsPath = path.join(process.env.HOME, '.claude', 'projects');
@@ -446,35 +434,28 @@ function initializeClaudeMonitoring() {
 
 function checkForInjectedPrompts(filePath) {
     try {
-        // Read the entire file
         const fileContent = fs.readFileSync(filePath, 'utf8');
         const lines = fileContent.trim().split('\n');
 
         console.log(`\n📊 Total events in conversation: ${lines.length}`);
 
-        // FIRST: Filter ALL events for user text messages
         const allUserEvents = [];
         for (const line of lines) {
             try {
                 const event = JSON.parse(line);
 
-                // Only process user events with actual text content
                 if (event.type === 'user' &&
                     event.message &&
                     event.message.role === 'user' &&
                     event.message.content) {
 
-                    // Handle TWO formats:
-                    // Format 1: content is a STRING (newer format)
                     if (typeof event.message.content === 'string') {
                         allUserEvents.push({
                             text: event.message.content,
                             timestamp: event.timestamp
                         });
                     }
-                    // Format 2: content is an ARRAY (older format)
                     else if (Array.isArray(event.message.content)) {
-                        // Find text content in the message (exclude tool_result, tool_use, etc.)
                         for (const content of event.message.content) {
                             if (content.type === 'text' &&
                                 content.text &&
@@ -488,12 +469,10 @@ function checkForInjectedPrompts(filePath) {
                     }
                 }
             } catch (parseErr) {
-                // Skip malformed lines
                 continue;
             }
         }
 
-        // SECOND: Take the last 5 relevant user messages
         const userEvents = allUserEvents.slice(-5);
 
         console.log(`📋 Found ${allUserEvents.length} total user text messages`);
@@ -508,13 +487,10 @@ function checkForInjectedPrompts(filePath) {
         });
         console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
 
-        // Check each pending prompt against user events
         for (const [prompt, data] of pendingPrompts.entries()) {
             if (!data.verified) {
                 console.log(`\n🔍 Checking pending prompt: "${prompt.substring(0, 60)}..."`);
 
-
-                // Look for the prompt in user events and find which one matched
                 let matchedIndex = -1;
                 let matchedEvent = null;
 
@@ -533,11 +509,9 @@ function checkForInjectedPrompts(filePath) {
                     console.log(`   ✓ Newly injected message IS part of the last 5 relevant messages`);
                     console.log('📍 Found in conversation events:', path.basename(filePath));
 
-                    // Mark as verified
                     data.verified = true;
                     data.verifiedAt = Date.now();
 
-                    // Send success acknowledgment
                     if (activeSocket) {
                         const ackMessage = {
                             type: 'prompt_ack',
@@ -552,7 +526,6 @@ function checkForInjectedPrompts(filePath) {
                         console.log('✅ Prompt verified and acknowledged to iOS!');
                     }
 
-                    // Remove from tracking
                     pendingPrompts.delete(prompt);
                 } else {
                     console.log(`❌ NOT FOUND in last 5 user messages`);
@@ -561,13 +534,11 @@ function checkForInjectedPrompts(filePath) {
             }
         }
 
-        // Report status with details
         const verifiedCount = Array.from(pendingPrompts.values()).filter(p => p.verified).length;
         const pendingCount = pendingPrompts.size - verifiedCount;
 
         console.log(`\n📊 Prompt Status: ${verifiedCount} verified, ${pendingCount} pending`);
 
-        // Print pending prompt details
         if (pendingCount > 0) {
             console.log(`\n⏳ Pending prompts:`);
             let index = 1;
@@ -587,38 +558,29 @@ function checkForInjectedPrompts(filePath) {
 }
 
 function injectIntoTerminal(prompt, callback) {
-    // No escaping needed - prompt is already cleaned and escaped
     const escapedPrompt = prompt;
 
     console.log(`🔤 Injecting prompt into Terminal: "${escapedPrompt}"`);
 
-    // Enhanced AppleScript for macOS 26 Tahoe - using heredoc for safety
     const appleScriptCommand = `osascript <<'EOF'
-        -- First activate Terminal to bring it to front
         tell application "Terminal"
             activate
         end tell
 
-        -- Short delay to ensure activation
         delay 0.2
 
-        -- Use System Events for extra reliability
         tell application "System Events"
             tell process "Terminal"
                 set frontmost to true
 
-                -- Perform AXRaise action for additional window raising
                 try
                     perform action "AXRaise" of window 1
                 end try
 
-                -- Now send keystrokes
                 keystroke "${escapedPrompt}"
 
-                -- Wait 1 second before pressing enter
                 delay 1
 
-                -- Send return key (Enter)
                 key code 36
 
                 return "success: Typed into Terminal (macOS 26 enhanced method)"
@@ -628,7 +590,6 @@ EOF`;
 
     console.log('🍎 Executing enhanced AppleScript for macOS 26 Tahoe...');
 
-    // Execute the AppleScript using heredoc
     exec(appleScriptCommand, (error, stdout, stderr) => {
         console.log('📝 AppleScript result:');
         if (error) {

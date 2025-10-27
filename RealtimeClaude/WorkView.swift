@@ -1,104 +1,39 @@
-
-/*
-# WorkView - Complete Specification
-
-## External Dependencies (Global Singletons)
-- audioManager: AudioManagerProtocol (from AudioManager.swift)
-- realtimeAPI: RealtimeAPIProtocol (from RealtimeAPI.swift)
-- logger: LoggerProtocol (from Logger.swift)
-
-## Global Variable
-- INTERRUPT_MESSAGE: String = "[Request interrupted by user]"
-
-## Enum: RecordingStatus
-- disconnected, connected, isRecording, speechDetected, speechStopped, processing
-- color: Color → (leaf)
-- statusText: String → (leaf)
-
-## Enum: MessageStatus
-- notSent, sent, injected, failed
-- color: Color → (leaf)
-- statusText: String → (leaf)
-
-## Struct: Message (Identifiable)
-- id: UUID = UUID()
-- content: String
-- timestamp: Date
-- status: MessageStatus
-
-## Struct: ToggleBar (View)
-
-### Struct: ToggleItem
-- color: Color
-- isOn: Binding<Bool>?
-- icon: String?
-- text: String?
-- action: () -> Void
-- init(color, isOn?, icon?, text?, action)
-
-### Properties
-- items: [ToggleItem]
-- height: CGFloat
-- topSpacing: CGFloat
-
-### Functions
-- init(items, height = UserDefaults.standard.double("SAFE_AREA_TOP") * 2, topSpacing = UserDefaults.standard.double("SAFE_AREA_TOP") / 3)
-- body: View → ForEach(), Toggle(), SwitchToggleStyle(), Image(), Text(), onTapGesture(), glassEffect()
-
-## Struct: WorkView (View)
-
-### Properties
-- viewModel: WorkViewModel = WorkViewModel() → startMotionDetection()
-- showLogs: Binding<Bool> → showLogs.toggle()
-
-### Functions
-- body: View → viewModel.allMessages.isEmpty, ScrollViewReader(), List(), ForEach(), ZStack(), Text(), ProgressView(), Image(), swipeActions(), deleteMessage(), ToggleBar(), viewModel.isPlaybackEnabled.toggle(), viewModel.isMicrophoneEnabled.toggle(), stopClaudeCode(), showLogs.toggle(), onAppear(), onDisappear()
-
-## Class: WorkViewModel (Observable)
-
-### Properties - Audio/Recording State
-- currentRecordingStatus: RecordingStatus = .disconnected → realtimeAPI.apiStateSubject, audioManager.isRecordingAudioSubject
-- isRecordingAudio: Bool = false → isRecordingAudio=isEnabled
-- isPlayingAudio: Bool = false → isPlayingAudio=isPlaying
-- isMicrophoneEnabled: Bool = false → handleMicrophoneToggle()
-- isPlaybackEnabled: Bool = true → handlePlaybackToggle()
-
-### Properties - Messages
-- messages: [Message] = [] → messages[index].content=content, messages[index].status=status, messages.insert(), messages.remove()
-- interrupts: [Message] = [] → interrupts[index].status=status, interrupts.insert()
-
-### Properties - Motion (Private)
-- motionManager: CMMotionManager = CMMotionManager()
-- pitch: Double = 0 → pitch=attitude.pitch
-- roll: Double = 0 → roll=attitude.roll
-- isFirstMotionUpdate: Bool = true → isFirstMotionUpdate=false
-
-### Properties - Internal
-- cancellables: Set<AnyCancellable> = []
-
-### Computed Properties
-- allMessages: [Message] → uses: messages, interrupts
-
-### Functions
-- init() → realtimeAPI.apiStateSubject.sink(→ if .connected && !lastPrompt.isEmpty: logger.sendPromptToMac(lastPrompt)), audioManager.isRecordingAudioSubject.sink(), audioManager.isPlayingAudioSubject.sink(), realtimeAPI.lastPromptSubject.sink(), logger.promptStatusSubject.sink()
-- startMotionDetection() → motionManager.isDeviceMotionAvailable, motionManager.startDeviceMotionUpdates(), audioManager.startRecording(), audioManager.stopRecording()
-- handleMicrophoneToggle() → audioManager.startRecording(), audioManager.stopRecording()
-- handlePlaybackToggle() → audioManager.enablePlayback(), audioManager.disablePlayback()
-- addMessage(content) → messages.firstIndex(), messages[index].content=content, Message(), messages.insert()
-- updateMessageStatus(prompt, status) → messages.firstIndex(), messages[index].status=status, interrupts.firstIndex(), interrupts[index].status=status
-- deleteMessage(id) → messages.firstIndex(), realtimeAPI.clearAccumulatedPrompts(), messages.remove(), interrupts.firstIndex()
-- addInterrupt() → Message(), interrupts.insert()
-- stopClaudeCode() → addInterrupt(), logger.sendPromptToMac()
-- deinit → stopMotionDetection()
-- stopMotionDetection() → motionManager.stopDeviceMotionUpdates()
-*/
-
 import SwiftUI
 import Combine
 import Observation
 import CoreMotion
 
 let INTERRUPT_MESSAGE = "[Request interrupted by user]"
+
+struct TiltIndicator: View {
+    let pitch: Double
+
+    var tiltPercentage: Double {
+        let pitchDegrees = pitch * (180 / .pi)
+        let percentage = max(0, min(100, (-pitchDegrees / 45) * 100))
+        return percentage
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.gray.opacity(0.3))
+
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(tiltPercentage >= 100 ? Color.green : Color.blue)
+                        .frame(width: geometry.size.width * (tiltPercentage / 100))
+                }
+            }
+            .frame(height: 8)
+
+            Text(String(format: "%.0f°", -pitch * (180 / .pi)))
+                .font(.caption)
+                .foregroundColor(.gray)
+        }
+    }
+}
 
 enum RecordingStatus {
     case disconnected
@@ -236,7 +171,7 @@ struct ToggleBar: View {
 }
 
 struct WorkView: View {
-    @State private var viewModel = WorkViewModel()
+    @Bindable var viewModel: WorkViewModel
     @Binding var showLogs: Bool
 
     var body: some View {
@@ -244,7 +179,8 @@ struct WorkView: View {
             if viewModel.allMessages.isEmpty {
                 VStack {
                     Spacer()
-                    Text("Speak to create a message")
+                    TiltIndicator(pitch: viewModel.pitch)
+                    Text("Hold up to record")
                         .font(.headline)
                         .foregroundColor(.gray)
                     Spacer()
@@ -407,6 +343,7 @@ struct WorkView: View {
 class WorkViewModel {
     var currentRecordingStatus: RecordingStatus = .disconnected {
         didSet {
+            log("Recording status changed: \(oldValue) → \(currentRecordingStatus)")
             if currentRecordingStatus == .connected {
                 let currentPrompt = realtimeAPI.lastPromptSubject.value
                 if !currentPrompt.isEmpty {
@@ -472,9 +409,7 @@ class WorkViewModel {
                 self.isRecordingAudio = isRecording
                 if isRecording {
                     self.currentRecordingStatus = .isRecording
-                } else if !isRecording && self.currentRecordingStatus == .isRecording {
-                    self.currentRecordingStatus = .connected
-                }
+                } else if !isRecording && self.currentRecordingStatus == .isRecording && self.currentRecordingStatus != .connected { self.currentRecordingStatus = .connected }
             }
             .store(in: &cancellables)
 

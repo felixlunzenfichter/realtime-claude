@@ -1,20 +1,3 @@
-/*
-# IntFormatter - Complete Specification
-
-## Extension: Int
-
-### Computed Properties
-- formattedBytes: String → uses: self
-- formattedDuration: String → uses: self
-- formattedSeconds: String → uses: formattedDuration
-- formattedMilliseconds: String → uses: self, formattedDuration
-
-## Extension: Date
-
-### Computed Properties
-- formattedTimestamp: String → uses: self
-*/
-
 import Foundation
 
 extension Int {

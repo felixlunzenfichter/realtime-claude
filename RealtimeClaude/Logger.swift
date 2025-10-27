@@ -1,92 +1,3 @@
-/*
-# Logger - Complete Specification
-
-## Struct: PromptStatusUpdate
-- prompt: String
-- status: String
-
-## Protocol: LoggerProtocol
-- logsSubject: CurrentValueSubject<[LogMessage], Never>
-- debugLogsSubject: CurrentValueSubject<[(LogMessage, Int)], Never>
-- transmittedLogIdsSubject: CurrentValueSubject<[String], Never>
-- sessionNumberSubject: CurrentValueSubject<Int, Never>
-- uptimeTodaySubject: CurrentValueSubject<Int, Never>
-- uptimeTotalSubject: CurrentValueSubject<Int, Never>
-- totalLogsSubject: CurrentValueSubject<Int, Never>
-- promptStatusSubject: PassthroughSubject<PromptStatusUpdate, Never>
-- sendPromptToMac(String)
-
-## Enum: LogType (Codable)
-- log, error
-
-### Computed Properties
-- color: Color → uses: self
-- label: String → uses: self
-
-## Struct: LogMessage (Identifiable, Codable, Sendable)
-
-### Constants
-- type: LogType
-- timestamp: Date
-- fileName: String
-- functionName: String
-- message: String
-
-### Properties
-- id: String → UUID().uuidString
-
-### Computed Properties
-- shortFileName: String → uses: fileName
-
-## Global Variable
-- logger: LoggerProtocol = Logger()
-
-## Class: Logger (private, @unchecked Sendable, LoggerProtocol)
-
-### Constants
-- connection: NWConnection
-- macHostname: String = "Felixs-MacBook-Pro.local"
-- port: UInt16 = 8082
-- tcpProcessingQueue: DispatchQueue
-- logsSubject: CurrentValueSubject<[LogMessage], Never> → addLogMessage(): send
-- transmittedLogIdsSubject: CurrentValueSubject<[String], Never> → acknowledgeTransmission(): send
-- sessionNumberSubject: CurrentValueSubject<Int, Never> → handleHandshakeMessage(): send
-- uptimeTodaySubject: CurrentValueSubject<Int, Never> → handleHandshakeMessage(): send
-- uptimeTotalSubject: CurrentValueSubject<Int, Never> → handleHandshakeMessage(): send
-- totalLogsSubject: CurrentValueSubject<Int, Never> → handleHandshakeMessage(): send
-- debugLogsSubject: CurrentValueSubject<[(LogMessage, Int)], Never> → addDebugLog(): send
-- promptStatusSubject: PassthroughSubject<PromptStatusUpdate, Never> → handlePromptAckMessage(), sendPromptToMac(): send
-
-### Properties
-- dataBuffer: Data = Data() → handleIncomingData(): append, processAllBufferedMessages(): removeSubrange
-- totalBytesReceived: Int = 0 → handleIncomingData(): +=
-- totalBytesSentToMac: Int = 0 → sendMessage(): +=
-- sessionNumber: Int = 0 → handleHandshakeMessage(): =
-
-### Functions
-- init() → NWConnection(), connection.start(), startReceiving()
-- addLog(type, file, function) → LogMessage(), addLogMessage(), sendLog()
-- addLogMessage(log) → logsSubject.send()
-- sendLog(log) → JSONEncoder.encode(), sendMessage()
-- sendMessage(messageType, logMessage) → tcpProcessingQueue.async(), JSONEncoder.encode(), connection.send(), totalBytesSentToMac+=
-- addDebugLog(id, message, file, function) → LogMessage(), debugLogsSubject.send()
-- startReceiving() → connection.receive(), handleIncomingData(), startReceiving()
-- handleIncomingData(data) → dataBuffer.append(), totalBytesReceived+=, processAllBufferedMessages()
-- processAllBufferedMessages() → dataBuffer.firstIndex(), dataBuffer.removeSubrange(), JSONSerialization.jsonObject(), routeIncomingMessage()
-- routeIncomingMessage(json) → handleAckMessage()|handleHandshakeMessage()|handlePromptAckMessage()
-- handleAckMessage(json) → acknowledgeTransmission()
-- handleHandshakeMessage(json) → realtimeAPI.connect(), sessionNumber=, sessionNumberSubject.send(), totalLogsSubject.send(), uptimeTotalSubject.send(), uptimeTodaySubject.send()
-- acknowledgeTransmission(logId) → transmittedLogIdsSubject.send()
-- handlePromptAckMessage(json) → if success: realtimeAPI.acknowledgeSuccessfulPromptInjection()|realtimeAPI.acknowledgeSuccessfulInterruptExecution(), promptStatusSubject.send()
-- sendStartMessage() → JSONSerialization.data(), sendMessage()
-- sendPromptToMac(prompt) → JSONSerialization.data(), sendMessage(), promptStatusSubject.send()
-
-## Global Functions
-- log(message, file, function) → logger.addLog()
-- error(message, file, function) → logger.addLog()
-- debugLog(id, message, file, function) → logger.addDebugLog()
-*/
-
 import Foundation
 import SwiftUI
 import Network
@@ -155,7 +66,6 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     let sessionNumberSubject = CurrentValueSubject<Int, Never>(0)
     let totalLogsSubject = CurrentValueSubject<Int, Never>(0)
     let transmittedLogIdsSubject = CurrentValueSubject<[String], Never>([])
-    let uptimeTodaySubject = CurrentValueSubject<Int, Never>(0)
     let uptimeTotalSubject = CurrentValueSubject<Int, Never>(0)
 
     private let connection: NWConnection

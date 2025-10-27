@@ -1,24 +1,7 @@
-/*
-# RealtimeClaudeApp - Complete Specification
-
-## Struct: RealtimeClaudeApp (@main, App)
-
-### Properties
-- isInitialized: Bool (@State) = false → onAppear: true after UserDefaults set
-
-### Computed Properties
-- body: some Scene → GeometryReader, if isInitialized: ContentView else: ProgressView, onAppear: UserDefaults.set("SCREEN_HEIGHT", "SAFE_AREA_TOP", "SAFE_AREA_BOTTOM"), isInitialized=true
-
-## Struct: ContentView (View)
-
-### Properties
-- showLogs: Bool (@State) = false → WorkView, LogListView bindings
-
-### Computed Properties
-- body: some View → ZStack, WorkView, if showLogs: LogListView
-*/
-
 import SwiftUI
+import Combine
+import Observation
+import CoreMotion
 
 var ACTUAL_SCREEN_HEIGHT: CGFloat {
     let screenHeight = CGFloat(UserDefaults.standard.double(forKey: "SCREEN_HEIGHT"))
@@ -27,18 +10,33 @@ var ACTUAL_SCREEN_HEIGHT: CGFloat {
     return screenHeight + safeTop + safeBottom
 }
 
+@Observable
+class ViewModel {
+    var isInitialized: Bool = false
+    var showLogs: Bool = false
+    var workViewModel = WorkViewModel()
+    var logListViewModel = LogListViewModel()
+}
+
 @main
 struct RealtimeClaudeApp: App {
-    @State private var isInitialized = false
+    @State private var viewModel = ViewModel()
 
     var body: some Scene {
         WindowGroup {
             GeometryReader { geometry in
-                if isInitialized {
-                    ContentView()
-                        .rotationEffect(Angle(degrees: 180))
-                        .statusBarHidden()
-                        .preferredColorScheme(.dark)
+                if viewModel.isInitialized {
+                    ZStack {
+                        WorkView(viewModel: viewModel.workViewModel, showLogs: $viewModel.showLogs)
+
+                        if viewModel.showLogs {
+                            LogListView(showLogs: $viewModel.showLogs, viewModel: viewModel.logListViewModel)
+                        }
+                    }
+                    .offset(y: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")))
+                    .rotationEffect(Angle(degrees: 180))
+                    .statusBarHidden()
+                    .preferredColorScheme(.dark)
                 } else {
                     ProgressView()
                         .scaleEffect(2)
@@ -53,25 +51,10 @@ struct RealtimeClaudeApp: App {
 
                             log("📱 Screen height: \(Int(screenHeight)), top safe area: \(Int(safeTop)), bottom safe area: \(Int(safeBottom))")
 
-                            isInitialized = true
+                            viewModel.isInitialized = true
                         }
                 }
             }
         }
-    }
-}
-
-struct ContentView: View {
-    @State private var showLogs = false
-
-    var body: some View {
-        ZStack {
-            WorkView(showLogs: $showLogs)
-
-            if showLogs {
-                LogListView(showLogs: $showLogs)
-            }
-        }
-        .offset(y: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")))
     }
 }
