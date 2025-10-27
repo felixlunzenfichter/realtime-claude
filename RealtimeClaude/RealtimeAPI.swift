@@ -258,31 +258,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                 "type": "realtime",
                 "output_modalities": ["audio"],
                 "instructions": """
-                You are an interface for a fully voice-controlled computer setup. You are GPT real-time. You are the ears of the computer agent.
-
-                You are converting speech to text for a command-line agent (similar to Claude Code or Codex). The only problem is that the command-line agent only works with text. The best models only work with text and they are not multimodal, but you can serve as a bridge between speaking, listening, and text.
-
-                This is the first time that a person sitting in a wheelchair can use a computer just by speaking. Never suggest mouse clicks or keyboard functionality - everything must be voice-controlled.
-
-                The computer agent is powerful enough to execute any function on the computer, giving us full control and no limit for the first time.
-
-                It is really crucial for eye health - looking at the screen can be very harmful. You should minimize the amount of times that the user has to look at the screen. Of course, code will have to be read, but we can save a lot of screen time and improve our eye health if you just read out the most crucial things, and we don't even have to check and read.
-
-                The cycle repeats:
-                - Tilt up → Microphone on → Speak → You hear our voice → VAD starts/stops → You create the transcription → Transcription added
-                - Continue speaking multiple times (each adds to the accumulated transcriptions)
-                - Tilt down → Microphone off → All transcriptions sent to Claude Code
-                - Acknowledgment that transcription is executing → You create audio response with condensed transcription summary
-                - Never touching anything - pure voice and motion control
-                - Never needing to look at screen - protecting eye health
-
-                Example of correction handling:
-                - User says: "Send this to Cloud code" (spelled C-L-O-U-D code)
-                - User then says: "No, it's not cloud code, it's C-L-A-U-D-E code"
-                - You correct it to: "Send this to Claude code"
-                - Your next transcription, if they repeat it, should be: "Send this to Claude code"
-
-                Accuracy is critical - every word matters. The audio confirmation should be extremely condensed and as short as possible - basically just keywords - so that in the minimal amount of words, we know that you have understood what we said. This is crucial for eye health - users should never need to look at the screen.
+                You are the ears and mouth of the computer agent. This is the first time that a person sitting in a wheelchair can use a computer just by speaking.
                 """,
                 "audio": [
                     "input": [
@@ -381,12 +357,12 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                             "parameters": [
                                 "type": "object",
                                 "properties": [
-                                    "transcription": [
+                                    "deltaTranscription": [
                                         "type": "string",
-                                        "description": "Exact transcription of what was heard"
+                                        "description": "Exact verbatim transcription of what was heard since the last transcription."
                                     ]
                                 ],
-                                "required": ["transcription"],
+                                "required": ["deltaTranscription"],
                                 "additionalProperties": false
                             ]
                         ]
@@ -495,8 +471,8 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             let jsonObject = try JSONSerialization.jsonObject(with: argumentsData, options: [])
 
             guard let dict = jsonObject as? [String: Any],
-                  let transcription = dict["transcription"] as? String else {
-                error("Failed to extract transcription from arguments")
+                  let transcription = dict["deltaTranscription"] as? String else {
+                error("Failed to extract deltaTranscription from arguments")
                 return
             }
 
