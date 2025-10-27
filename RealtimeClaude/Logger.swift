@@ -318,7 +318,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             totalUptime: totalUptime,
             todayUptime: todayUptime,
             totalLogs: totalLogs,
-            totalTests: passedTestNumbers.count
+            totalTests: TEST_DEFINITIONS.count
         )
 
         sessionStatsSubject.send(sessionStats)
