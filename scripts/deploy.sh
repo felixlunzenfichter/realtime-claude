@@ -4,63 +4,6 @@ set -euo pipefail
 
 DEVICE_TYPE=${1:-iphone}
 
-BACKGROUND_PIDS=()
-CLEANUP_DONE=false
-
-cleanup() {
-    if [ "$CLEANUP_DONE" = true ]; then
-        return
-    fi
-    CLEANUP_DONE=true
-
-    echo ""
-    echo "🧹 Cleaning up background processes..."
-
-    for pid in "${BACKGROUND_PIDS[@]}"; do
-        if kill -0 "$pid" 2>/dev/null; then
-            echo "   Stopping PID $pid"
-            kill -TERM "$pid" 2>/dev/null || true
-        fi
-    done
-
-    pkill -TERM -f "node scripts/mac-server.js" 2>/dev/null || true
-
-    sleep 0.3
-
-    for pid in "${BACKGROUND_PIDS[@]}"; do
-        if kill -0 "$pid" 2>/dev/null; then
-            kill -9 "$pid" 2>/dev/null || true
-        fi
-    done
-
-    echo "✅ Cleanup complete"
-}
-
-trap cleanup SIGINT
-
-start_node_process() {
-    local PROCESS_NAME=$1
-    local DISPLAY_NAME=$2
-    local PREFIX=$3
-
-    echo "   Starting $DISPLAY_NAME..."
-    (node $PROCESS_NAME 2>&1 | sed "s/^/[$PREFIX] /") &
-    local PID=$!
-    BACKGROUND_PIDS+=($PID)
-
-    for i in {1..100}; do
-        if pgrep -f "node $PROCESS_NAME" > /dev/null; then
-            ELAPSED=$(echo "scale=1; $i * 0.1" | bc)
-            echo "   ✅ $DISPLAY_NAME started (PID: $PID)"
-            return 0
-        fi
-        sleep 0.1
-    done
-
-    echo "   ❌ $DISPLAY_NAME failed to start"
-    exit 1
-}
-
 trap 'echo ""; echo "💥 FATAL: Deployment failed at line $LINENO"; echo "Command: $BASH_COMMAND"; echo "Exit code: $?"; echo ""; exit 1' ERR
 
 export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
@@ -117,10 +60,11 @@ if /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild build -project 
     echo "   ✅ Build successful"
     rm "$BUILD_LOG"
 else
-    # Build failed - print full output
-    echo "   ❌ Build failed - showing full output:"
+    # Build failed - print errors first, then warnings
+    echo "   ❌ Build failed - showing errors and warnings:"
     echo ""
-    cat "$BUILD_LOG"
+    grep "error:" "$BUILD_LOG" || true
+    grep "warning:" "$BUILD_LOG" || true
     rm "$BUILD_LOG"
     exit 1
 fi
@@ -138,21 +82,52 @@ echo "   Binary: $APP_PATH"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "STEP 3: DEPLOY COMPONENTS"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "STEP 3: DEPLOY MAC SERVER"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-echo "   Deploying Mac server..."
-./scripts/deploy-mac-server.sh
-echo "   ✅ Mac server deployed"
+if pgrep -f "node scripts/mac-server.js" > /dev/null; then
+    echo "🧹 Stopping Mac server..."
+    pkill -f "node scripts/mac-server.js" 2>/dev/null || true
+    if lsof -ti:8082 > /dev/null 2>&1; then
+        lsof -ti:8082 | xargs kill -9 2>/dev/null || true
+    fi
+    echo "✅ Mac server stopped"
+fi
+
+echo "🚀 Starting Mac server..."
+set +m
+(node scripts/mac-server.js 2>&1 | sed "s/^/[SERVER] /") &
+
+for i in {1..100}; do
+    if pgrep -f "node scripts/mac-server.js" > /dev/null; then
+        ELAPSED=$(echo "scale=1; $i * 0.1" | bc)
+        echo "✅ Mac server started in ~${ELAPSED}s"
+        break
+    fi
+    sleep 0.1
+done
 
 echo ""
 
-echo "   Deploying iOS app..."
-./scripts/deploy-iphone-app.sh
-echo "   ✅ iOS app deployed"
+
+echo "STEP 4: DEPLOY IOS APP"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+echo "   Installing app on $DEVICE_NAME..."
+xcrun devicectl device install app --device "$DEVICECTL_ID" "$APP_PATH"
+echo "   ✅ App installed"
 
 echo ""
+
+echo "   Launching app..."
+xcrun devicectl device process launch --device "$DEVICECTL_ID" ch.felix.realtimeClaude
+echo "   ✅ App launched"
+
+echo ""
+
 
 # Check for recent log activity (not older than 3 seconds)
 echo "   Checking for recent log activity..."
