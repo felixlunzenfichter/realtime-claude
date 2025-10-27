@@ -407,7 +407,7 @@ class WorkViewModel {
             .sink { [weak self] isRecording in
                 guard let self = self else { return }
                 self.isRecordingAudio = isRecording
-                if isRecording {
+                if isRecording && self.currentRecordingStatus == .connected {
                     self.currentRecordingStatus = .isRecording
                 } else if !isRecording && self.currentRecordingStatus == .isRecording && self.currentRecordingStatus != .connected { self.currentRecordingStatus = .connected }
             }
