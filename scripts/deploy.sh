@@ -23,7 +23,6 @@ cleanup() {
         fi
     done
 
-    pkill -TERM -f "node scripts/test-system.js" 2>/dev/null || true
     pkill -TERM -f "node scripts/mac-server.js" 2>/dev/null || true
 
     sleep 0.3
@@ -60,22 +59,6 @@ start_node_process() {
 
     echo "   ❌ $DISPLAY_NAME failed to start"
     exit 1
-}
-
-deploy_test_system() {
-    echo "   Stopping existing test system..."
-    if pgrep -f "node scripts/test-system.js" > /dev/null; then
-        pkill -f "node scripts/test-system.js"
-        echo "   ✅ Stopped existing test system"
-    else
-        echo "   ○ No existing test system running"
-    fi
-
-    echo ""
-    echo "   Starting test system..."
-    (node scripts/test-system.js 2>&1 | sed "s/^/[TEST] /") &
-    BACKGROUND_PIDS+=($!)
-    echo "   ✅ Test system deployed"
 }
 
 trap 'echo ""; echo "💥 FATAL: Deployment failed at line $LINENO"; echo "Command: $BASH_COMMAND"; echo "Exit code: $?"; echo ""; exit 1' ERR
@@ -155,15 +138,7 @@ echo "   Binary: $APP_PATH"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "STEP 3: DEPLOY TEST SYSTEM"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-
-deploy_test_system
-
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "STEP 4: DEPLOY COMPONENTS"
+echo "STEP 3: DEPLOY COMPONENTS"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
@@ -222,7 +197,6 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "DEPLOYMENT COMPLETE"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "   Test System: Running"
 echo "   Mac Server: Running (PID: $SERVER_PID)"
 echo "   Device: $DEVICE_NAME ($DEVICECTL_ID)"
 echo ""
