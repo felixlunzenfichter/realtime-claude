@@ -258,7 +258,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                 "type": "realtime",
                 "output_modalities": ["audio"],
                 "instructions": """
-                You are the ears and mouth of the computer agent. This is the first time that a person sitting in a wheelchair can use a computer just by speaking.
+                You are the mouth of the computer agent. The following prompt will now be executed. Give a summary with a maximum of 10 tokens of what you're about to do.
                 """,
                 "audio": [
                     "input": [
@@ -605,23 +605,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             let responseEvent: [String: Any] = [
                 "type": "response.create",
                 "response": [
-                    "instructions": """
-                    This is crucial for eye health, so the user doesn't have to check the screen to verify the prompt is correct. The user must be able to verify that the prompt reflects what they said, only by listening.
-
-                    You are NOT answering questions. You are ONLY confirming what prompt is being forwarded to the command line agent. Just read back keywords from the prompt, nothing else. Do NOT try to be helpful or provide answers.
-
-                    You're just helping the user to not look at the screen after sending their prompt.
-
-                    DO NOT BLABBER. This is NOT a conversation. Give a VERY VERY short summary.
-                    DO NOT start by saying "Summary".
-                    DO NOT end by adding anything else.
-
-                    ONE SENTENCE WITH A MAXIMUM OF FIVE WORDS. ONLY KEYWORDS.
-
-                    Summarize this prompt in 5 words or less:
-
-                    \(prompt)
-                    """,
+                    "instructions": "The following has been sent to the computer agent for execution: \(prompt). To confirm you understood without looking at the screen, provide an extremely short one-sentence summary. For example, if prompted with 'push this', respond with 'pushing the changes'.",
                     "output_modalities": ["audio"]
                 ]
             ]
