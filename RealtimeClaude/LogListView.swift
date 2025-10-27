@@ -10,7 +10,9 @@ class LogListViewModel {
     var showDebugLogs: Bool = false
     var showErrorLogs: Bool = true
     var showRegularLogs: Bool = true
+    var passedTestNumbers: Set<Int> = []
     var totalLogs: Int = 0
+    var totalTests: Int = 0
     var transmittedLogIds: [String] = []
     var uptimeToday: Int = 0
     var uptimeTotal: Int = 0
@@ -60,8 +62,30 @@ class LogListViewModel {
         transmittedLogIds.count
     }
 
+    var successfulTests: Int {
+        passedTestNumbers.max() ?? 0
+    }
+
     var sessionStartTime: Date? {
         logs.last?.timestamp
+    }
+
+    var testsColor: Color {
+        if totalTests == 0 { return .gray }
+        let percentage = Double(successfulTests) / Double(totalTests)
+
+        var red: Double
+        var green: Double
+
+        if percentage <= 0.5 {
+            red = 1.0
+            green = percentage * 2.0
+        } else {
+            red = 2.0 - (percentage * 2.0)
+            green = 1.0
+        }
+
+        return Color(red: red, green: green, blue: 0)
     }
 
     var todayUptimeColor: Color {
@@ -87,10 +111,16 @@ class LogListViewModel {
         setupSubscription(logger.logsSubject) { self.logs = $0 }
         setupSubscription(logger.debugLogsSubject) { self.debugLogs = $0 }
         setupSubscription(logger.transmittedLogIdsSubject) { self.transmittedLogIds = $0 }
-        setupSubscription(logger.sessionNumberSubject) { self.sessionNumber = $0 }
-        setupSubscription(logger.uptimeTodaySubject) { self.uptimeToday = $0 }
-        setupSubscription(logger.uptimeTotalSubject) { self.uptimeTotal = $0 }
-        setupSubscription(logger.totalLogsSubject) { self.totalLogs = $0 }
+
+        setupSubscription(logger.sessionStatsSubject) { stats in
+            self.sessionNumber = stats.sessionNumber
+            self.uptimeTotal = stats.totalUptime
+            self.uptimeToday = stats.todayUptime
+            self.totalLogs = stats.totalLogs
+            self.totalTests = stats.totalTests
+        }
+
+        setupSubscription(logger.testsPassedSubject) { self.passedTestNumbers.insert($0) }
     }
 
     func setupSubscription<T>(_ subject: CurrentValueSubject<T, Never>, updateProperty: @escaping (T) -> Void) {
@@ -239,6 +269,16 @@ struct LogListView: View {
                                     .foregroundColor(.blue)
                             }
 
+                            VStack(alignment: .center, spacing: 0) {
+                                Text("Tests")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Text("\(viewModel.successfulTests)/\(viewModel.totalTests)")
+                                    .font(.system(size: 15))
+                                    .fontWeight(.medium)
+                                    .foregroundColor(viewModel.testsColor)
+                            }
+
                             Spacer()
                         }
                         .padding(.horizontal)
@@ -316,6 +356,18 @@ struct LogListView: View {
                                 .frame(minWidth: 50, alignment: .leading)
                         }
                         .frame(minWidth: 50)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Tests")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Text("\(viewModel.successfulTests)/\(viewModel.totalTests)")
+                                .font(.title3)
+                                .fontWeight(.medium)
+                                .foregroundColor(viewModel.testsColor)
+                                .frame(minWidth: 60, alignment: .leading)
+                        }
+                        .frame(minWidth: 60)
 
                         Spacer()
                     }

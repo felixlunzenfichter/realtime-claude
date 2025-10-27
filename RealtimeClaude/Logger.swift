@@ -3,6 +3,14 @@ import SwiftUI
 import Network
 import Combine
 
+struct SessionStats {
+    let sessionNumber: Int
+    let totalUptime: Int
+    let todayUptime: Int
+    let totalLogs: Int
+    let totalTests: Int
+}
+
 struct PromptStatusUpdate {
     let prompt: String
     let status: String
@@ -12,10 +20,8 @@ protocol LoggerProtocol {
     var logsSubject: CurrentValueSubject<[LogMessage], Never> { get }
     var debugLogsSubject: CurrentValueSubject<[(LogMessage, Int)], Never> { get }
     var transmittedLogIdsSubject: CurrentValueSubject<[String], Never> { get }
-    var sessionNumberSubject: CurrentValueSubject<Int, Never> { get }
-    var uptimeTodaySubject: CurrentValueSubject<Int, Never> { get }
-    var uptimeTotalSubject: CurrentValueSubject<Int, Never> { get }
-    var totalLogsSubject: CurrentValueSubject<Int, Never> { get }
+    var sessionStatsSubject: CurrentValueSubject<SessionStats, Never> { get }
+    var testsPassedSubject: CurrentValueSubject<Int, Never> { get }
     var promptStatusSubject: PassthroughSubject<PromptStatusUpdate, Never> { get }
 
     func sendPromptToMac(_ prompt: String)
@@ -63,18 +69,27 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     let debugLogsSubject = CurrentValueSubject<[(LogMessage, Int)], Never>([])
     let logsSubject = CurrentValueSubject<[LogMessage], Never>([])
     let promptStatusSubject = PassthroughSubject<PromptStatusUpdate, Never>()
-    let sessionNumberSubject = CurrentValueSubject<Int, Never>(0)
-    let totalLogsSubject = CurrentValueSubject<Int, Never>(0)
+    let sessionStatsSubject = CurrentValueSubject<SessionStats, Never>(SessionStats(sessionNumber: 0, totalUptime: 0, todayUptime: 0, totalLogs: 0, totalTests: 0))
+    let testsPassedSubject = CurrentValueSubject<Int, Never>(0)
     let transmittedLogIdsSubject = CurrentValueSubject<[String], Never>([])
-    let uptimeTotalSubject = CurrentValueSubject<Int, Never>(0)
 
     private let connection: NWConnection
     private let macHostname = "Felixs-MacBook-Pro.local"
     private let port: UInt16 = 8082
     private let tcpProcessingQueue = DispatchQueue(label: "logger.tcp.processing", qos: .userInitiated)
 
+    private let TEST_DEFINITIONS: [Int: String] = [
+        1: "Successful handshake",
+        2: "WebSocket connection established",
+        3: "Voice activity detection started",
+        4: "Voice activity detection stopped",
+        5: "Prompt successfully injected into terminal",
+        6: "Started playing response",
+        7: "Stopped playing response"
+    ]
+
     private var dataBuffer = Data()
-    private var sessionNumber: Int = 0
+    private var passedTestNumbers: Set<Int> = []
     private var totalBytesReceived: Int = 0
     private var totalBytesSentToMac: Int = 0
 
@@ -266,6 +281,19 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     private func handleAckMessage(_ jsonData: [String: Any]) {
         let logId = jsonData["logId"] as! String
         debugLog(id: "ackReceived", message: "✅ [TCP] ACK received for log: \(logId)")
+
+        let currentLogs = logsSubject.value
+        if let logMessage = currentLogs.first(where: { $0.id == logId }) {
+            for (testNumber, testString) in TEST_DEFINITIONS.sorted(by: { $0.key < $1.key }) {
+                if !passedTestNumbers.contains(testNumber) && logMessage.message.contains(testString) {
+                    passedTestNumbers.insert(testNumber)
+                    testsPassedSubject.send(testNumber)
+                    log("✅ Test \(testNumber) passed: \(testString)")
+                    break
+                }
+            }
+        }
+
         acknowledgeTransmission(for: logId)
     }
 
@@ -280,27 +308,20 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             realtimeAPI.connect(apiKey: apiKey)
         }
 
-        sessionNumber = jsonData["sessionNumber"] as! Int
-        sessionNumberSubject.send(sessionNumber)
+        let sessionNumber = jsonData["sessionNumber"] as! Int
+        let totalLogs = jsonData["totalLogs"] as? Int ?? 0
+        let totalUptime = jsonData["totalUptime"] as? Int ?? 0
+        let todayUptime = jsonData["todayUptime"] as? Int ?? 0
 
-        var totalLogs = 0
-        var totalUptime = 0
-        var todayUptime = 0
+        let sessionStats = SessionStats(
+            sessionNumber: sessionNumber,
+            totalUptime: totalUptime,
+            todayUptime: todayUptime,
+            totalLogs: totalLogs,
+            totalTests: passedTestNumbers.count
+        )
 
-        if let logs = jsonData["totalLogs"] as? Int {
-            totalLogs = logs
-            totalLogsSubject.send(logs)
-        }
-
-        if let total = jsonData["totalUptime"] as? Int {
-            totalUptime = total
-            uptimeTotalSubject.send(total)
-        }
-
-        if let today = jsonData["todayUptime"] as? Int {
-            todayUptime = today
-            uptimeTodaySubject.send(today)
-        }
+        sessionStatsSubject.send(sessionStats)
 
         log("Successful handshake: Session #\(sessionNumber), Total: \(totalUptime)ms, Today: \(todayUptime)ms, Logs: \(totalLogs)")
     }
