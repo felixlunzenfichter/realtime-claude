@@ -376,7 +376,6 @@ class WorkViewModel {
     private let motionManager = CMMotionManager()
     var pitch: Double = 0
     var roll: Double = 0
-    private var isFirstMotionUpdate = true
     private var turningOnRecording = false
 
     private var cancellables = Set<AnyCancellable>()
@@ -465,31 +464,20 @@ class WorkViewModel {
             let pitchDegrees = attitude.pitch * (180 / .pi)
 
             if !self.isMicrophoneEnabled {
-                if self.isFirstMotionUpdate {
-                    if pitchDegrees < -45 {
-                        debugLog(id: "deviceTilt", message: "📱 [Motion] Initial tilt detected: \(Int(pitchDegrees))° (enabling mic)")
-                        log("Device tilted down > 45 degrees - enabling microphone")
-                        audioManager.startRecording()
-                        self.isFirstMotionUpdate = false
-                    } else {
-                        debugLog(id: "deviceTilt", message: "📱 [Motion] Initial position: \(Int(pitchDegrees))° (mic disabled)")
-                    }
+                if pitchDegrees < -45 && !self.turningOnRecording {
+                    debugLog(id: "deviceTilt", message: "📱 [Motion] Tilted down: \(Int(pitchDegrees))° (enabling mic)")
+                    log("Device tilted down > 45 degrees - enabling microphone")
+                    self.turningOnRecording = true
+                    audioManager.startRecording()
+                } else if pitchDegrees > -45 && self.turningOnRecording {
+                    debugLog(id: "deviceTilt", message: "📱 [Motion] Tilted back: \(Int(pitchDegrees))° (disabling mic)")
+                    log("Device tilted back - disabling microphone")
+                    self.turningOnRecording = false
+                    audioManager.stopRecording()
+                } else if pitchDegrees < -45 && self.turningOnRecording {
+                    debugLog(id: "deviceTilt", message: "📱 [Motion] Still tilted: \(Int(pitchDegrees))° (mic enabled)")
                 } else {
-                    if pitchDegrees < -45 && !self.turningOnRecording {
-                        debugLog(id: "deviceTilt", message: "📱 [Motion] Tilted down: \(Int(pitchDegrees))° (enabling mic)")
-                        log("Device tilted down > 45 degrees - enabling microphone")
-                        self.turningOnRecording = true
-                        audioManager.startRecording()
-                    } else if pitchDegrees > -45 && self.turningOnRecording {
-                        debugLog(id: "deviceTilt", message: "📱 [Motion] Tilted back: \(Int(pitchDegrees))° (disabling mic)")
-                        log("Device tilted back - disabling microphone")
-                        self.turningOnRecording = false
-                        audioManager.stopRecording()
-                    } else if pitchDegrees < -45 && self.turningOnRecording {
-                        debugLog(id: "deviceTilt", message: "📱 [Motion] Still tilted: \(Int(pitchDegrees))° (mic enabled)")
-                    } else {
-                        debugLog(id: "deviceTilt", message: "📱 [Motion] Still upright: \(Int(pitchDegrees))° (mic disabled)")
-                    }
+                    debugLog(id: "deviceTilt", message: "📱 [Motion] Still upright: \(Int(pitchDegrees))° (mic disabled)")
                 }
             } else {
                 debugLog(id: "deviceTilt", message: "⛔ [Motion] Tilt detection disabled (override ON)")
