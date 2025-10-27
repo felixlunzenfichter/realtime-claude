@@ -38,7 +38,8 @@ echo ""
 # Stop existing Mac server
 if pgrep -f "node scripts/mac-server.js" > /dev/null; then
     echo "   Stopping existing mac-server.js..."
-    pkill -f "node scripts/mac-server.js"
+    pkill -f "node scripts/mac-server.js" 2>/dev/null || true
+    wait 2>/dev/null || true
     echo "   ✅ Stopped"
 fi
 
