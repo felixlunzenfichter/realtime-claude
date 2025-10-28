@@ -317,9 +317,8 @@ struct WorkView: View {
 
                     Text(viewModel.currentRecordingStatus.statusText)
                         .font(.headline)
-                        .foregroundColor(.white)
+                        .foregroundColor(viewModel.currentRecordingStatus.color)
                         .frame(maxWidth: .infinity)
-                        .background(viewModel.currentRecordingStatus.color)
                         .glassEffect()
 
                         .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")))
