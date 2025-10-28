@@ -10,6 +10,10 @@ var ACTUAL_SCREEN_HEIGHT: CGFloat {
     return screenHeight + safeTop + safeBottom
 }
 
+var ACTUAL_SCREEN_WIDTH: CGFloat {
+    CGFloat(UserDefaults.standard.double(forKey: "SCREEN_WIDTH"))
+}
+
 @Observable
 class ViewModel {
     var isInitialized: Bool = false

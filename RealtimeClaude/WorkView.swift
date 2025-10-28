@@ -15,17 +15,12 @@ struct TiltProgressBar: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.gray.opacity(0.3))
-
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(fillColor)
-                    .frame(width: geometry.size.width * (progress / 100))
-            }
+        VStack {
+            Spacer()
         }
-        .frame(height: 4)
+        .frame(width: ACTUAL_SCREEN_WIDTH * (progress / 100))
+        .glassEffect(.regular.tint(fillColor.opacity(0.5)), in: .capsule)
+        .frame(height: 5)
     }
 }
 
@@ -111,56 +106,50 @@ struct ToggleBar: View {
 
     let items: [ToggleItem]
     let height: CGFloat
-    let topSpacing: CGFloat
 
-    init(items: [ToggleItem], height: CGFloat = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) * 2, topSpacing: CGFloat = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) / 3) {
+    init(items: [ToggleItem], height: CGFloat = CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) * 2) {
         self.items = items
         self.height = height
-        self.topSpacing = topSpacing
     }
 
     var body: some View {
         HStack(spacing: 0) {
             ForEach(items.indices, id: \.self) { index in
                 let item = items[index]
-                Rectangle()
-                    .fill(item.color.opacity(0.1))
-                    .overlay(
-                        VStack {
-                            Spacer()
-                                .frame(height: topSpacing)
-                            HStack(spacing: 8) {
-                                if let isOn = item.isOn {
-                                    Toggle(isOn: isOn) {
-                                        EmptyView()
-                                    }
-                                    .toggleStyle(SwitchToggleStyle(tint: item.color))
-                                    .labelsHidden()
-                                }
-
-                                if let icon = item.icon {
-                                    Image(systemName: icon)
-                                        .font(.system(size: 16, weight: .semibold))
-                                        .foregroundColor(item.color)
-                                        .frame(width: 24, height: 24)
-                                }
-
-                                if let text = item.text {
-                                    Text(text)
-                                        .font(.system(size: 16, weight: .semibold))
-                                        .foregroundColor(item.color)
-                                }
-                            }
-                            Spacer()
+                Spacer()
+                Button {
+                    item.action()
+                } label: {
+                    VStack(spacing: 5) {
+                        if let icon = item.icon {
+                            Image(systemName: icon)
+                                .font(.system(size: item.isOn == nil ? 30 : 15, weight: .semibold))
+                                .foregroundColor(item.color)
                         }
-                    )
-                    .onTapGesture {
-                        item.action()
+
+                        if let text = item.text {
+                            Text(text)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(item.color)
+                        }
+
+                        if let isOn = item.isOn {
+                            Toggle(isOn: isOn) {
+                                EmptyView()
+                            }
+                            .toggleStyle(SwitchToggleStyle(tint: item.color))
+                            .labelsHidden()
+                        }
+
+                        Spacer()
                     }
+                }.padding(10)
+                .glassEffect(.regular.tint(item.color.opacity(0.5)).interactive(), in: .capsule)
+                .padding(.vertical, 5)
+                Spacer()
             }
         }
         .frame(height: height)
-        .glassEffect()
     }
 }
 
@@ -317,17 +306,16 @@ struct WorkView: View {
 
                     Text(viewModel.currentRecordingStatus.statusText)
                         .font(.headline)
-                        .foregroundColor(viewModel.currentRecordingStatus.color)
+                        .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
-                        .glassEffect()
+                        .frame(minHeight: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")))
+                        .glassEffect(.regular.tint(viewModel.currentRecordingStatus.color.opacity(0.5)))
+                        .padding(.horizontal, ACTUAL_SCREEN_WIDTH / 8)
 
-                        .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")))
-                        .padding(.horizontal, CGFloat(UserDefaults.standard.double(forKey: "SCREEN_WIDTH")) / 8)
-                        .padding(.vertical, 0)
 
                     Spacer()
 
-                    ZStack(alignment: .leading) {
+                    ZStack(alignment: .center) {
                         TiltProgressBar(progress: viewModel.tiltProgress, fillColor: viewModel.currentRecordingStatus == .disconnected ? .red : .blue)
                         TiltProgressBar(progress: viewModel.recordingProgress, fillColor: viewModel.currentRecordingStatus.color)
                     }

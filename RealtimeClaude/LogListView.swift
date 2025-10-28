@@ -374,109 +374,44 @@ struct LogListView: View {
                 }
                 }
                 .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")) * 2)
-                .glassEffect()
+                .glassEffect(.regular, in: .rect(cornerRadius: 0))
 
                 Spacer()
 
-                HStack(spacing: 0) {
-                    Rectangle()
-                        .fill(Color.orange.opacity(0.1))
-                        .overlay(
-                            VStack {
-                                Spacer()
-                                    .frame(height: 20)
-                                HStack(spacing: 8) {
-                                    Toggle(isOn: $viewModel.showDebugLogs) {
-                                        EmptyView()
-                                    }
-                                    .toggleStyle(SwitchToggleStyle(tint: .orange))
-                                    .labelsHidden()
-
-                                    Text("\(viewModel.debugLogs.count)")
-                                        .font(.system(size: 16, weight: .semibold))
-                                        .foregroundColor(.orange)
-                                }
-                                Spacer()
-                            }
-                        )
-                        .onTapGesture {
+                ToggleBar(items: [
+                    ToggleBar.ToggleItem(
+                        color: .orange,
+                        isOn: $viewModel.showDebugLogs,
+                        text: "\(viewModel.debugLogs.count)",
+                        action: {
                             viewModel.showDebugLogs.toggle()
                         }
-
-                    Rectangle()
-                        .fill(Color.green.opacity(0.1))
-                        .overlay(
-                            VStack {
-                                Spacer()
-                                    .frame(height: 20)
-                                HStack(spacing: 8) {
-                                    Toggle(isOn: $viewModel.showRegularLogs) {
-                                        EmptyView()
-                                    }
-                                    .toggleStyle(SwitchToggleStyle(tint: .green))
-                                    .labelsHidden()
-
-                                    Text("\(viewModel.regularLogsCount)")
-                                        .font(.system(size: 16, weight: .semibold))
-                                        .foregroundColor(.green)
-                                }
-                                Spacer()
-                            }
-                        )
-                        .onTapGesture {
+                    ),
+                    ToggleBar.ToggleItem(
+                        color: .green,
+                        isOn: $viewModel.showRegularLogs,
+                        text: "\(viewModel.regularLogsCount)",
+                        action: {
                             viewModel.showRegularLogs.toggle()
                         }
-
-                    Rectangle()
-                        .fill(Color.red.opacity(0.1))
-                        .overlay(
-                            VStack {
-                                Spacer()
-                                    .frame(height: 20)
-                                HStack(spacing: 8) {
-                                    Toggle(isOn: $viewModel.showErrorLogs) {
-                                        EmptyView()
-                                    }
-                                    .toggleStyle(SwitchToggleStyle(tint: .red))
-                                    .labelsHidden()
-
-                                    Text("\(viewModel.errorLogsCount)")
-                                        .font(.system(size: 16, weight: .semibold))
-                                        .foregroundColor(.red)
-                                }
-                                Spacer()
-                            }
-                        )
-                        .onTapGesture {
+                    ),
+                    ToggleBar.ToggleItem(
+                        color: .red,
+                        isOn: $viewModel.showErrorLogs,
+                        text: "\(viewModel.errorLogsCount)",
+                        action: {
                             viewModel.showErrorLogs.toggle()
                         }
-
-                    Rectangle()
-                        .fill(Color.blue.opacity(0.1))
-                        .overlay(
-                            VStack {
-                                Spacer()
-                                    .frame(height: 20)
-                                HStack(spacing: 8) {
-                                    Toggle(isOn: $showLogs) {
-                                        EmptyView()
-                                    }
-                                    .toggleStyle(SwitchToggleStyle(tint: .blue))
-                                    .labelsHidden()
-
-                                    Image(systemName: showLogs ? "eye.fill" : "eye.slash.fill")
-                                        .font(.system(size: 16, weight: .semibold))
-                                        .foregroundColor(.blue)
-                                }
-                                Spacer()
-                            }
-                        )
-                        .onTapGesture {
+                    ),
+                    ToggleBar.ToggleItem(
+                        color: .blue,
+                        isOn: $showLogs,
+                        icon: "eye.slash",
+                        action: {
                             showLogs.toggle()
                         }
-                }
-                .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) * 2)
-                .glassEffect()
+                    )
+                ])
             }
         }
     }
