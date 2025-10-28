@@ -5,33 +5,27 @@ import CoreMotion
 
 let INTERRUPT_MESSAGE = "[Request interrupted by user]"
 
-struct TiltIndicator: View {
-    let pitch: Double
+struct TiltProgressBar: View {
+    let progress: Double
+    let fillColor: Color
 
-    var tiltPercentage: Double {
-        let pitchDegrees = pitch * (180 / .pi)
-        let percentage = max(0, min(100, (-pitchDegrees / 45) * 100))
-        return percentage
+    init(progress: Double, fillColor: Color = .blue) {
+        self.progress = progress
+        self.fillColor = fillColor
     }
 
     var body: some View {
-        VStack(spacing: 8) {
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.gray.opacity(0.3))
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color.gray.opacity(0.3))
 
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(tiltPercentage >= 100 ? Color.green : Color.blue)
-                        .frame(width: geometry.size.width * (tiltPercentage / 100))
-                }
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(fillColor)
+                    .frame(width: geometry.size.width * (progress / 100))
             }
-            .frame(height: 8)
-
-            Text(String(format: "%.0f°", -pitch * (180 / .pi)))
-                .font(.caption)
-                .foregroundColor(.gray)
         }
+        .frame(height: 4)
     }
 }
 
@@ -179,7 +173,6 @@ struct WorkView: View {
             if viewModel.allMessages.isEmpty {
                 VStack {
                     Spacer()
-                    TiltIndicator(pitch: viewModel.pitch)
                     Text("Hold up to record")
                         .font(.headline)
                         .foregroundColor(.gray)
@@ -318,14 +311,29 @@ struct WorkView: View {
                 ])
             }
 
-            VStack {
-                Text(viewModel.currentRecordingStatus.statusText)
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 60)
-                    .background(viewModel.currentRecordingStatus.color)
-                    .glassEffect()
+            VStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    Spacer()
+
+                    Text(viewModel.currentRecordingStatus.statusText)
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .background(viewModel.currentRecordingStatus.color)
+                        .glassEffect()
+
+                        .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")))
+                        .padding(.horizontal, CGFloat(UserDefaults.standard.double(forKey: "SCREEN_WIDTH")) / 8)
+                        .padding(.vertical, 0)
+
+                    Spacer()
+
+                    ZStack(alignment: .leading) {
+                        TiltProgressBar(progress: viewModel.tiltProgress, fillColor: viewModel.currentRecordingStatus == .disconnected ? .red : .blue)
+                        TiltProgressBar(progress: viewModel.recordingProgress, fillColor: viewModel.currentRecordingStatus.color)
+                    }
+                }
+                .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")) * 2)
 
                 Spacer()
             }
@@ -377,6 +385,18 @@ class WorkViewModel {
     var pitch: Double = 0
     var roll: Double = 0
     private var turningOnRecording = false
+
+    var tiltProgress: Double {
+        let pitchDegrees = pitch * (180 / .pi)
+        let percentage = (90 - pitchDegrees) / 135 * 100
+        return max(0, min(100, percentage))
+    }
+
+    var recordingProgress: Double {
+        let pitchDegrees = pitch * (180 / .pi)
+        let percentage = ((-pitchDegrees) - 45) / 45 * 100
+        return max(0, min(100, percentage))
+    }
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -453,7 +473,7 @@ class WorkViewModel {
             return
         }
 
-        motionManager.deviceMotionUpdateInterval = 1
+        motionManager.deviceMotionUpdateInterval = 0.1
         motionManager.startDeviceMotionUpdates(to: .main) { [weak self] data, error in
             guard let self = self,
                   let attitude = data?.attitude else { return }

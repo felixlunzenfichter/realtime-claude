@@ -42,14 +42,16 @@ struct RealtimeClaudeApp: App {
                         .scaleEffect(2)
                         .onAppear {
                             let screenHeight = geometry.size.height
+                            let screenWidth = geometry.size.width
                             let safeTop = geometry.safeAreaInsets.top
                             let safeBottom = geometry.safeAreaInsets.bottom
 
                             UserDefaults.standard.set(screenHeight, forKey: "SCREEN_HEIGHT")
+                            UserDefaults.standard.set(screenWidth, forKey: "SCREEN_WIDTH")
                             UserDefaults.standard.set(safeTop, forKey: "SAFE_AREA_TOP")
                             UserDefaults.standard.set(safeBottom, forKey: "SAFE_AREA_BOTTOM")
 
-                            log("📱 Screen height: \(Int(screenHeight)), top safe area: \(Int(safeTop)), bottom safe area: \(Int(safeBottom))")
+                            log("📱 Screen: \(Int(screenWidth))x\(Int(screenHeight)), top safe area: \(Int(safeTop)), bottom safe area: \(Int(safeBottom))")
 
                             viewModel.isInitialized = true
                         }
