@@ -246,8 +246,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
 
     func handleSessionCreated() {
         log("WebSocket connection established")
-        totalBytesSent = 0
-        totalBytesReceived = 0
         sendSessionUpdate()
     }
 
@@ -258,7 +256,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                 "type": "realtime",
                 "output_modalities": ["audio"],
                 "instructions": """
-                You are the mouth of the computer agent. The following prompt will now be executed. Give a summary with a maximum of 10 tokens of what you're about to do.
+                You are the ears and mouth of the computer agent.
                 """,
                 "audio": [
                     "input": [
@@ -352,14 +350,14 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                             "type": "function",
                             "name": "transcriptionDelta",
                             "description": """
-                            Whatever you heard since creating the last transcription. Please give an exact transcription of that. Don't repeat yourself if you have already transcribed something.
+                            Whatever you heard since creating the last transcription. Please give an exact transcription of that.
                             """,
                             "parameters": [
                                 "type": "object",
                                 "properties": [
                                     "deltaTranscription": [
                                         "type": "string",
-                                        "description": "Exact verbatim transcription of what was heard since the last transcription."
+                                        "description": "Exact verbatim transcription of what was heard since the last delta transcription."
                                     ]
                                 ],
                                 "required": ["deltaTranscription"],

@@ -18,9 +18,8 @@ struct TiltProgressBar: View {
         VStack {
             Spacer()
         }
-        .frame(width: ACTUAL_SCREEN_WIDTH * (progress / 100))
+        .frame(width: ACTUAL_SCREEN_WIDTH * (progress / 100), height: 10)
         .glassEffect(.regular.tint(fillColor.opacity(0.5)), in: .capsule)
-        .frame(height: 5)
     }
 }
 
@@ -416,7 +415,7 @@ class WorkViewModel {
                 self.isRecordingAudio = isRecording
                 if isRecording && self.currentRecordingStatus == .connected {
                     self.currentRecordingStatus = .isRecording
-                } else if !isRecording && self.currentRecordingStatus == .isRecording && self.currentRecordingStatus != .connected { self.currentRecordingStatus = .connected }
+                } else if !isRecording && self.currentRecordingStatus == .isRecording { self.currentRecordingStatus = .connected }
             }
             .store(in: &cancellables)
 
@@ -515,17 +514,8 @@ class WorkViewModel {
 
     func addMessage(_ content: String) {
         if let index = messages.firstIndex(where: { $0.status == .notSent }) {
-            let existingContent = messages[index].content
-
-            if content.hasPrefix(existingContent) {
-                messages[index].content = content
-                log("🔄 Replaced prefix: existing message was contained in new content - \(content)")
-            } else if existingContent.contains(content) {
-                log("⏭️ Skipped duplicate: content already in message")
-            } else if existingContent != content {
-                messages[index].content = content
-                log("📝 Replaced message content (status: \(messages[index].status)) - \(content)")
-            }
+            messages[index].content = content
+            log("📝 Replaced message content (status: \(messages[index].status)) - \(content)")
         } else {
             let message = Message(
                 content: content,
