@@ -29,7 +29,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
 
     private let responseQueueThread = DispatchQueue(label: "com.realtimeapi.responsequeue", qos: .userInitiated)
 
-    private var currentFunctionCallId: String?
     private var isResponseActive: Bool = false
     private var responseRequestQueue: [() -> Void] = []
     private var totalBytesReceived: Int = 0
@@ -155,6 +154,8 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         switch type {
         case "session.created":
             handleSessionCreated()
+        case "session.updated":
+            handleSessionUpdated()
         case "input_audio_buffer.speech_started":
             handleSpeechStarted()
         case "input_audio_buffer.speech_stopped":
@@ -166,77 +167,55 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         case "response.done":
             handleResponseDoneEvent(json)
         case "response.audio.delta":
-            if let audioBase64 = json["delta"] as? String {
-                audioManager.scheduleOutputAudioBuffer(audioBase64)
-            }
+            handleResponseAudioDelta(json)
         case "response.text.delta":
             handleResponseTextDelta(json)
         case "response.text.done":
             handleResponseTextDone(json)
         case "response.function_call_arguments.delta":
-            debugLog(id: "functionArgsDelta", message: "⚙️ [WS] Receiving function arguments")
+            handleResponseFunctionCallArgumentsDelta()
         case "response.function_call_arguments.done":
             handleFunctionCallArgumentsDone(json)
         case "response.output_text.delta":
-            debugLog(id: "textDelta", message: "⚙️ [WS] Receiving text output")
+            handleResponseOutputTextDelta()
         case "conversation.item.added":
             handleConversationItemAdded(json)
         case "response.output_audio.delta":
-            debugLog(id: "audioOutputDelta", message: "⚙️ [WS] Receiving audio output")
-            if let audioBase64 = json["delta"] as? String {
-                audioManager.scheduleOutputAudioBuffer(audioBase64)
-            }
+            handleResponseOutputAudioDelta(json)
         case "response.output_audio.done":
-            log("Audio output completed")
+            handleResponseOutputAudioDone()
         case "response.output_audio_transcript.delta":
-            debugLog(id: "transcriptDelta", message: "📥 [WS] Transcript delta")
+            handleResponseOutputAudioTranscriptDelta()
         case "response.output_audio_transcript.done":
-            if let transcript = json["transcript"] as? String {
-                log("Final transcript: \(transcript)")
-            }
+            handleResponseOutputAudioTranscriptDone(json)
         case "conversation.item.done":
             handleConversationItemDone(json)
-        case "session.updated":
-            log("Session configuration updated successfully - 🔵 Setting API state to .connected")
-            apiStateSubject.send(.connected)
-            audioManager.startAudioEngine()
         case "response.output_item.added":
             handleResponseOutputItemAdded(json)
         case "response.content_part.added":
-            if let part = json["part"] as? [String: Any],
-               let type = part["type"] as? String {
-                log("response.content_part.added: type=\(type)")
-            }
+            handleResponseContentPartAdded(json)
         case "response.content_part.done":
-            log("Response content part done")
+            handleResponseContentPartDone()
         case "response.output_item.done":
-            log("Response output item done")
+            handleResponseOutputItemDone()
         case "rate_limits.updated":
-            log("Rate limits updated")
+            handleRateLimitsUpdated()
         case "conversation.item.input_audio_transcription.delta":
-            debugLog(id: "inputAudioTranscriptDelta", message: "⚙️ [WS] Input audio transcription delta")
+            handleConversationItemInputAudioTranscriptionDelta()
         case "conversation.item.input_audio_transcription.completed":
-            log("Input audio transcription completed")
+            handleConversationItemInputAudioTranscriptionCompleted()
         case "response.audio_transcript.delta":
-            debugLog(id: "audioTranscriptDelta", message: "⚙️ [WS] Audio transcript delta")
+            handleResponseAudioTranscriptDelta()
         case "error":
             handleErrorMessage(json)
         default:
-            log("Unknown event type: \(type) - JSON: \(json)")
+            handleUnknownEventType(type, json)
         }
     }
 
     func parseJSON(from text: String) -> [String: Any]? {
-        guard let data = text.data(using: .utf8) else {
-            error("Failed to convert text to data")
-            return nil
-        }
-
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            error("Failed to parse message as JSON: \(text)")
-            return nil
-        }
-
+        let data = text.data(using: .utf8)!
+        let json = try! JSONSerialization.jsonObject(with: data) as? [String: Any]
         return json
     }
 
@@ -249,6 +228,12 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         sendSessionUpdate()
     }
 
+    func handleSessionUpdated() {
+        log("Session configuration updated successfully - 🔵 Setting API state to .connected")
+        apiStateSubject.send(.connected)
+        audioManager.startAudioEngine()
+    }
+
     func sendSessionUpdate() {
         let sessionUpdate: [String: Any] = [
             "type": "session.update",
@@ -256,7 +241,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                 "type": "realtime",
                 "output_modalities": ["audio"],
                 "instructions": """
-                You are the ears and mouth of the computer agent.
+                You are the ears and mouth of the computer agent. You are NOT the brain.
                 """,
                 "audio": [
                     "input": [
@@ -292,38 +277,26 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func send(event: [String: Any]) {
-        guard let webSocketTask = webSocketTask else {
-            error("WebSocket not connected - cannot send event")
-            return
+        let webSocketTask = webSocketTask!
+        let data = try! JSONSerialization.data(withJSONObject: event, options: [])
+        let text = String(data: data, encoding: .utf8)!
+        let message = URLSessionWebSocketTask.Message.string(text)
+        let eventType = event["type"] as? String ?? "unknown"
+
+        if eventType != "input_audio_buffer.append" {
+            log("Sending event: \(eventType)")
         }
 
-        do {
-            let data = try JSONSerialization.data(withJSONObject: event, options: [])
-            guard let text = String(data: data, encoding: .utf8) else {
-                error("Failed to convert event to string")
-                return
+        totalBytesSent += data.count
+        debugLog(id: "sendToRealtime",
+                 message: "📤 [WS] Sending \(eventType): \(data.count.formattedBytes) (total: \(totalBytesSent.formattedBytes))")
+
+        webSocketTask.send(message) { sendError in
+            if let sendError = sendError {
+                error("Failed to send \(eventType): \(sendError.localizedDescription)")
+            } else if eventType != "input_audio_buffer.append" {
+                log("Successfully sent: \(eventType)")
             }
-
-            let message = URLSessionWebSocketTask.Message.string(text)
-            let eventType = event["type"] as? String ?? "unknown"
-
-            if eventType != "input_audio_buffer.append" {
-                log("Sending event: \(eventType)")
-            }
-
-            totalBytesSent += data.count
-            debugLog(id: "sendToRealtime",
-                     message: "📤 [WS] Sending \(eventType): \(data.count.formattedBytes) (total: \(totalBytesSent.formattedBytes))")
-
-            webSocketTask.send(message) { sendError in
-                if let sendError = sendError {
-                    error("Failed to send \(eventType): \(sendError.localizedDescription)")
-                } else if eventType != "input_audio_buffer.append" {
-                    log("Successfully sent: \(eventType)")
-                }
-            }
-        } catch let serializeError {
-            error("Failed to serialize event: \(serializeError.localizedDescription)")
         }
     }
 
@@ -439,20 +412,9 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func handleFunctionCallArgumentsDone(_ json: [String: Any]) {
-        guard let arguments = json["arguments"] as? String else {
-            error("response.function_call_arguments.done missing 'arguments' field")
-            return
-        }
-
-        guard let callId = json["call_id"] as? String else {
-            error("response.function_call_arguments.done missing 'call_id' field")
-            return
-        }
-
-        guard let name = json["name"] as? String else {
-            error("response.function_call_arguments.done missing 'name' field")
-            return
-        }
+        let arguments = (json["arguments"] as? String)!
+        let callId = (json["call_id"] as? String)!
+        let name = (json["name"] as? String)!
 
         log("function_call_arguments.done: call_id=\(callId), name=\(name)")
 
@@ -460,60 +422,42 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\\\"", with: "'")
 
-        guard let argumentsData = cleanedArguments.data(using: .utf8) else {
-            error("Failed to convert arguments to data: \(arguments)")
-            return
+        let argumentsData = cleanedArguments.data(using: .utf8)!
+        let jsonObject = try! JSONSerialization.jsonObject(with: argumentsData, options: [])
+        let dict = (jsonObject as? [String: Any])!
+        let transcription = (dict["deltaTranscription"] as? String)!
+
+        let currentValue = lastPromptSubject.value
+        let newValue: String
+
+        if currentValue.isEmpty {
+            newValue = transcription
+        } else {
+            newValue = currentValue + "\n" + transcription
         }
 
-        do {
-            let jsonObject = try JSONSerialization.jsonObject(with: argumentsData, options: [])
+        lastPromptSubject.send(newValue)
 
-            guard let dict = jsonObject as? [String: Any],
-                  let transcription = dict["deltaTranscription"] as? String else {
-                error("Failed to extract deltaTranscription from arguments")
-                return
-            }
+        let result: [String: Any] = [
+            "status": "success",
+            "accumulated_transcription": newValue,
+            "latest_addition": transcription
+        ]
 
-            let currentValue = lastPromptSubject.value
-            let newValue: String
+        let outputData = try! JSONSerialization.data(withJSONObject: result)
+        let outputString = String(data: outputData, encoding: .utf8)!
 
-            if currentValue.isEmpty {
-                newValue = transcription
-            } else {
-                newValue = currentValue + "\n" + transcription
-            }
-
-            lastPromptSubject.send(newValue)
-
-            let result: [String: Any] = [
-                "status": "success",
-                "accumulated_transcription": newValue,
-                "latest_addition": transcription
+        let response: [String: Any] = [
+            "type": "conversation.item.create",
+            "item": [
+                "type": "function_call_output",
+                "call_id": callId,
+                "output": outputString
             ]
+        ]
 
-            let outputData = try JSONSerialization.data(withJSONObject: result)
-            guard let outputString = String(data: outputData, encoding: .utf8) else {
-                error("Failed to convert result to string")
-                return
-            }
-
-            let response: [String: Any] = [
-                "type": "conversation.item.create",
-                "item": [
-                    "type": "function_call_output",
-                    "call_id": callId,
-                    "output": outputString
-                ]
-            ]
-
-            send(event: response)
-            log("✅ Sent function output")
-
-        } catch let parseError {
-            error("Failed to parse arguments: \(parseError.localizedDescription)")
-            error("Arguments that failed to parse: \(arguments)")
-            error("Cleaned arguments: \(cleanedArguments)")
-        }
+        send(event: response)
+        log("✅ Sent function output")
     }
 
     func handleConversationItemAdded(_ json: [String: Any]) {
@@ -537,23 +481,81 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         }
     }
 
-    func handleResponseOutputItemAdded(_ json: [String: Any]) {
-        guard let item = json["item"] as? [String: Any] else {
-            return
-        }
+    func handleResponseAudioDelta(_ json: [String: Any]) {
+        let audioBase64 = (json["delta"] as? String)!
+        audioManager.scheduleOutputAudioBuffer(audioBase64)
+    }
 
-        guard let itemType = item["type"] as? String else {
-            return
-        }
+    func handleResponseFunctionCallArgumentsDelta() {
+        debugLog(id: "functionArgsDelta", message: "⚙️ [WS] Receiving function arguments")
+    }
+
+    func handleResponseOutputTextDelta() {
+        debugLog(id: "textDelta", message: "⚙️ [WS] Receiving text output")
+    }
+
+    func handleResponseOutputAudioDelta(_ json: [String: Any]) {
+        debugLog(id: "audioOutputDelta", message: "⚙️ [WS] Receiving audio output")
+        let audioBase64 = (json["delta"] as? String)!
+        audioManager.scheduleOutputAudioBuffer(audioBase64)
+    }
+
+    func handleResponseOutputAudioDone() {
+        log("Audio output completed")
+    }
+
+    func handleResponseOutputAudioTranscriptDelta() {
+        debugLog(id: "transcriptDelta", message: "📥 [WS] Transcript delta")
+    }
+
+    func handleResponseOutputAudioTranscriptDone(_ json: [String: Any]) {
+        let transcript = (json["transcript"] as? String)!
+        log("Final transcript: \(transcript)")
+    }
+
+    func handleResponseContentPartAdded(_ json: [String: Any]) {
+        let part = (json["part"] as? [String: Any])!
+        let type = (part["type"] as? String)!
+        log("response.content_part.added: type=\(type)")
+    }
+
+    func handleResponseContentPartDone() {
+        log("Response content part done")
+    }
+
+    func handleResponseOutputItemDone() {
+        log("Response output item done")
+    }
+
+    func handleRateLimitsUpdated() {
+        log("Rate limits updated")
+    }
+
+    func handleConversationItemInputAudioTranscriptionDelta() {
+        debugLog(id: "inputAudioTranscriptDelta", message: "⚙️ [WS] Input audio transcription delta")
+    }
+
+    func handleConversationItemInputAudioTranscriptionCompleted() {
+        log("Input audio transcription completed")
+    }
+
+    func handleResponseAudioTranscriptDelta() {
+        debugLog(id: "audioTranscriptDelta", message: "⚙️ [WS] Audio transcript delta")
+    }
+
+    func handleUnknownEventType(_ type: String, _ json: [String: Any]) {
+        log("Unknown event type: \(type) - JSON: \(json)")
+    }
+
+    func handleResponseOutputItemAdded(_ json: [String: Any]) {
+        let item = (json["item"] as? [String: Any])!
+        let itemType = (item["type"] as? String)!
 
         if itemType == "function_call" {
-            guard let callId = item["call_id"] as? String,
-                  let name = item["name"] as? String,
-                  let status = item["status"] as? String else {
-                return
-            }
+            let callId = (item["call_id"] as? String)!
+            let name = (item["name"] as? String)!
+            let status = (item["status"] as? String)!
 
-            currentFunctionCallId = callId
             log("response.output_item.added: \(name) (\(status))")
         }
     }
