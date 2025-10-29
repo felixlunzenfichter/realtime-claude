@@ -214,9 +214,21 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func parseJSON(from text: String) -> [String: Any]? {
-        let data = text.data(using: .utf8)!
-        let json = try! JSONSerialization.jsonObject(with: data) as? [String: Any]
-        return json
+        guard let data = text.data(using: .utf8) else {
+            error("Failed to convert text to UTF-8 data")
+            return nil
+        }
+
+        do {
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                error("Failed to parse JSON as dictionary")
+                return nil
+            }
+            return json
+        } catch let parseError {
+            error("JSON parsing error: \(parseError.localizedDescription)")
+            return nil
+        }
     }
 
     func extractMessageType(from json: [String: Any]) -> String? {
@@ -277,9 +289,24 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func send(event: [String: Any]) {
-        let webSocketTask = webSocketTask!
-        let data = try! JSONSerialization.data(withJSONObject: event, options: [])
-        let text = String(data: data, encoding: .utf8)!
+        guard let webSocketTask = webSocketTask else {
+            error("Cannot send event: WebSocket task is nil")
+            return
+        }
+
+        let data: Data
+        do {
+            data = try JSONSerialization.data(withJSONObject: event, options: [])
+        } catch let serializationError {
+            error("Failed to serialize event to JSON: \(serializationError.localizedDescription)")
+            return
+        }
+
+        guard let text = String(data: data, encoding: .utf8) else {
+            error("Failed to convert event data to UTF-8 string")
+            return
+        }
+
         let message = URLSessionWebSocketTask.Message.string(text)
         let eventType = event["type"] as? String ?? "unknown"
 
@@ -412,9 +439,20 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func handleFunctionCallArgumentsDone(_ json: [String: Any]) {
-        let arguments = (json["arguments"] as? String)!
-        let callId = (json["call_id"] as? String)!
-        let name = (json["name"] as? String)!
+        guard let arguments = json["arguments"] as? String else {
+            error("Missing or invalid 'arguments' field in function call")
+            return
+        }
+
+        guard let callId = json["call_id"] as? String else {
+            error("Missing or invalid 'call_id' field in function call")
+            return
+        }
+
+        guard let name = json["name"] as? String else {
+            error("Missing or invalid 'name' field in function call")
+            return
+        }
 
         log("function_call_arguments.done: call_id=\(callId), name=\(name)")
 
@@ -422,10 +460,28 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "\\\"", with: "'")
 
-        let argumentsData = cleanedArguments.data(using: .utf8)!
-        let jsonObject = try! JSONSerialization.jsonObject(with: argumentsData, options: [])
-        let dict = (jsonObject as? [String: Any])!
-        let transcription = (dict["deltaTranscription"] as? String)!
+        guard let argumentsData = cleanedArguments.data(using: .utf8) else {
+            error("Failed to convert cleaned arguments to UTF-8 data")
+            return
+        }
+
+        let jsonObject: Any
+        do {
+            jsonObject = try JSONSerialization.jsonObject(with: argumentsData, options: [])
+        } catch let parseError {
+            error("Failed to parse function arguments as JSON: \(parseError.localizedDescription)")
+            return
+        }
+
+        guard let dict = jsonObject as? [String: Any] else {
+            error("Function arguments not a dictionary")
+            return
+        }
+
+        guard let transcription = dict["deltaTranscription"] as? String else {
+            error("Missing or invalid 'deltaTranscription' field in function arguments")
+            return
+        }
 
         let currentValue = lastPromptSubject.value
         let newValue: String
@@ -444,8 +500,18 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             "latest_addition": transcription
         ]
 
-        let outputData = try! JSONSerialization.data(withJSONObject: result)
-        let outputString = String(data: outputData, encoding: .utf8)!
+        let outputData: Data
+        do {
+            outputData = try JSONSerialization.data(withJSONObject: result)
+        } catch let serializationError {
+            error("Failed to serialize function result to JSON: \(serializationError.localizedDescription)")
+            return
+        }
+
+        guard let outputString = String(data: outputData, encoding: .utf8) else {
+            error("Failed to convert result data to UTF-8 string")
+            return
+        }
 
         let response: [String: Any] = [
             "type": "conversation.item.create",
@@ -482,7 +548,10 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func handleResponseAudioDelta(_ json: [String: Any]) {
-        let audioBase64 = (json["delta"] as? String)!
+        guard let audioBase64 = json["delta"] as? String else {
+            error("Missing or invalid 'delta' field in response.audio.delta")
+            return
+        }
         audioManager.scheduleOutputAudioBuffer(audioBase64)
     }
 
@@ -496,7 +565,10 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
 
     func handleResponseOutputAudioDelta(_ json: [String: Any]) {
         debugLog(id: "audioOutputDelta", message: "⚙️ [WS] Receiving audio output")
-        let audioBase64 = (json["delta"] as? String)!
+        guard let audioBase64 = json["delta"] as? String else {
+            error("Missing or invalid 'delta' field in response.output_audio.delta")
+            return
+        }
         audioManager.scheduleOutputAudioBuffer(audioBase64)
     }
 
@@ -509,13 +581,24 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func handleResponseOutputAudioTranscriptDone(_ json: [String: Any]) {
-        let transcript = (json["transcript"] as? String)!
+        guard let transcript = json["transcript"] as? String else {
+            error("Missing or invalid 'transcript' field in response.output_audio_transcript.done")
+            return
+        }
         log("Final transcript: \(transcript)")
     }
 
     func handleResponseContentPartAdded(_ json: [String: Any]) {
-        let part = (json["part"] as? [String: Any])!
-        let type = (part["type"] as? String)!
+        guard let part = json["part"] as? [String: Any] else {
+            error("Missing or invalid 'part' field in response.content_part.added")
+            return
+        }
+
+        guard let type = part["type"] as? String else {
+            error("Missing or invalid 'type' field in content part")
+            return
+        }
+
         log("response.content_part.added: type=\(type)")
     }
 
@@ -548,13 +631,31 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func handleResponseOutputItemAdded(_ json: [String: Any]) {
-        let item = (json["item"] as? [String: Any])!
-        let itemType = (item["type"] as? String)!
+        guard let item = json["item"] as? [String: Any] else {
+            error("Missing or invalid 'item' field in response.output_item.added")
+            return
+        }
+
+        guard let itemType = item["type"] as? String else {
+            error("Missing or invalid 'type' field in output item")
+            return
+        }
 
         if itemType == "function_call" {
-            let callId = (item["call_id"] as? String)!
-            let name = (item["name"] as? String)!
-            let status = (item["status"] as? String)!
+            guard let callId = item["call_id"] as? String else {
+                error("Missing or invalid 'call_id' field in function_call output item")
+                return
+            }
+
+            guard let name = item["name"] as? String else {
+                error("Missing or invalid 'name' field in function_call output item")
+                return
+            }
+
+            guard let status = item["status"] as? String else {
+                error("Missing or invalid 'status' field in function_call output item")
+                return
+            }
 
             log("response.output_item.added: \(name) (\(status))")
         }

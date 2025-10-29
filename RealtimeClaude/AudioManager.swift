@@ -170,9 +170,17 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
 
         buffer.frameLength = frameLength
 
-        let audioBuffer = buffer.int16ChannelData![0]
+        guard let audioBuffer = buffer.int16ChannelData?[0] else {
+            error("Failed to get int16 channel data from PCM buffer")
+            return nil
+        }
+
         data.withUnsafeBytes { bytes in
-            audioBuffer.initialize(from: bytes.bindMemory(to: Int16.self).baseAddress!, count: Int(frameLength))
+            guard let baseAddress = bytes.bindMemory(to: Int16.self).baseAddress else {
+                error("Failed to get base address from audio data bytes")
+                return
+            }
+            audioBuffer.initialize(from: baseAddress, count: Int(frameLength))
         }
 
         return buffer

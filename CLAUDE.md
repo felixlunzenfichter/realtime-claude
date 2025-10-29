@@ -11,11 +11,15 @@
 
 ## Core Principles
 
-**100% dogfood. Everything crashes immediately.**
+**100% dogfood. The app must never crash.**
 
-- Use `!` everywhere, never `if let` or `guard let`
-- Use `try!` everywhere, never `do-catch`
-- Any error = immediate crash = we see it in the debugger
+- NEVER use `!` or `try!` - always use safe unwrapping
+- Use `guard let` or `if let` for all optionals
+- When something is nil or errors occur: use `error()` to log it
+- Pattern: `guard let x = y else { error("y was nil"); return }`
+- Why: We want fast builds without debug symbols but still get proper error logs in case of a crash, which is why we use the custom error function
+- After the error has been successfully transmitted to Mac, we will then automatically crash the app
+- Use `error()` heavily in any case that would usually generate a crash
 
 Always debug mode, always direct install. This is our tool.
 

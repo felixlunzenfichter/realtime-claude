@@ -330,16 +330,58 @@ function countLinesInContent(content) {
 function sendHandshakeResponse(socket, stats) {
     const apiKey = fs.readFileSync(path.join('private', 'secrets.txt'), 'utf8').trim();
 
+    const previousErrors = getPreviousSessionErrors(stats.sessionNumber);
+
     const handshakeResponse = JSON.stringify({
         type: 'handshake',
         sessionNumber: stats.sessionNumber,
         totalUptime: stats.totalUptime,
         todayUptime: stats.todayUptime,
         totalLogs: stats.totalLogs,
-        apiKey: apiKey
+        apiKey: apiKey,
+        previousErrors: previousErrors
     }) + '\n';
 
     socket.write(handshakeResponse);
+
+    if (previousErrors.length > 0) {
+        console.log(`📤 Sent ${previousErrors.length} previous error(s) to iOS app`);
+    }
+}
+
+function getPreviousSessionErrors(currentSessionNumber) {
+    const previousSessionNumber = currentSessionNumber - 1;
+    const previousSessionFile = path.join(logsDir, `${previousSessionNumber}.json`);
+
+    if (!fs.existsSync(previousSessionFile)) {
+        return [];
+    }
+
+    try {
+        const fileContent = fs.readFileSync(previousSessionFile, 'utf8');
+        const lines = fileContent.trim().split('\n');
+
+        const errors = lines
+            .map(line => {
+                try {
+                    return JSON.parse(line);
+                } catch {
+                    return null;
+                }
+            })
+            .filter(log => log && log.type && log.type.error !== undefined)
+            .map(log => ({
+                message: log.message,
+                fileName: log.fileName,
+                functionName: log.functionName,
+                timestamp: log.timestamp
+            }));
+
+        return errors;
+    } catch (error) {
+        console.error(`Failed to read previous session errors: ${error.message}`);
+        return [];
+    }
 }
 
 function logHandshakeDetails(stats) {
@@ -356,6 +398,14 @@ function handleLogMessage(socket, logData) {
 function handleErrorMessage(socket, logData) {
     reportErrorToConsole(logData);
     persistLogToFile(logData);
+
+    console.log('🔄 Error detected - executing deploy.sh to restart app...');
+    exec('./scripts/deploy.sh', (error, stdout, stderr) => {
+        if (error) {
+            console.error(`Failed to execute deploy.sh: ${error.message}`);
+        }
+    });
+
     confirmLogReception(socket, logData.id);
 }
 

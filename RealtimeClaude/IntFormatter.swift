@@ -34,7 +34,11 @@ extension Int {
                 result = String(format: "%.0f GB", gb)
             }
         }
-        return String(format: "%8s", (result as NSString).utf8String!)
+        guard let utf8Str = (result as NSString).utf8String else {
+            error("utf8String was nil for formatted bytes string")
+            return result
+        }
+        return String(format: "%8s", utf8Str)
     }
 
     var formattedDuration: String {

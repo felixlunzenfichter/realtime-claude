@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import Network
 import Combine
+import UIKit
 
 struct SessionStats {
     let sessionNumber: Int
@@ -9,6 +10,7 @@ struct SessionStats {
     let todayUptime: Int
     let totalLogs: Int
     let totalTests: Int
+    let previousRunFailed: Bool
 }
 
 struct PromptStatusUpdate {
@@ -69,7 +71,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     let debugLogsSubject = CurrentValueSubject<[(LogMessage, Int)], Never>([])
     let logsSubject = CurrentValueSubject<[LogMessage], Never>([])
     let promptStatusSubject = PassthroughSubject<PromptStatusUpdate, Never>()
-    let sessionStatsSubject = CurrentValueSubject<SessionStats, Never>(SessionStats(sessionNumber: 0, totalUptime: 0, todayUptime: 0, totalLogs: 0, totalTests: 0))
+    let sessionStatsSubject = CurrentValueSubject<SessionStats, Never>(SessionStats(sessionNumber: 0, totalUptime: 0, todayUptime: 0, totalLogs: 0, totalTests: 0, previousRunFailed: false))
     let testsPassedSubject = CurrentValueSubject<Int, Never>(0)
     let transmittedLogIdsSubject = CurrentValueSubject<[String], Never>([])
 
@@ -95,7 +97,11 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
     fileprivate init() {
 
-        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(macHostname), port: NWEndpoint.Port(rawValue: port)!)
+        guard let portValue = NWEndpoint.Port(rawValue: port) else {
+            fatalError("Invalid port number: \(port)")
+        }
+
+        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(macHostname), port: portValue)
         connection = NWConnection(to: endpoint, using: .tcp)
 
         connection.stateUpdateHandler = { state in
@@ -103,8 +109,8 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             case .ready:
                 self.startReceiving()
                 self.sendStartMessage()
-            case .failed(let error):
-                fatalError("Logger connection failed: \(error)")
+            case .failed(let connectionError):
+                error("Logger connection failed: \(connectionError)")
             default:
                 break
             }
@@ -149,8 +155,13 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         tcpProcessingQueue.async { [weak self] in
             guard let self = self else { return }
 
+            guard let newlineData = "\n".data(using: .utf8) else {
+                error("Failed to convert newline to UTF-8 data")
+                return
+            }
+
             var jsonData = data
-            jsonData.append("\n".data(using: .utf8)!)
+            jsonData.append(newlineData)
 
             self.totalBytesSentToMac += jsonData.count
 
@@ -161,9 +172,9 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
                 log(logMessage)
             }
 
-            self.connection.send(content: jsonData, completion: .contentProcessed { error in
-                if let error = error {
-                    fatalError("Failed to send \(messageType): \(error)")
+            self.connection.send(content: jsonData, completion: .contentProcessed { sendError in
+                if let sendError = sendError {
+                    error("Failed to send \(messageType): \(sendError)")
                 }
             })
         }
@@ -203,11 +214,12 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     }
 
     private func startReceiving() {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, receiveError in
             guard let self = self else { return }
 
-            if let error = error {
-                fatalError("Logger receive failed: \(error)")
+            if let receiveError = receiveError {
+                error("Logger receive failed: \(receiveError)")
+                return
             }
 
             if let data = data, !data.isEmpty {
@@ -246,8 +258,8 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
                         routeIncomingMessage(jsonDict)
                         messagesProcessed += 1
                     }
-                } catch {
-                    fatalError("Failed to parse JSON: \(error)")
+                } catch let parseError {
+                    error("Failed to parse JSON: \(parseError)")
                 }
             }
         }
@@ -258,9 +270,16 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     }
 
     private func routeIncomingMessage(_ jsonData: [String: Any]) {
-        let messageType = jsonData["type"] as! String
+        guard let messageType = jsonData["type"] as? String else {
+            error("type was nil in incoming message")
+            return
+        }
 
-        let jsonBytes = try! JSONSerialization.data(withJSONObject: jsonData)
+        guard let jsonBytes = try? JSONSerialization.data(withJSONObject: jsonData) else {
+            error("Failed to serialize incoming message to JSON")
+            return
+        }
+
         let messageSize = jsonBytes.count
 
         debugLog(id: "macosIncoming",
@@ -274,12 +293,16 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         case "prompt_ack":
             handlePromptAckMessage(jsonData)
         default:
-            fatalError("Unexpected message type: \(messageType)")
+            error("Unexpected message type: \(messageType)")
         }
     }
 
     private func handleAckMessage(_ jsonData: [String: Any]) {
-        let logId = jsonData["logId"] as! String
+        guard let logId = jsonData["logId"] as? String else {
+            error("logId was nil in ACK message")
+            return
+        }
+
         debugLog(id: "ackReceived", message: "✅ [TCP] ACK received for log: \(logId)")
 
         let currentLogs = logsSubject.value
@@ -292,6 +315,10 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
                     break
                 }
             }
+
+            if logMessage.type == .error {
+                showRestartAlert(fileName: logMessage.shortFileName, functionName: logMessage.functionName, message: logMessage.message)
+            }
         }
 
         acknowledgeTransmission(for: logId)
@@ -303,22 +330,66 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         transmittedLogIdsSubject.send(currentIds)
     }
 
+    private func showRestartAlert(fileName: String, functionName: String, message: String) {
+        DispatchQueue.main.async {
+            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                  let rootViewController = windowScene.windows.first?.rootViewController else {
+                log("Cannot show alert - no root view controller")
+                return
+            }
+
+            let alert = UIAlertController(
+                title: "Restarting App",
+                message: "\(fileName) → \(functionName)\n\n\(message)",
+                preferredStyle: .alert
+            )
+
+            rootViewController.present(alert, animated: true)
+        }
+
+        log("Restarting app due to error: \(message)")
+    }
+
     private func handleHandshakeMessage(_ jsonData: [String: Any]) {
         if let apiKey = jsonData["apiKey"] as? String {
             realtimeAPI.connect(apiKey: apiKey)
         }
 
-        let sessionNumber = jsonData["sessionNumber"] as! Int
+        guard let sessionNumber = jsonData["sessionNumber"] as? Int else {
+            error("sessionNumber was nil in handshake message")
+            return
+        }
+
         let totalLogs = jsonData["totalLogs"] as? Int ?? 0
         let totalUptime = jsonData["totalUptime"] as? Int ?? 0
         let todayUptime = jsonData["todayUptime"] as? Int ?? 0
+
+        var previousRunFailed = false
+        if let previousErrors = jsonData["previousErrors"] as? [[String: Any]], !previousErrors.isEmpty {
+            previousRunFailed = true
+
+            let errorDescriptions = previousErrors.compactMap { errorDict -> String? in
+                guard let message = errorDict["message"] as? String,
+                      let fileName = errorDict["fileName"] as? String,
+                      let functionName = errorDict["functionName"] as? String else {
+                    return nil
+                }
+
+                let shortFileName = (fileName as NSString).lastPathComponent
+                return "  • \(shortFileName) → \(functionName)\n    \(message)"
+            }
+
+            let errorList = errorDescriptions.joined(separator: "\n\n")
+            log("Previous run failed:\n\n\(errorList)")
+        }
 
         let sessionStats = SessionStats(
             sessionNumber: sessionNumber,
             totalUptime: totalUptime,
             todayUptime: todayUptime,
             totalLogs: totalLogs,
-            totalTests: TEST_DEFINITIONS.count
+            totalTests: TEST_DEFINITIONS.count,
+            previousRunFailed: previousRunFailed
         )
 
         sessionStatsSubject.send(sessionStats)
@@ -327,7 +398,11 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     }
 
     private func handlePromptAckMessage(_ jsonData: [String: Any]) {
-        let status = jsonData["status"] as! String
+        guard let status = jsonData["status"] as? String else {
+            error("status was nil in prompt ACK message")
+            return
+        }
+
         let originalPrompt = jsonData["originalPrompt"] as? String ?? "Unknown prompt"
 
         if status == "success" {
@@ -348,7 +423,11 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
     private func sendStartMessage() {
         let startMessage = ["type": "start"] as [String: Any]
-        let jsonData = try! JSONSerialization.data(withJSONObject: startMessage)
+
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: startMessage) else {
+            error("Failed to serialize start message to JSON")
+            return
+        }
 
         sendMessage(jsonData, messageType: "start", logMessage: "📤 [iOS → macOS] Sending start message")
     }
@@ -360,7 +439,10 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             "timestamp": Date().timeIntervalSince1970
         ]
 
-        let jsonData = try! JSONSerialization.data(withJSONObject: promptMessage)
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: promptMessage) else {
+            error("Failed to serialize prompt message to JSON")
+            return
+        }
 
         sendMessage(jsonData, messageType: "prompt", logMessage: "📤 [iOS → macOS] Sending prompt: \(prompt)")
 

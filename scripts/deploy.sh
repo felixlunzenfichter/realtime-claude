@@ -55,7 +55,7 @@ BUILD_LOG=$(mktemp)
 /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild clean -project RealtimeClaude.xcodeproj -scheme RealtimeClaude -destination "generic/platform=iOS" TARGETED_DEVICE_FAMILY=$DEVICE_FAMILY > /dev/null 2>&1
 
 # Redirect build output to temporary file
-if /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild build -project RealtimeClaude.xcodeproj -scheme RealtimeClaude -destination "generic/platform=iOS" -allowProvisioningUpdates -allowProvisioningDeviceRegistration CODE_SIGN_IDENTITY="Apple Development" CODE_SIGNING_REQUIRED=YES TARGETED_DEVICE_FAMILY=$DEVICE_FAMILY > "$BUILD_LOG" 2>&1; then
+if /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild build -project RealtimeClaude.xcodeproj -scheme RealtimeClaude -destination "generic/platform=iOS" CODE_SIGN_IDENTITY="Apple Development" TARGETED_DEVICE_FAMILY=$DEVICE_FAMILY > "$BUILD_LOG" 2>&1; then
     # Build succeeded - print one-liner
     echo "   ✅ Build successful"
     rm "$BUILD_LOG"

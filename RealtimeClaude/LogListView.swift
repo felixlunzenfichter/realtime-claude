@@ -16,6 +16,7 @@ class LogListViewModel {
     var transmittedLogIds: [String] = []
     var uptimeToday: Int = 0
     var uptimeTotal: Int = 0
+    var previousRunFailed: Bool = false
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -118,6 +119,7 @@ class LogListViewModel {
             self.uptimeToday = stats.todayUptime
             self.totalLogs = stats.totalLogs
             self.totalTests = stats.totalTests
+            self.previousRunFailed = stats.previousRunFailed
         }
 
         setupSubscription(logger.testsPassedSubject) { self.passedTestNumbers.insert($0) }
@@ -273,10 +275,17 @@ struct LogListView: View {
                                 Text("Tests")
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
-                                Text("\(viewModel.successfulTests)/\(viewModel.totalTests)")
-                                    .font(.system(size: 15))
-                                    .fontWeight(.medium)
-                                    .foregroundColor(viewModel.testsColor)
+                                if viewModel.previousRunFailed {
+                                    Text("✗")
+                                        .font(.system(size: 20))
+                                        .fontWeight(.bold)
+                                        .foregroundColor(.red)
+                                } else {
+                                    Text("\(viewModel.successfulTests)/\(viewModel.totalTests)")
+                                        .font(.system(size: 15))
+                                        .fontWeight(.medium)
+                                        .foregroundColor(viewModel.testsColor)
+                                }
                             }
 
                             Spacer()
@@ -362,11 +371,19 @@ struct LogListView: View {
                             Text("Tests")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                            Text("\(viewModel.successfulTests)/\(viewModel.totalTests)")
-                                .font(.title3)
-                                .fontWeight(.medium)
-                                .foregroundColor(viewModel.testsColor)
-                                .frame(minWidth: 60)
+                            if viewModel.previousRunFailed {
+                                Text("✗")
+                                    .font(.system(size: 28))
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.red)
+                                    .frame(minWidth: 60)
+                            } else {
+                                Text("\(viewModel.successfulTests)/\(viewModel.totalTests)")
+                                    .font(.title3)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(viewModel.testsColor)
+                                    .frame(minWidth: 60)
+                            }
                         }
                         .frame(minWidth: 60)
 
