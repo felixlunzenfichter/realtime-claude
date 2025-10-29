@@ -456,12 +456,8 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
 
         log("function_call_arguments.done: call_id=\(callId), name=\(name)")
 
-        let cleanedArguments = arguments
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "\\\"", with: "'")
-
-        guard let argumentsData = cleanedArguments.data(using: .utf8) else {
-            error("Failed to convert cleaned arguments to UTF-8 data")
+        guard let argumentsData = arguments.data(using: .utf8) else {
+            error("Failed to convert arguments to UTF-8 data")
             return
         }
 
@@ -483,13 +479,17 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             return
         }
 
+        let filteredTranscription = transcription
+            .replacingOccurrences(of: "\"", with: "")
+            .replacingOccurrences(of: "'", with: "")
+
         let currentValue = lastPromptSubject.value
         let newValue: String
 
         if currentValue.isEmpty {
-            newValue = transcription
+            newValue = filteredTranscription
         } else {
-            newValue = currentValue + "\n" + transcription
+            newValue = currentValue + "\n" + filteredTranscription
         }
 
         lastPromptSubject.send(newValue)
