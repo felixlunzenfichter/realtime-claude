@@ -463,7 +463,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         log("function_call_arguments.done: call_id=\(callId), name=\(name)")
 
         guard let argumentsData = arguments.data(using: .utf8) else {
-            error("Failed to convert arguments to UTF-8 data")
+            error("Failed to convert arguments to UTF-8 data. Raw arguments: \(arguments)")
             return
         }
 
@@ -471,20 +471,26 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         do {
             jsonObject = try JSONSerialization.jsonObject(with: argumentsData, options: [])
         } catch let parseError {
-            error("Failed to parse function arguments as JSON: \(parseError.localizedDescription)")
+            error("Failed to parse function arguments as JSON: \(parseError.localizedDescription). Raw arguments: \(arguments)")
             return
         }
 
         guard let dict = jsonObject as? [String: Any] else {
-            error("Function arguments not a dictionary")
+            error("Function arguments not a dictionary. Raw arguments: \(arguments)")
             return
         }
 
-        guard let transcription = dict["deltaTranscription"] as? String else {
-            error("Missing or invalid 'deltaTranscription' field in function arguments")
+        let transcription: String
+
+        if let deltaTranscription = dict["deltaTranscription"] as? String {
+            transcription = deltaTranscription
+        } else if let firstKey = dict.keys.first,
+                  let firstValue = dict[firstKey] as? String {
+            transcription = firstValue
+        } else {
+            error("No usable value found in function arguments. Name: \(name), Raw arguments: \(arguments)")
             return
         }
-
 
         let filteredTranscription = transcription
             .replacingOccurrences(of: "\u{201C}", with: "")
