@@ -285,7 +285,8 @@ struct LogListView: View {
                     }
                 } else {
                     HStack(spacing: 20) {
-                        VStack(alignment: .leading, spacing: 2) {
+                        Spacer()
+                        VStack(alignment: .center, spacing: 2) {
                             Text("Total")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -293,11 +294,11 @@ struct LogListView: View {
                                 .font(.title3)
                                 .fontWeight(.medium)
                                 .foregroundColor(.primary)
-                                .frame(minWidth: 90, alignment: .leading)
+                                .frame(minWidth: 90)
                         }
                         .frame(minWidth: 90)
 
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .center, spacing: 2) {
                             Text("All Logs")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -305,11 +306,11 @@ struct LogListView: View {
                                 .font(.title3)
                                 .fontWeight(.medium)
                                 .foregroundColor(.primary)
-                                .frame(minWidth: 60, alignment: .leading)
+                                .frame(minWidth: 60)
                         }
                         .frame(minWidth: 60)
 
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .center, spacing: 2) {
                             Text("Today")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -317,11 +318,11 @@ struct LogListView: View {
                                 .font(.title3)
                                 .fontWeight(.medium)
                                 .foregroundColor(viewModel.todayUptimeColor)
-                                .frame(minWidth: 90, alignment: .leading)
+                                .frame(minWidth: 90)
                         }
                         .frame(minWidth: 90)
 
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .center, spacing: 2) {
                             Text("Session")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -329,11 +330,11 @@ struct LogListView: View {
                                 .font(.title3)
                                 .fontWeight(.medium)
                                 .foregroundColor(.purple)
-                                .frame(minWidth: 50, alignment: .leading)
+                                .frame(minWidth: 50)
                         }
                         .frame(minWidth: 50)
 
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .center, spacing: 2) {
                             Text("Current")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -341,11 +342,11 @@ struct LogListView: View {
                                 .font(.title3)
                                 .fontWeight(.medium)
                                 .foregroundColor(.blue)
-                                .frame(minWidth: 70, alignment: .leading)
+                                .frame(minWidth: 70)
                         }
                         .frame(minWidth: 70)
 
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .center, spacing: 2) {
                             Text("Logs")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -353,11 +354,11 @@ struct LogListView: View {
                                 .font(.title3)
                                 .fontWeight(.medium)
                                 .foregroundColor(.blue)
-                                .frame(minWidth: 50, alignment: .leading)
+                                .frame(minWidth: 50)
                         }
                         .frame(minWidth: 50)
 
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .center, spacing: 2) {
                             Text("Tests")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -365,12 +366,13 @@ struct LogListView: View {
                                 .font(.title3)
                                 .fontWeight(.medium)
                                 .foregroundColor(viewModel.testsColor)
-                                .frame(minWidth: 60, alignment: .leading)
+                                .frame(minWidth: 60)
                         }
                         .frame(minWidth: 60)
 
                         Spacer()
                     }
+                    .frame(maxWidth: .infinity)
                 }
                 }
                 .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")) * 2)

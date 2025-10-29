@@ -112,10 +112,9 @@ struct ToggleBar: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 10) {
             ForEach(items.indices, id: \.self) { index in
                 let item = items[index]
-                Spacer()
                 Button {
                     item.action()
                 } label: {
@@ -142,10 +141,11 @@ struct ToggleBar: View {
 
                         Spacer()
                     }
-                }.padding(10)
-                .glassEffect(.regular.tint(item.color.opacity(0.5)).interactive(), in: .capsule)
-                .padding(.vertical, 5)
-                Spacer()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(10)
+                    .glassEffect(.regular.tint(item.color.opacity(0.5)).interactive(), in: .capsule)
+                    .padding(10)
+                }
             }
         }
         .frame(height: height)
