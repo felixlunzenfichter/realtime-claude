@@ -22,7 +22,7 @@ if [ "$DEVICE_TYPE" = "iphone" ]; then
     DEVICE_NAME="iPhone 17 Pro Max"
     DEVICE_FAMILY=1
 elif [ "$DEVICE_TYPE" = "ipad" ]; then
-    DEVICECTL_ID=$(xcrun devicectl list devices | grep "iPad" | grep -v "Simulator" | head -1 | awk '{print $NF}')
+    DEVICECTL_ID=$(xcrun devicectl list devices | grep "iPad" | grep -v "Simulator" | head -1 | awk '{print $4}')
     DEVICE_NAME="iPad"
     DEVICE_FAMILY=2
 else
