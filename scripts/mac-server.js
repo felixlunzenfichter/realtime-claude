@@ -151,16 +151,15 @@ function findLatestConversationFile(dir) {
 
 function handlePromptMessage(socket, logData) {
     const { prompt, timestamp } = logData;
-    console.log(`\n📨 Received prompt from iOS app:`);
+    console.log(`📨 Received prompt from iOS app:`);
     console.log(`   Prompt: "${prompt}"`);
     console.log(`   Timestamp: ${new Date(timestamp * 1000).toLocaleString()}`);
 
-    const cleanedPrompt = prompt
-        .replace(/["']/g, '')
-        .replace(/\\/g, '\\\\');
-    console.log(`🧹 Cleaned prompt: "${cleanedPrompt}"`);
+    promptCounter++;
+    const promptId = `${promptCounter}:`;
+    console.log(`🔖 Assigned ID: ${promptId}`);
 
-    pendingPrompts.set(cleanedPrompt, {
+    pendingPrompts.set(promptId, {
         originalPrompt: prompt,
         timestamp: Date.now(),
         verified: false
@@ -195,7 +194,7 @@ EOF`;
                 };
 
                 socket.write(JSON.stringify(ackMessage) + '\n');
-                pendingPrompts.delete(cleanedPrompt);
+                pendingPrompts.delete(promptId);
             } else {
                 console.log('✅ ESC key sent to Terminal');
             }
@@ -204,7 +203,10 @@ EOF`;
         return;
     }
 
-    injectIntoTerminal(cleanedPrompt, (terminalSuccess, terminalError) => {
+    const promptWithId = `${promptId} ${prompt}`;
+    console.log(`💉 Injecting with ID: "${promptWithId}"`);
+
+    injectIntoTerminal(promptWithId, (terminalSuccess, terminalError) => {
         if (terminalSuccess) {
             console.log('✅ Terminal automation executed successfully!');
         } else {
@@ -222,7 +224,7 @@ EOF`;
             socket.write(jsonData);
             console.log('📤 Sent Terminal failure acknowledgment');
 
-            pendingPrompts.delete(cleanedPrompt);
+            pendingPrompts.delete(promptId);
         }
     });
 }
@@ -398,14 +400,7 @@ function handleLogMessage(socket, logData) {
 function handleErrorMessage(socket, logData) {
     reportErrorToConsole(logData);
     persistLogToFile(logData);
-
-    console.log('🔄 Error detected - executing deploy.sh to restart app...');
-    exec('./scripts/deploy.sh', (error, stdout, stderr) => {
-        if (error) {
-            console.error(`Failed to execute deploy.sh: ${error.message}`);
-        }
-    });
-
+    executeDeployment();
     confirmLogReception(socket, logData.id);
 }
 
@@ -444,11 +439,12 @@ function sendAcknowledgment(socket, logId) {
 }
 
 let pendingPrompts = new Map();
+let promptCounter = 0;
 
 function initializeClaudeMonitoring() {
     const claudeProjectsPath = path.join(process.env.HOME, '.claude', 'projects');
 
-    console.log('\n🔍 Initializing prompt detection monitoring...');
+    console.log('🔍 Initializing prompt detection monitoring...');
     console.log(`📁 Watching entire directory: ${claudeProjectsPath}`);
 
     const watcher = chokidar.watch(claudeProjectsPath, {
@@ -463,9 +459,7 @@ function initializeClaudeMonitoring() {
     });
 
     watcher.on('change', (filePath) => {
-        console.log(`\n🔄 File changed: ${filePath}`);
         if (filePath.endsWith('.jsonl')) {
-            console.log(`📝 Checking file for pending prompts...`);
             checkForInjectedPrompts(filePath);
         } else {
             console.log(`⏭️  Skipping non-jsonl file`);
@@ -486,8 +480,6 @@ function checkForInjectedPrompts(filePath) {
     try {
         const fileContent = fs.readFileSync(filePath, 'utf8');
         const lines = fileContent.trim().split('\n');
-
-        console.log(`\n📊 Total events in conversation: ${lines.length}`);
 
         const allUserEvents = [];
         for (const line of lines) {
@@ -525,27 +517,18 @@ function checkForInjectedPrompts(filePath) {
 
         const userEvents = allUserEvents.slice(-5);
 
-        console.log(`📋 Found ${allUserEvents.length} total user text messages`);
-        console.log(`🎯 Using last ${userEvents.length} user messages for verification\n`);
+        const lastMessage = userEvents.length > 0 ? userEvents[userEvents.length - 1].text.substring(0, 100).replace(/\n/g, ' ') : 'none';
 
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.log('📄 Last 5 user text messages:');
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        userEvents.forEach((event, index) => {
-            const preview = event.text.substring(0, 100).replace(/\n/g, ' ');
-            console.log(`[${index + 1}] "${preview}${event.text.length > 100 ? '...' : ''}"`);
-        });
-        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-
-        for (const [prompt, data] of pendingPrompts.entries()) {
+        for (const [promptId, data] of pendingPrompts.entries()) {
             if (!data.verified) {
-                console.log(`\n🔍 Checking pending prompt: "${prompt.substring(0, 60)}..."`);
+                console.log(`🔍 Checking pending prompt ID: ${promptId}`);
+                console.log(`   Original prompt: "${data.originalPrompt.substring(0, 60)}..."`);
 
                 let matchedIndex = -1;
                 let matchedEvent = null;
 
                 for (let i = 0; i < userEvents.length; i++) {
-                    if (userEvents[i].text.includes(prompt)) {
+                    if (userEvents[i].text.includes(promptId)) {
                         matchedIndex = i;
                         matchedEvent = userEvents[i];
                         break;
@@ -554,9 +537,8 @@ function checkForInjectedPrompts(filePath) {
 
                 if (matchedEvent) {
                     console.log(`✅ MATCH FOUND in message [${matchedIndex + 1}] of last 5 user messages!`);
-                    console.log(`   Matched text: "${matchedEvent.text.substring(0, 80).replace(/\n/g, ' ')}..."`);
-                    console.log(`   Prompt searched: "${prompt.substring(0, 80)}..."`);
-                    console.log(`   ✓ Newly injected message IS part of the last 5 relevant messages`);
+                    console.log(`   Found ID: ${promptId}`);
+                    console.log(`   Message preview: "${matchedEvent.text.substring(0, 80).replace(/\n/g, ' ')}..."`);
                     console.log('📍 Found in conversation events:', path.basename(filePath));
 
                     data.verified = true;
@@ -576,9 +558,9 @@ function checkForInjectedPrompts(filePath) {
                         console.log('✅ Prompt verified and acknowledged to iOS!');
                     }
 
-                    pendingPrompts.delete(prompt);
+                    pendingPrompts.delete(promptId);
                 } else {
-                    console.log(`❌ NOT FOUND in last 5 user messages`);
+                    console.log(`❌ ID ${promptId} NOT FOUND in last 5 user messages`);
                     console.log(`   Prompt may not have appeared in conversation yet`);
                 }
             }
@@ -587,15 +569,15 @@ function checkForInjectedPrompts(filePath) {
         const verifiedCount = Array.from(pendingPrompts.values()).filter(p => p.verified).length;
         const pendingCount = pendingPrompts.size - verifiedCount;
 
-        console.log(`\n📊 Prompt Status: ${verifiedCount} verified, ${pendingCount} pending`);
+        console.log(`🔄 ${lines.length} events | ${verifiedCount} verified, ${pendingCount} pending | Last: "${lastMessage}${userEvents.length > 0 && userEvents[userEvents.length - 1].text.length > 100 ? '...' : ''}"`);
 
         if (pendingCount > 0) {
-            console.log(`\n⏳ Pending prompts:`);
+            console.log(`⏳ Pending prompts:`);
             let index = 1;
-            for (const [prompt, data] of pendingPrompts.entries()) {
+            for (const [promptId, data] of pendingPrompts.entries()) {
                 if (!data.verified) {
-                    console.log(`   [${index}] "${prompt.substring(0, 100)}..."`);
-                    console.log(`       Original: "${data.originalPrompt.substring(0, 100)}..."`);
+                    console.log(`   [${index}] ID: ${promptId}`);
+                    console.log(`       Prompt: "${data.originalPrompt.substring(0, 100)}..."`);
                     console.log(`       Age: ${Math.round((Date.now() - data.timestamp) / 1000)}s`);
                     index++;
                 }
@@ -607,54 +589,101 @@ function checkForInjectedPrompts(filePath) {
     }
 }
 
+function executeDeployment() {
+    console.log('🚀 Executing deployment in scripts window...');
+
+    exec('./scripts/deploy-in-window.sh', (error, stdout, stderr) => {
+        if (error) {
+            console.error(`Failed to execute deployment: ${error.message}`);
+        }
+    });
+}
+
+function switchToWindow(windowNamePattern, callback) {
+    console.log(`🪟 Switching to Terminal window containing: "${windowNamePattern}"`);
+
+    const appleScriptCommand = `osascript <<'EOF'
+        tell application "Terminal"
+            activate
+            repeat with w from 1 to count of windows
+                if name of window w contains "${windowNamePattern}" then
+                    set index of window w to 1
+                    return "success: Switched to window " & w
+                end if
+            end repeat
+            return "error: No window found containing '${windowNamePattern}'"
+        end tell
+EOF`;
+
+    exec(appleScriptCommand, (error, stdout, stderr) => {
+        if (error) {
+            console.log(`   ❌ Failed to switch window: ${error.message}`);
+            callback(false, error.message);
+        } else if (stdout.includes('error:')) {
+            console.log(`   ❌ ${stdout.trim()}`);
+            callback(false, stdout.trim());
+        } else {
+            console.log(`   ✅ ${stdout.trim()}`);
+            callback(true);
+        }
+    });
+}
+
 function injectIntoTerminal(prompt, callback) {
     const escapedPrompt = prompt;
 
     console.log(`🔤 Injecting prompt into Terminal: "${escapedPrompt}"`);
 
-    const appleScriptCommand = `osascript <<'EOF'
-        tell application "Terminal"
-            activate
-        end tell
+    switchToWindow('claude', (switchSuccess, switchError) => {
+        if (!switchSuccess) {
+            console.log(`⚠️ Failed to switch to Claude Code window: ${switchError}`);
+            console.log(`📝 Proceeding with injection anyway...`);
+        }
 
-        delay 0.2
-
-        tell application "System Events"
-            tell process "Terminal"
-                set frontmost to true
-
-                try
-                    perform action "AXRaise" of window 1
-                end try
-
-                keystroke "${escapedPrompt}"
-
-                delay 1
-
-                key code 36
-
-                return "success: Typed into Terminal (macOS 26 enhanced method)"
+        const appleScriptCommand = `osascript <<'EOF'
+            tell application "Terminal"
+                activate
             end tell
-        end tell
+
+            delay 0.2
+
+            tell application "System Events"
+                tell process "Terminal"
+                    set frontmost to true
+
+                    try
+                        perform action "AXRaise" of window 1
+                    end try
+
+                    keystroke "${escapedPrompt}"
+
+                    delay 1
+
+                    key code 36
+
+                    return "success: Typed into Terminal (macOS 26 enhanced method)"
+                end tell
+            end tell
 EOF`;
 
-    console.log('🍎 Executing enhanced AppleScript for macOS 26 Tahoe...');
+        console.log('🍎 Executing enhanced AppleScript for macOS 26 Tahoe...');
 
-    exec(appleScriptCommand, (error, stdout, stderr) => {
-        console.log('📝 AppleScript result:');
-        if (error) {
-            console.log(`   Error: ${error.message}`);
-            console.log(`   Note: Ensure Terminal has Accessibility permissions in System Settings`);
-            callback(false, `AppleScript error: ${error.message}`);
-        } else if (stderr) {
-            console.log(`   Stderr: ${stderr}`);
-            callback(false, `AppleScript stderr: ${stderr}`);
-        } else if (stdout.includes('error:')) {
-            console.log(`   Output: ${stdout.trim()}`);
-            callback(false, stdout.trim());
-        } else {
-            console.log(`   Success: ${stdout.trim()}`);
-            callback(true);
-        }
+        exec(appleScriptCommand, (error, stdout, stderr) => {
+            console.log('📝 AppleScript result:');
+            if (error) {
+                console.log(`   Error: ${error.message}`);
+                console.log(`   Note: Ensure Terminal has Accessibility permissions in System Settings`);
+                callback(false, `AppleScript error: ${error.message}`);
+            } else if (stderr) {
+                console.log(`   Stderr: ${stderr}`);
+                callback(false, `AppleScript stderr: ${stderr}`);
+            } else if (stdout.includes('error:')) {
+                console.log(`   Output: ${stdout.trim()}`);
+                callback(false, stdout.trim());
+            } else {
+                console.log(`   Success: ${stdout.trim()}`);
+                callback(true);
+            }
+        });
     });
 }
