@@ -399,10 +399,16 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
 
     func handleResponseDoneEvent(_ json: [String: Any]) {
         log("response.done received")
-        markResponseComplete()
+        if isResponseActive {
+            log("response.done: Response still active, marking complete (audio response)")
+            markResponseComplete()
+        } else {
+            log("response.done: Response already completed (was function call)")
+        }
     }
 
     func markResponseComplete() {
+        log("✅ markResponseComplete() called")
         responseQueueThread.async { [weak self] in
             self?.isResponseActive = false
             if self?.apiStateSubject.value == .processing {
@@ -479,9 +485,16 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             return
         }
 
+
         let filteredTranscription = transcription
-            .replacingOccurrences(of: "\"", with: "")
-            .replacingOccurrences(of: "'", with: "")
+            .replacingOccurrences(of: "\u{201C}", with: "")
+            .replacingOccurrences(of: "\u{201D}", with: "")
+            .replacingOccurrences(of: "\u{2018}", with: "")
+            .replacingOccurrences(of: "\u{2019}", with: "")
+
+        if filteredTranscription != transcription {
+            debugLog(id: "transcriptionFiltered", message: "Filtered transcription: \(filteredTranscription)")
+        }
 
         let currentValue = lastPromptSubject.value
         let newValue: String
@@ -535,6 +548,10 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             if type == "function_call" {
                 log("🟣 Setting API state to .processing (from handleConversationItemAdded)")
                 apiStateSubject.send(.processing)
+            }
+
+            if type == "function_call_output" {
+                markResponseComplete()
             }
         }
     }
@@ -607,6 +624,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func handleResponseOutputItemDone() {
+        
         log("Response output item done")
     }
 
