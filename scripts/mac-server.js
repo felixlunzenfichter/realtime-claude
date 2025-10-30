@@ -5,13 +5,11 @@ const { exec, spawn } = require('child_process');
 const chokidar = require('chokidar');
 
 process.on('uncaughtException', (error) => {
-    console.error(`💥 FATAL: Mac Server crashed! ${error}\n❌ Server must be reliable - this is unacceptable!`);
-    process.exit(1);
+    console.error(`⚠️ Uncaught exception (continuing): ${error.stack || error}`);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-    console.error(`💥 FATAL: Unhandled promise rejection! ${reason}\n❌ All promises must be handled - exiting!`);
-    process.exit(1);
+    console.error(`⚠️ Unhandled promise rejection (continuing): ${reason}`);
 });
 
 const logsDir = path.join('private', 'logs');
@@ -26,19 +24,23 @@ const server = net.createServer((socket) => {
     let buffer = '';
 
     socket.on('data', (data) => {
-        buffer += data.toString();
-        buffer = processBufferedData(socket, buffer);
+        try {
+            buffer += data.toString();
+            buffer = processBufferedData(socket, buffer);
+        } catch (error) {
+            console.error(`⚠️ Error processing data (continuing): ${error.message}`);
+        }
     });
 
     socket.on('end', () => {
-        console.log('iOS client disconnected');
+        console.log('iOS client disconnected - waiting for reconnection...');
         if (activeSocket === socket) {
             activeSocket = null;
         }
     });
 
     socket.on('error', (err) => {
-        console.log('Socket error:', err.message);
+        console.error(`⚠️ Socket error (continuing): ${err.message}`);
     });
 });
 
@@ -200,6 +202,18 @@ EOF`;
                     pendingPrompts.delete(promptId);
                 } else {
                     console.log('✅ ESC key sent to Terminal');
+
+                    const ackMessage = {
+                        type: 'prompt_ack',
+                        status: 'success',
+                        method: 'interrupt_esc_sent',
+                        originalPrompt: prompt,
+                        timestamp: Date.now()
+                    };
+
+                    socket.write(JSON.stringify(ackMessage) + '\n');
+                    pendingPrompts.delete(promptId);
+                    console.log('✅ Interrupt acknowledged to iOS!');
                 }
             });
         });
@@ -234,9 +248,13 @@ EOF`;
 }
 
 function createNewSession() {
-    currentSessionNumber = getSessionCount() + 1;
-    currentSessionFile = path.join(logsDir, `${currentSessionNumber}.json`);
-    fs.writeFileSync(currentSessionFile, '');
+    try {
+        currentSessionNumber = getSessionCount() + 1;
+        currentSessionFile = path.join(logsDir, `${currentSessionNumber}.json`);
+        fs.writeFileSync(currentSessionFile, '');
+    } catch (error) {
+        console.error(`⚠️ Failed to create session file (continuing): ${error.message}`);
+    }
 }
 
 function gatherSessionStatistics() {
@@ -427,19 +445,27 @@ function getSessionCount() {
 
 function writeLogToFile(logData) {
     if (!currentSessionFile) {
-        console.error('No active session file!');
+        console.error('⚠️ No active session file!');
         return;
     }
-    fs.appendFileSync(currentSessionFile, JSON.stringify(logData) + '\n');
+    try {
+        fs.appendFileSync(currentSessionFile, JSON.stringify(logData) + '\n');
+    } catch (error) {
+        console.error(`⚠️ Failed to write log (continuing): ${error.message}`);
+    }
 }
 
 function sendAcknowledgment(socket, logId) {
-    const ackMessage = JSON.stringify({
-        type: 'ack',
-        logId: logId
-    }) + '\n';
+    try {
+        const ackMessage = JSON.stringify({
+            type: 'ack',
+            logId: logId
+        }) + '\n';
 
-    socket.write(ackMessage);
+        socket.write(ackMessage);
+    } catch (error) {
+        console.error(`⚠️ Failed to send acknowledgment (continuing): ${error.message}`);
+    }
 }
 
 let pendingPrompts = new Map();

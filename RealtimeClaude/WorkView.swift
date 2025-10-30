@@ -467,7 +467,7 @@ class WorkViewModel {
                 }
                 self?.updateMessageStatus(statusUpdate.prompt, status: messageStatus)
 
-                if statusUpdate.prompt == INTERRUPT_MESSAGE && messageStatus == .injected {
+                if messageStatus == .injected {
                     self?.removePendingInterrupts()
                 }
             }
