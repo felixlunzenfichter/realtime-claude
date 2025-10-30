@@ -1,7 +1,7 @@
 const net = require('net');
 const fs = require('fs');
 const path = require('path');
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const chokidar = require('chokidar');
 
 process.on('uncaughtException', (error) => {
@@ -166,35 +166,42 @@ function handlePromptMessage(socket, logData) {
     if (prompt === '[Request interrupted by user]') {
         console.log('🛑 Detected stop signal - sending ESC instead of typing text');
 
-        const escapeCommand = `osascript <<'EOF'
-            tell application "Terminal"
-                activate
-            end tell
+        switchToWindow('claude', (switchSuccess, switchError) => {
+            if (!switchSuccess) {
+                console.log(`⚠️ Failed to switch to Claude Code window: ${switchError}`);
+                console.log(`📝 Proceeding with interrupt anyway...`);
+            }
 
-            delay 0.2
+            const escapeCommand = `osascript <<'EOF'
+                tell application "Terminal"
+                    activate
+                end tell
 
-            tell application "System Events"
-                key code 53
-            end tell
+                delay 0.2
+
+                tell application "System Events"
+                    key code 53
+                end tell
 EOF`;
 
-        exec(escapeCommand, (error, stdout, stderr) => {
-            if (error) {
-                console.log(`❌ Failed to send ESC: ${error.message}`);
+            exec(escapeCommand, (error, stdout, stderr) => {
+                if (error) {
+                    console.log(`❌ Failed to send ESC: ${error.message}`);
 
-                const ackMessage = {
-                    type: 'prompt_ack',
-                    status: 'error',
-                    error: `Failed to send ESC: ${error.message}`,
-                    originalPrompt: prompt,
-                    timestamp: Date.now()
-                };
+                    const ackMessage = {
+                        type: 'prompt_ack',
+                        status: 'error',
+                        error: `Failed to send ESC: ${error.message}`,
+                        originalPrompt: prompt,
+                        timestamp: Date.now()
+                    };
 
-                socket.write(JSON.stringify(ackMessage) + '\n');
-                pendingPrompts.delete(promptId);
-            } else {
-                console.log('✅ ESC key sent to Terminal');
-            }
+                    socket.write(JSON.stringify(ackMessage) + '\n');
+                    pendingPrompts.delete(promptId);
+                } else {
+                    console.log('✅ ESC key sent to Terminal');
+                }
+            });
         });
 
         return;
@@ -583,11 +590,13 @@ function checkForInjectedPrompts(filePath) {
 function executeDeployment() {
     console.log('🚀 Executing deployment in scripts window...');
 
-    exec('./scripts/deploy-in-window.sh', (error, stdout, stderr) => {
-        if (error) {
-            console.error(`Failed to execute deployment: ${error.message}`);
-        }
+    const child = spawn('./scripts/deploy-in-window.sh', [], {
+        detached: true,
+        stdio: 'ignore'
     });
+
+    child.unref();
+    console.log('✅ Deployment process spawned and detached');
 }
 
 function switchToWindow(windowNamePattern, callback) {

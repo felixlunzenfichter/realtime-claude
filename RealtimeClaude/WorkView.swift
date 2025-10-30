@@ -19,7 +19,7 @@ struct TiltProgressBar: View {
             Spacer()
         }
         .frame(width: ACTUAL_SCREEN_WIDTH * (progress / 100) - 1, height: 10)
-        .glassEffect(.regular.tint(fillColor.opacity(0.5)), in: .capsule)
+        .glassEffect(.clear.tint(fillColor.opacity(0.5)), in: .capsule)
     }
 }
 
@@ -130,7 +130,7 @@ struct ToggleBar: View {
                     VStack(spacing: 5) {
                         if let icon = item.icon {
                             Image(systemName: icon)
-                                .font(.system(size: item.isOn == nil ? 30 : 15, weight: .semibold))
+                                .font(.system(size: 30, weight: .semibold))
                                 .foregroundColor(item.color)
                         }
 
@@ -140,19 +140,10 @@ struct ToggleBar: View {
                                 .foregroundColor(item.color)
                         }
 
-                        if let isOn = item.isOn {
-                            Toggle(isOn: isOn) {
-                                EmptyView()
-                            }
-                            .toggleStyle(SwitchToggleStyle(tint: item.color))
-                            .labelsHidden()
-                        }
-
                         Spacer()
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(10)
-                    .glassEffect(.regular.tint(item.color.opacity(0.5)).interactive(), in: .capsule)
+                    .glassEffect(.regular.tint(item.color.opacity(item.isOn?.wrappedValue == true ? 0.5 : 0.1)).interactive(), in: .capsule)
                     .padding(10)
                 }
             }
@@ -332,8 +323,9 @@ struct WorkView: View {
                     Spacer()
 
                     ZStack(alignment: .center) {
-                        TiltProgressBar(progress: viewModel.tiltProgress, fillColor: viewModel.currentRecordingStatus == .disconnected ? .red : .blue)
-                        TiltProgressBar(progress: viewModel.recordingProgress, fillColor: viewModel.currentRecordingStatus.color)
+                        TiltProgressBar(progress: viewModel.firstTiltProgress, fillColor: viewModel.currentRecordingStatus == .disconnected ? .red : .blue)
+                        TiltProgressBar(progress: viewModel.secondTiltProgress, fillColor: viewModel.currentRecordingStatus == .disconnected ? .red : .green)
+                        TiltProgressBar(progress: viewModel.thirdTiltProgress, fillColor: viewModel.currentRecordingStatus == .disconnected ? .red : viewModel.currentRecordingStatus.color)
                     }
                 }
                 .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")) * 2)
@@ -391,13 +383,19 @@ class WorkViewModel {
     var roll: Double = 0
     private var turningOnRecording = false
 
-    var tiltProgress: Double {
+    var firstTiltProgress: Double {
         let pitchDegrees = pitch * (180 / .pi)
-        let percentage = (90 - pitchDegrees) / 135 * 100
+        let percentage = (90 - pitchDegrees) / 90 * 100
         return max(0, min(100, percentage))
     }
 
-    var recordingProgress: Double {
+    var secondTiltProgress: Double {
+        let pitchDegrees = pitch * (180 / .pi)
+        let percentage = (-pitchDegrees) / 45 * 100
+        return max(0, min(100, percentage))
+    }
+
+    var thirdTiltProgress: Double {
         let pitchDegrees = pitch * (180 / .pi)
         let percentage = ((-pitchDegrees) - 45) / 45 * 100
         return max(0, min(100, percentage))
@@ -468,6 +466,10 @@ class WorkViewModel {
                     messageStatus = .notSent
                 }
                 self?.updateMessageStatus(statusUpdate.prompt, status: messageStatus)
+
+                if statusUpdate.prompt == INTERRUPT_MESSAGE && messageStatus == .injected {
+                    self?.removePendingInterrupts()
+                }
             }
             .store(in: &cancellables)
     }
@@ -532,7 +534,7 @@ class WorkViewModel {
 
 
     func addMessage(_ content: String) {
-        if let index = messages.firstIndex(where: { $0.status == .notSent }) {
+        if let index = messages.firstIndex(where: { $0.status != .injected }) {
             messages[index].content = content
             log("📝 Replaced message content (status: \(messages[index].status)) - \(content)")
         } else {
@@ -592,6 +594,12 @@ class WorkViewModel {
         interrupts.insert(interrupt, at: 0)
 
         log("🛑 Added interrupt signal to conversation")
+    }
+
+    func removePendingInterrupts() {
+        let removedCount = interrupts.filter { $0.status != .injected }.count
+        interrupts.removeAll { $0.status != .injected }
+        log("🗑️ Removed \(removedCount) pending interrupt(s) after successful interrupt execution")
     }
 
     func stopClaudeCode() {

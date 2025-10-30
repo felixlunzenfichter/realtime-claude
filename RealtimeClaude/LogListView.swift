@@ -399,6 +399,22 @@ struct LogListView: View {
 
                 ToggleBar(items: [
                     ToggleBar.ToggleItem(
+                        color: .purple,
+                        isOn: .constant(false),
+                        icon: "arrow.clockwise",
+                        action: {
+                            error("Manual restart triggered from log view")
+                        }
+                    ),
+                    ToggleBar.ToggleItem(
+                        color: .red,
+                        isOn: $viewModel.showErrorLogs,
+                        text: "\(viewModel.errorLogsCount)",
+                        action: {
+                            viewModel.showErrorLogs.toggle()
+                        }
+                    ),
+                    ToggleBar.ToggleItem(
                         color: .orange,
                         isOn: $viewModel.showDebugLogs,
                         text: "\(viewModel.debugLogs.count)",
@@ -415,17 +431,9 @@ struct LogListView: View {
                         }
                     ),
                     ToggleBar.ToggleItem(
-                        color: .red,
-                        isOn: $viewModel.showErrorLogs,
-                        text: "\(viewModel.errorLogsCount)",
-                        action: {
-                            viewModel.showErrorLogs.toggle()
-                        }
-                    ),
-                    ToggleBar.ToggleItem(
                         color: .blue,
                         isOn: $showLogs,
-                        icon: "eye.slash",
+                        icon: "xmark",
                         action: {
                             showLogs.toggle()
                         }
