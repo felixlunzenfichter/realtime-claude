@@ -43,10 +43,7 @@ const server = net.createServer((socket) => {
 });
 
 server.listen(8082, '0.0.0.0', () => {
-    console.log('Mac server listening on port 8082');
-    console.log('Waiting for iOS connections...');
-    console.log('Logs directory:', logsDir);
-    console.log('Existing sessions:', getSessionCount());
+    console.log(`Mac server listening on :8082 | ${getSessionCount()} sessions`);
 
     initializeClaudeMonitoring();
 });
@@ -444,9 +441,6 @@ let promptCounter = 0;
 function initializeClaudeMonitoring() {
     const claudeProjectsPath = path.join(process.env.HOME, '.claude', 'projects');
 
-    console.log('🔍 Initializing prompt detection monitoring...');
-    console.log(`📁 Watching entire directory: ${claudeProjectsPath}`);
-
     const watcher = chokidar.watch(claudeProjectsPath, {
         persistent: true,
         ignoreInitial: true,
@@ -471,8 +465,7 @@ function initializeClaudeMonitoring() {
     });
 
     watcher.on('ready', () => {
-        console.log('✅ Prompt monitoring active');
-        console.log('📊 Watching for any file changes in entire directory tree...');
+        console.log(`✅ Prompt monitoring active on ${claudeProjectsPath}`);
     });
 }
 
@@ -568,8 +561,6 @@ function checkForInjectedPrompts(filePath) {
 
         const verifiedCount = Array.from(pendingPrompts.values()).filter(p => p.verified).length;
         const pendingCount = pendingPrompts.size - verifiedCount;
-
-        console.log(`🔄 ${lines.length} events | ${verifiedCount} verified, ${pendingCount} pending | Last: "${lastMessage}${userEvents.length > 0 && userEvents[userEvents.length - 1].text.length > 100 ? '...' : ''}"`);
 
         if (pendingCount > 0) {
             console.log(`⏳ Pending prompts:`);

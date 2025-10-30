@@ -18,7 +18,7 @@ struct TiltProgressBar: View {
         VStack {
             Spacer()
         }
-        .frame(width: ACTUAL_SCREEN_WIDTH * (progress / 100), height: 10)
+        .frame(width: ACTUAL_SCREEN_WIDTH * (progress / 100) - 1, height: 10)
         .glassEffect(.regular.tint(fillColor.opacity(0.5)), in: .capsule)
     }
 }
@@ -75,6 +75,15 @@ enum MessageStatus {
         case .sent: return "Sending..."
         case .injected: return ""
         case .failed: return "Failed ✗"
+        }
+    }
+
+    var sortPriority: Int {
+        switch self {
+        case .failed: return 0
+        case .notSent: return 1
+        case .sent: return 2
+        case .injected: return 3
         }
     }
 }
@@ -227,6 +236,14 @@ struct WorkView: View {
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
                                 .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                                .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                                    Button {
+                                        viewModel.sendMessage(message.content)
+                                    } label: {
+                                        Label("Send", systemImage: "paperplane.fill")
+                                    }
+                                    .tint(.blue)
+                                }
                                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                     Button(role: .destructive) {
                                         viewModel.deleteMessage(message.id)
@@ -364,7 +381,9 @@ class WorkViewModel {
     var interrupts: [Message] = []
 
     var allMessages: [Message] {
-        (messages + interrupts).sorted { $0.timestamp > $1.timestamp }
+        (messages + interrupts)
+            .sorted { $0.timestamp > $1.timestamp }
+            .sorted { $0.status.sortPriority < $1.status.sortPriority }
     }
 
     private let motionManager = CMMotionManager()
@@ -538,25 +557,29 @@ class WorkViewModel {
         }
     }
 
+    func sendMessage(_ content: String) {
+        log("📤 Manually sending message: \(content)")
+        logger.sendPromptToMac(content)
+    }
+
     func deleteMessage(_ id: UUID) {
         if let index = messages.firstIndex(where: { $0.id == id }) {
             let message = messages[index]
 
             if index == 0 && message.status != .injected {
                 realtimeAPI.clearAccumulatedPrompts()
-
-                messages.remove(at: index)
                 log("🗑️ Deleted current message and cleared accumulated prompts")
-            } else if message.status == .injected {
-                log("⚠️ Cannot delete successfully injected message")
             } else {
-                log("⚠️ Can only delete the current (first) message")
+                log("🗑️ Deleted message")
             }
+
+            messages.remove(at: index)
             return
         }
 
-        if interrupts.firstIndex(where: { $0.id == id }) != nil {
-            log("⚠️ Cannot delete interrupt signals")
+        if let index = interrupts.firstIndex(where: { $0.id == id }) {
+            interrupts.remove(at: index)
+            log("🗑️ Deleted interrupt signal")
         }
     }
 

@@ -52,21 +52,55 @@ echo ""
 # Create temporary file for build output
 BUILD_LOG=$(mktemp)
 
-/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild clean -project RealtimeClaude.xcodeproj -scheme RealtimeClaude -destination "generic/platform=iOS" TARGETED_DEVICE_FAMILY=$DEVICE_FAMILY > /dev/null 2>&1
-
-# Redirect build output to temporary file
+# Try build without clean first (faster)
 if /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild build -project RealtimeClaude.xcodeproj -scheme RealtimeClaude -destination "generic/platform=iOS" CODE_SIGN_IDENTITY="Apple Development" TARGETED_DEVICE_FAMILY=$DEVICE_FAMILY > "$BUILD_LOG" 2>&1; then
-    # Build succeeded - print one-liner
+    # Build succeeded
     echo "   ✅ Build successful"
+
+    # Check for warnings even on success
+    if grep -q "warning:" "$BUILD_LOG"; then
+        echo ""
+        echo "   ⚠️  Warnings:"
+        grep "warning:" "$BUILD_LOG"
+        echo ""
+    fi
+
     rm "$BUILD_LOG"
 else
-    # Build failed - print errors first, then warnings
+    # Build failed - show errors and warnings
     echo "   ❌ Build failed - showing errors and warnings:"
     echo ""
     grep "error:" "$BUILD_LOG" || true
     grep "warning:" "$BUILD_LOG" || true
-    rm "$BUILD_LOG"
-    exit 1
+    echo ""
+
+    # Try clean and rebuild
+    echo "   ⚠️  Trying clean build..."
+    echo ""
+
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild clean -project RealtimeClaude.xcodeproj -scheme RealtimeClaude -destination "generic/platform=iOS" TARGETED_DEVICE_FAMILY=$DEVICE_FAMILY > /dev/null 2>&1
+
+    if /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild build -project RealtimeClaude.xcodeproj -scheme RealtimeClaude -destination "generic/platform=iOS" CODE_SIGN_IDENTITY="Apple Development" TARGETED_DEVICE_FAMILY=$DEVICE_FAMILY > "$BUILD_LOG" 2>&1; then
+        echo "   ✅ Clean build successful"
+
+        # Check for warnings even on success
+        if grep -q "warning:" "$BUILD_LOG"; then
+            echo ""
+            echo "   ⚠️  Warnings:"
+            grep "warning:" "$BUILD_LOG"
+            echo ""
+        fi
+
+        rm "$BUILD_LOG"
+    else
+        # Clean build also failed - print errors and exit
+        echo "   ❌ Clean build also failed - showing errors and warnings:"
+        echo ""
+        grep "error:" "$BUILD_LOG" || true
+        grep "warning:" "$BUILD_LOG" || true
+        rm "$BUILD_LOG"
+        exit 1
+    fi
 fi
 
 APP_PATH="/Users/felixlunzenfichter/Library/Developer/Xcode/DerivedData/RealtimeClaude-bbutrzksxnlhcedrvawihvkjxxkh/Build/Products/Debug-iphoneos/RealtimeClaude.app"

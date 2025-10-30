@@ -50,14 +50,12 @@ Each task = 3 commits:
 ## Run
 
 ```bash
-./scripts/deploy.sh
+./scripts/deploy-in-window.sh
 ```
 
-After making any code changes, always run this script to build, deploy, and run the app.
+**ALWAYS use deploy-in-window.sh, NEVER run deploy.sh directly from Claude Code.**
 
-Optional: Specify device type (defaults to iphone):
-```bash
-./scripts/deploy.sh iphone  # Deploy to iPhone
-./scripts/deploy.sh ipad    # Deploy to iPad
-```
+Why: deploy.sh blocks the current process. If interrupted, it kills Claude Code. The deploy-in-window.sh script switches to the scripts Terminal window and executes deployment there, allowing you to interrupt it without killing everything.
+
+After making any code changes, always run deploy-in-window.sh to build, deploy, and run the app.
 
