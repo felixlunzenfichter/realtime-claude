@@ -480,17 +480,12 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             return
         }
 
-        let transcription: String
-
-        if let deltaTranscription = dict["deltaTranscription"] as? String {
-            transcription = deltaTranscription
-        } else if let firstKey = dict.keys.first,
-                  let firstValue = dict[firstKey] as? String {
-            transcription = firstValue
-        } else {
-            error("No usable value found in function arguments. Name: \(name), Raw arguments: \(arguments)")
+        guard let deltaTranscription = dict["deltaTranscription"] as? String else {
+            log("Discarding transcription. Dictionary: \(dict)")
             return
         }
+
+        let transcription = deltaTranscription
 
         let filteredTranscription = transcription
             .replacingOccurrences(of: "\u{201C}", with: "")
