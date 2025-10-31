@@ -7,11 +7,22 @@ let INTERRUPT_MESSAGE = "[Request interrupted by user]"
 
 struct TiltProgressBar: View {
     let progress: Double
-    let fillColor: Color
+    let normalColor: Color
+    let currentStatus: RecordingStatus
 
-    init(progress: Double, fillColor: Color = .blue) {
+    init(progress: Double, normalColor: Color, currentStatus: RecordingStatus) {
         self.progress = progress
-        self.fillColor = fillColor
+        self.normalColor = normalColor
+        self.currentStatus = currentStatus
+    }
+
+    var fillColor: Color {
+        if currentStatus == .disconnected {
+            return .red
+        } else if currentStatus == .restarting {
+            return .gray
+        }
+        return normalColor
     }
 
     var body: some View {
@@ -30,6 +41,7 @@ enum RecordingStatus {
     case speechDetected
     case speechStopped
     case processing
+    case restarting
 
     var color: Color {
         switch self {
@@ -39,6 +51,7 @@ enum RecordingStatus {
         case .speechDetected: return .yellow
         case .speechStopped: return .orange
         case .processing: return .purple
+        case .restarting: return .gray
         }
     }
 
@@ -50,6 +63,7 @@ enum RecordingStatus {
         case .speechDetected: return "Voice Activity Detected"
         case .speechStopped: return "Voice Activity Stopped"
         case .processing: return "Processing..."
+        case .restarting: return "Restarting..."
         }
     }
 }
@@ -323,9 +337,9 @@ struct WorkView: View {
                     Spacer()
 
                     ZStack(alignment: .center) {
-                        TiltProgressBar(progress: viewModel.firstTiltProgress, fillColor: viewModel.currentRecordingStatus == .disconnected ? .red : .blue)
-                        TiltProgressBar(progress: viewModel.secondTiltProgress, fillColor: viewModel.currentRecordingStatus == .disconnected ? .red : .green)
-                        TiltProgressBar(progress: viewModel.thirdTiltProgress, fillColor: viewModel.currentRecordingStatus == .disconnected ? .red : viewModel.currentRecordingStatus.color)
+                        TiltProgressBar(progress: viewModel.firstTiltProgress, normalColor: .blue, currentStatus: viewModel.currentRecordingStatus)
+                        TiltProgressBar(progress: viewModel.secondTiltProgress, normalColor: .green, currentStatus: viewModel.currentRecordingStatus)
+                        TiltProgressBar(progress: viewModel.thirdTiltProgress, normalColor: viewModel.currentRecordingStatus.color, currentStatus: viewModel.currentRecordingStatus)
                     }
                 }
                 .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")) * 2)
@@ -421,6 +435,8 @@ class WorkViewModel {
                     self.currentRecordingStatus = .speechStopped
                 case .processing:
                     self.currentRecordingStatus = .processing
+                case .restarting:
+                    self.currentRecordingStatus = .restarting
                 }
             }
             .store(in: &cancellables)

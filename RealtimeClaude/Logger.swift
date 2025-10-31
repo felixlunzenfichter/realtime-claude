@@ -331,23 +331,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     }
 
     private func showRestartAlert(fileName: String, functionName: String, message: String) {
-        DispatchQueue.main.async {
-            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                  let rootViewController = windowScene.windows.first?.rootViewController else {
-                log("Cannot show alert - no root view controller")
-                return
-            }
-
-            let alert = UIAlertController(
-                title: "Restarting App",
-                message: "\(fileName) → \(functionName)\n\n\(message)",
-                preferredStyle: .alert
-            )
-
-            rootViewController.present(alert, animated: true)
-        }
-
-        log("Restarting app due to error: \(message)")
+        realtimeAPI.restart()
     }
 
     private func handleHandshakeMessage(_ jsonData: [String: Any]) {

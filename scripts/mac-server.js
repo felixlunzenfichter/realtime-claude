@@ -158,13 +158,6 @@ function handlePromptMessage(socket, logData) {
     const promptId = `${promptCounter}:`;
     console.log(`🔖 Assigned ID: ${promptId}`);
 
-    pendingPrompts.set(promptId, {
-        originalPrompt: prompt,
-        timestamp: Date.now(),
-        verified: false
-    });
-    console.log(`📝 Added prompt to tracking (${pendingPrompts.size} total)`);
-
     if (prompt === '[Request interrupted by user]') {
         console.log('🛑 Detected stop signal - sending ESC instead of typing text');
 
@@ -199,7 +192,6 @@ EOF`;
                     };
 
                     socket.write(JSON.stringify(ackMessage) + '\n');
-                    pendingPrompts.delete(promptId);
                 } else {
                     console.log('✅ ESC key sent to Terminal');
 
@@ -212,7 +204,6 @@ EOF`;
                     };
 
                     socket.write(JSON.stringify(ackMessage) + '\n');
-                    pendingPrompts.delete(promptId);
                     console.log('✅ Interrupt acknowledged to iOS!');
                 }
             });
@@ -220,6 +211,13 @@ EOF`;
 
         return;
     }
+
+    pendingPrompts.set(promptId, {
+        originalPrompt: prompt,
+        timestamp: Date.now(),
+        verified: false
+    });
+    console.log(`📝 Added prompt to tracking (${pendingPrompts.size} total)`);
 
     const promptWithId = `${promptId} ${prompt}`;
     console.log(`💉 Injecting with ID: "${promptWithId}"`);
@@ -614,15 +612,22 @@ function checkForInjectedPrompts(filePath) {
 }
 
 function executeDeployment() {
-    console.log('🚀 Executing deployment in scripts window...');
+    exec('pgrep -f "deploy-in-window.sh"', (error, stdout) => {
+        if (stdout.trim()) {
+            console.log('⚠️ Deployment already in progress, skipping duplicate restart');
+            return;
+        }
 
-    const child = spawn('./scripts/deploy-in-window.sh', [], {
-        detached: true,
-        stdio: 'ignore'
+        console.log('🚀 Executing deployment in scripts window...');
+
+        const child = spawn('./scripts/deploy-in-window.sh', [], {
+            detached: true,
+            stdio: 'ignore'
+        });
+
+        child.unref();
+        console.log('✅ Deployment process spawned and detached');
     });
-
-    child.unref();
-    console.log('✅ Deployment process spawned and detached');
 }
 
 function switchToWindow(windowNamePattern, callback) {

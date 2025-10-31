@@ -8,6 +8,7 @@ enum APIState {
     case speechDetected
     case speechStopped
     case processing
+    case restarting
 }
 
 protocol RealtimeAPIProtocol: Sendable {
@@ -19,6 +20,7 @@ protocol RealtimeAPIProtocol: Sendable {
     func acknowledgeSuccessfulInterruptExecution()
     func clearAccumulatedPrompts()
     func processInputAudioBuffer(_ data: Data)
+    func restart()
 }
 
 nonisolated(unsafe) let realtimeAPI: RealtimeAPIProtocol = RealtimeAPI()
@@ -93,10 +95,8 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                     webSocketTask: URLSessionWebSocketTask,
                     didCloseWith closeCode: URLSessionWebSocketTask.CloseCode,
                     reason: Data?) {
-        error("WebSocket delegate: Connection closed with code \(closeCode.rawValue)")
-        if let reason = reason, let reasonString = String(data: reason, encoding: .utf8) {
-            error("Close reason: \(reasonString)")
-        }
+        apiStateSubject.send(.disconnected)
+        log("Disconnected from Realtime API")
     }
 
     func receiveMessage() {
@@ -749,6 +749,11 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     func clearAccumulatedPrompts() {
         lastPromptSubject.send("")
         log("🗑️ Manually cleared accumulated prompts")
+    }
+
+    func restart() {
+        log("Restarting app")
+        apiStateSubject.send(.restarting)
     }
 
 
