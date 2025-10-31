@@ -389,35 +389,9 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             emoji = "⚪"
         }
 
-        if !isValidTransition(from: currentState, to: newState) {
-            error("Invalid state transition from \(currentState) to \(newState)")
-            return
-        }
-
         log("\(emoji) State transition: \(currentState) → \(newState)")
         responseQueueThread.async { [weak self] in
             self?.apiStateSubject.send(newState)
-        }
-    }
-
-    func isValidTransition(from currentState: APIState, to newState: APIState) -> Bool {
-        if newState == .disconnected || newState == .restarting {
-            return true
-        }
-
-        switch (currentState, newState) {
-        case (.disconnected, .connected):
-            return true
-        case (.connected, .speechDetected):
-            return true
-        case (.speechDetected, .speechStopped):
-            return true
-        case (.speechStopped, .speechDetected), (.speechStopped, .processing):
-            return true
-        case (.processing, .connected):
-            return true
-        default:
-            return false
         }
     }
 
