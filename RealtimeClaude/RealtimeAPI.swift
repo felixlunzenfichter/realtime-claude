@@ -446,24 +446,24 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
 
     func handleFunctionCallArgumentsDone(_ json: [String: Any]) {
         guard let arguments = json["arguments"] as? String else {
-            error("Missing or invalid 'arguments' field in function call")
+            log("Missing or invalid 'arguments' field in function call")
             return
         }
 
         guard let callId = json["call_id"] as? String else {
-            error("Missing or invalid 'call_id' field in function call")
+            log("Missing or invalid 'call_id' field in function call")
             return
         }
 
         guard let name = json["name"] as? String else {
-            error("Missing or invalid 'name' field in function call")
+            log("Missing or invalid 'name' field in function call")
             return
         }
 
         log("function_call_arguments.done: call_id=\(callId), name=\(name)")
 
         guard let argumentsData = arguments.data(using: .utf8) else {
-            error("Failed to convert arguments to UTF-8 data. Raw arguments: \(arguments)")
+            log("Failed to convert arguments to UTF-8 data. Raw arguments: \(arguments)")
             return
         }
 
@@ -471,12 +471,12 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         do {
             jsonObject = try JSONSerialization.jsonObject(with: argumentsData, options: [])
         } catch let parseError {
-            error("Failed to parse function arguments as JSON: \(parseError.localizedDescription). Raw arguments: \(arguments)")
+            log("Failed to parse function arguments as JSON: \(parseError.localizedDescription). Raw arguments: \(arguments)")
             return
         }
 
         guard let dict = jsonObject as? [String: Any] else {
-            error("Function arguments not a dictionary. Raw arguments: \(arguments)")
+            log("Function arguments not a dictionary. Raw arguments: \(arguments)")
             return
         }
 

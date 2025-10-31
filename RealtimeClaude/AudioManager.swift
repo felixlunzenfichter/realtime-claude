@@ -88,20 +88,15 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     }
 
     private func sendSilence() {
-        let silenceData = generateSilenceBuffer(durationMs: 100)
-        realtimeAPI.processInputAudioBuffer(silenceData)
+        guard realtimeAPI.apiStateSubject.value != .speechStopped else {
+            log("Speech stopped detected, stopping silence")
+            return
+        }
+
+        realtimeAPI.processInputAudioBuffer(generateSilenceBuffer(durationMs: 100))
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            guard let self = self else { return }
-
-            let currentState = realtimeAPI.apiStateSubject.value
-
-            guard currentState != .speechStopped else {
-                log("Speech stopped detected, stopping silence")
-                return
-            }
-
-            self.sendSilence()
+            self?.sendSilence()
         }
     }
 
