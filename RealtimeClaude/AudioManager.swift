@@ -88,7 +88,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     }
 
     private func sendSilence() {
-        guard realtimeAPI.apiStateSubject.value != .speechStopped else {
+        guard realtimeAPI.apiStateSubject.value == .speechDetected else {
             log("Speech stopped detected, stopping silence")
             return
         }

@@ -95,8 +95,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                     webSocketTask: URLSessionWebSocketTask,
                     didCloseWith closeCode: URLSessionWebSocketTask.CloseCode,
                     reason: Data?) {
-        apiStateSubject.send(.disconnected)
-        log("Disconnected from Realtime API")
+        updateAPIState(.disconnected)
     }
 
     func receiveMessage() {
@@ -241,8 +240,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func handleSessionUpdated() {
-        log("Session configuration updated successfully - 🔵 Setting API state to .connected")
-        apiStateSubject.send(.connected)
+        updateAPIState(.connected)
         audioManager.startAudioEngine()
     }
 
@@ -328,13 +326,11 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func handleSpeechStarted() {
-        log("Voice activity detection started - 🟡 Setting API state to .speechDetected")
-        apiStateSubject.send(.speechDetected)
+        updateAPIState(.speechDetected)
     }
 
     func handleSpeechStopped() {
-        log("Voice activity detection stopped - 🟠 Setting API state to .speechStopped")
-        apiStateSubject.send(.speechStopped)
+        updateAPIState(.speechStopped)
         callTranscriptionDeltaFunction()
     }
 
@@ -374,18 +370,64 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         }
     }
 
+    func updateAPIState(_ newState: APIState) {
+        let currentState = apiStateSubject.value
+
+        let emoji: String
+        switch newState {
+        case .disconnected:
+            emoji = "🔴"
+        case .connected:
+            emoji = "🔵"
+        case .speechDetected:
+            emoji = "🟡"
+        case .speechStopped:
+            emoji = "🟠"
+        case .processing:
+            emoji = "🟣"
+        case .restarting:
+            emoji = "⚪"
+        }
+
+        if !isValidTransition(from: currentState, to: newState) {
+            error("Invalid state transition from \(currentState) to \(newState)")
+            return
+        }
+
+        log("\(emoji) State transition: \(currentState) → \(newState)")
+        responseQueueThread.async { [weak self] in
+            self?.apiStateSubject.send(newState)
+        }
+    }
+
+    func isValidTransition(from currentState: APIState, to newState: APIState) -> Bool {
+        if newState == .disconnected || newState == .restarting {
+            return true
+        }
+
+        switch (currentState, newState) {
+        case (.disconnected, .connected):
+            return true
+        case (.connected, .speechDetected):
+            return true
+        case (.speechDetected, .speechStopped):
+            return true
+        case (.speechStopped, .speechDetected), (.speechStopped, .processing):
+            return true
+        case (.processing, .connected):
+            return true
+        default:
+            return false
+        }
+    }
+
     func queueResponseRequest(_ request: @escaping () -> Void) {
         responseQueueThread.async { [weak self] in
             guard let self = self else { return }
 
-            if self.isResponseActive {
-                self.responseRequestQueue.append(request)
-                log("Response queue size: \(self.responseRequestQueue.count)")
-            } else {
-                log("Response queue: executing immediately")
-                self.isResponseActive = true
-                request()
-            }
+            self.responseRequestQueue.append(request)
+            log("Response queue size: \(self.responseRequestQueue.count)")
+            self.processNextQueuedRequest()
         }
     }
 
@@ -395,27 +437,29 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
 
     func handleResponseCreated() {
         log("Response created")
+        updateAPIState(.processing)
     }
 
     func handleResponseDoneEvent(_ json: [String: Any]) {
         log("response.done received")
-        if isResponseActive {
-            log("response.done: Response still active, marking complete (audio response)")
-            markResponseComplete()
-        } else {
-            log("response.done: Response already completed (was function call)")
-        }
+        markResponseComplete()
     }
 
     func markResponseComplete() {
         log("✅ markResponseComplete() called")
         responseQueueThread.async { [weak self] in
-            self?.isResponseActive = false
-            if self?.apiStateSubject.value == .processing {
-                log("Response complete - 🔵 Setting API state to .connected")
-                self?.apiStateSubject.send(.connected)
+            guard let self = self else { return }
+
+            guard self.isResponseActive else {
+                log("Response already completed (was function call)")
+                return
             }
-            self?.processNextQueuedRequest()
+
+            self.isResponseActive = false
+            if self.responseRequestQueue.isEmpty {
+                self.updateAPIState(.connected)
+            }
+            self.processNextQueuedRequest()
         }
     }
 
@@ -423,7 +467,13 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         responseQueueThread.async { [weak self] in
             guard let self = self else { return }
 
+            guard !self.isResponseActive else {
+                log("Response queue: already processing, not starting next")
+                return
+            }
+
             guard !self.responseRequestQueue.isEmpty else {
+                log("Response queue: empty, nothing to process")
                 return
             }
 
@@ -545,11 +595,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
            let id = item["id"] as? String,
            let type = item["type"] as? String {
             log("conversation.item.added: id=\(id), type=\(type)")
-
-            if type == "function_call" {
-                log("🟣 Setting API state to .processing (from handleConversationItemAdded)")
-                apiStateSubject.send(.processing)
-            }
 
             if type == "function_call_output" {
                 markResponseComplete()
@@ -752,14 +797,12 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func restart() {
-        log("Restarting app")
-        apiStateSubject.send(.restarting)
+        updateAPIState(.restarting)
     }
 
 
     func disconnect() {
-        log("Disconnecting WebSocket - ⚫ Setting API state to .disconnected")
-        apiStateSubject.send(.disconnected)
+        updateAPIState(.disconnected)
         audioManager.stopAudioEngine()
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
         webSocketTask = nil
