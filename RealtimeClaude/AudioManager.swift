@@ -84,6 +84,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         isRecordingAudioSubject.send(false)
         log("Stopped recording")
 
+        responsePlayerNode.play()
         sendSilence()
     }
 
@@ -120,12 +121,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     }
 
     func scheduleOutputAudioBuffer(_ audioBase64: String) {
-        if isRecordingAudioSubject.value {
-            debugLog(id: "scheduleAudio", message: "🎤 [Audio] Microphone enabled - not playing audio")
-            responsePlayerNode.stop()
-            return
-        }
-
         if !isPlaybackEnabled {
             debugLog(id: "scheduleAudio", message: "⛔ [Audio] Playback disabled, skipping audio")
             return
@@ -151,6 +146,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
 
             if self.isRecordingAudioSubject.value {
                 self.responsePlayerNode.stop()
+                log("🎤 Stopped response player node because microphone is active")
             }
 
             if self.scheduledBufferCount > 0 {

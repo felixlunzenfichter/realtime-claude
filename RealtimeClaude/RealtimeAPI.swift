@@ -162,7 +162,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         case "input_audio_buffer.committed":
             handleAudioBufferCommitted()
         case "response.created":
-            handleResponseCreated()
+            handleResponseCreated(json)
         case "response.done":
             handleResponseDoneEvent(json)
         case "response.audio.delta":
@@ -409,13 +409,65 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         log("Audio buffer committed")
     }
 
-    func handleResponseCreated() {
-        log("Response created")
-        updateAPIState(.processing)
+    func handleResponseCreated(_ json: [String: Any]) {
+        log("Response created - JSON: \(json)")
     }
 
     func handleResponseDoneEvent(_ json: [String: Any]) {
-        log("response.done received")
+        log("response.done received - Full JSON: \(json)")
+
+        guard let response = json["response"] as? [String: Any],
+              let output = response["output"] as? [[String: Any]] else {
+            error("Missing response or output in response.done")
+            return
+        }
+
+        if let status = response["status"] as? String, status == "cancelled" {
+            log("Response cancelled")
+            markResponseComplete()
+            return
+        }
+
+        guard let item = output.first else {
+            log("Empty output array")
+            markResponseComplete()
+            return
+        }
+
+        guard let type = item["type"] as? String else {
+            error("Missing type in output item")
+            return
+        }
+
+        if type == "function_call" {
+            guard let name = item["name"] as? String else {
+                error("Missing name in function_call")
+                return
+            }
+
+            let arguments = item["arguments"] as? String ?? "{}"
+            let status = item["status"] as? String ?? ""
+
+            var transcriptionValue = ""
+            if let argData = arguments.data(using: .utf8),
+               let argJson = try? JSONSerialization.jsonObject(with: argData) as? [String: Any],
+               let delta = argJson["deltaTranscription"] as? String {
+                transcriptionValue = delta
+            }
+
+            log("📞 Function Call - name: \(name), status: \(status), transcription: \(transcriptionValue)")
+
+            if name == "transcriptionDelta" {
+                updateLastPrompt(item)
+            } else {
+                log("Unexpected function - name: \(name)")
+            }
+        } else if type == "message" {
+            handleAudioResponse(item)
+        } else {
+            log("Unexpected type: \(type)")
+        }
+
         markResponseComplete()
     }
 
@@ -468,7 +520,23 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         log("response.text.done event received")
     }
 
-    func handleFunctionCallArgumentsDone(_ json: [String: Any]) {
+    func handleAudioResponse(_ json: [String: Any]) {
+        guard let content = json["content"] as? [[String: Any]] else {
+            return
+        }
+
+        for contentItem in content {
+            guard let contentType = contentItem["type"] as? String,
+                  contentType == "output_audio",
+                  let transcript = contentItem["transcript"] as? String else {
+                continue
+            }
+
+            log("🎤 Audio Output - transcript: \(transcript)")
+        }
+    }
+
+    func updateLastPrompt(_ json: [String: Any]) {
         guard let arguments = json["arguments"] as? String else {
             log("Missing or invalid 'arguments' field in function call")
             return
@@ -478,13 +546,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             log("Missing or invalid 'call_id' field in function call")
             return
         }
-
-        guard let name = json["name"] as? String else {
-            log("Missing or invalid 'name' field in function call")
-            return
-        }
-
-        log("function_call_arguments.done: call_id=\(callId), name=\(name)")
 
         guard let argumentsData = arguments.data(using: .utf8) else {
             log("Failed to convert arguments to UTF-8 data. Raw arguments: \(arguments)")
@@ -531,16 +592,17 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         }
 
         lastPromptSubject.send(newValue)
+        log("Updated lastPromptSubject added: \(filteredTranscription)")
+        log("Updated lastPromptSubject complete: \(newValue.replacingOccurrences(of: "\n", with: " "))")
 
-        let result: [String: Any] = [
+        let resultDict: [String: Any] = [
             "status": "success",
-            "accumulated_transcription": newValue,
-            "latest_addition": transcription
+            "accumulated_transcription": newValue
         ]
 
         let outputData: Data
         do {
-            outputData = try JSONSerialization.data(withJSONObject: result)
+            outputData = try JSONSerialization.data(withJSONObject: resultDict)
         } catch let serializationError {
             error("Failed to serialize function result to JSON: \(serializationError.localizedDescription)")
             return
@@ -561,7 +623,21 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         ]
 
         send(event: response)
-        log("✅ Sent function output")
+        log("Sent function output: \(outputString)")
+    }
+
+    func handleFunctionCallArgumentsDone(_ json: [String: Any]) {
+        guard let name = json["name"] as? String else {
+            log("Missing or invalid 'name' field in function call")
+            return
+        }
+
+        guard let arguments = json["arguments"] as? String else {
+            log("Missing or invalid 'arguments' field in function call")
+            return
+        }
+
+        log("Function: \(name), Arguments: \(arguments)")
     }
 
     func handleConversationItemAdded(_ json: [String: Any]) {
@@ -569,10 +645,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
            let id = item["id"] as? String,
            let type = item["type"] as? String {
             log("conversation.item.added: id=\(id), type=\(type)")
-
-            if type == "function_call_output" {
-                markResponseComplete()
-            }
         }
     }
 
@@ -678,6 +750,10 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             error("Missing or invalid 'type' field in output item")
             return
         }
+
+        log("response.output_item.added: type=\(itemType), full JSON: \(json)")
+
+        updateAPIState(.processing)
 
         if itemType == "function_call" {
             guard let callId = item["call_id"] as? String else {

@@ -552,7 +552,6 @@ class WorkViewModel {
     func addMessage(_ content: String) {
         if let index = messages.firstIndex(where: { $0.status != .injected }) {
             messages[index].content = content
-            log("📝 Replaced message content (status: \(messages[index].status)) - \(content)")
         } else {
             let message = Message(
                 content: content,
@@ -560,8 +559,6 @@ class WorkViewModel {
                 status: .notSent
             )
             messages.insert(message, at: 0)
-
-            log("📝 Created new message (all previous are injected)")
         }
     }
 
