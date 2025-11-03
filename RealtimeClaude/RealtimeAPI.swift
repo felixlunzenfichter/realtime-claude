@@ -820,8 +820,9 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             let responseEvent: [String: Any] = [
                 "type": "response.create",
                 "response": [
-                    "instructions": "The following transcription has been sent to the computer agent for execution: [START TRANSCRIPTION] \(prompt) [STOP TRANSCRIPTION]. To confirm that the transcription is correct without looking at the screen, provide an extremely short one-sentence summary. For example, if prompted with 'push this', respond with 'pushing the changes'.",
-                    "output_modalities": ["audio"]
+                    "instructions": "Respond with just one word summarizing the action. For example, if prompted with 'push the changes', respond with 'pushing'.",
+                    "output_modalities": ["audio"],
+                    "max_output_tokens": 50
                 ]
             ]
             self.send(event: responseEvent)
