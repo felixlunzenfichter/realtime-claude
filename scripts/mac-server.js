@@ -468,13 +468,14 @@ function sendAcknowledgment(socket, logId) {
 
 let pendingPrompts = new Map();
 let promptCounter = 0;
+let lastSentAssistantMessage = null;
 
 function initializeClaudeMonitoring() {
     const claudeProjectsPath = path.join(process.env.HOME, '.claude', 'projects');
 
     const watcher = chokidar.watch(claudeProjectsPath, {
         persistent: true,
-        ignoreInitial: true,
+        ignoreInitial: false,
         recursive: true,
         depth: 99,
         awaitWriteFinish: {
@@ -506,6 +507,7 @@ function checkForInjectedPrompts(filePath) {
         const lines = fileContent.trim().split('\n');
 
         const allUserEvents = [];
+        const allAssistantEvents = [];
         for (const line of lines) {
             try {
                 const event = JSON.parse(line);
@@ -534,6 +536,31 @@ function checkForInjectedPrompts(filePath) {
                         }
                     }
                 }
+
+                if (event.type === 'assistant' &&
+                    event.message &&
+                    event.message.role === 'assistant' &&
+                    event.message.content) {
+
+                    if (typeof event.message.content === 'string') {
+                        allAssistantEvents.push({
+                            text: event.message.content,
+                            timestamp: event.timestamp
+                        });
+                    }
+                    else if (Array.isArray(event.message.content)) {
+                        for (const content of event.message.content) {
+                            if (content.type === 'text' &&
+                                content.text &&
+                                typeof content.text === 'string') {
+                                allAssistantEvents.push({
+                                    text: content.text,
+                                    timestamp: event.timestamp
+                                });
+                            }
+                        }
+                    }
+                }
             } catch (parseErr) {
                 continue;
             }
@@ -542,6 +569,28 @@ function checkForInjectedPrompts(filePath) {
         const userEvents = allUserEvents.slice(-5);
 
         const lastMessage = userEvents.length > 0 ? userEvents[userEvents.length - 1].text.substring(0, 100).replace(/\n/g, ' ') : 'none';
+
+        if (allAssistantEvents.length > 0) {
+            const mostRecentAssistant = allAssistantEvents[allAssistantEvents.length - 1];
+            console.log(`📋 Most recent assistant message: ${mostRecentAssistant.text.substring(0, 100)}...`);
+
+            if (activeSocket && (lastSentAssistantMessage === null || lastSentAssistantMessage !== mostRecentAssistant.text)) {
+                console.log(`📤 Sending new assistant message to iOS:`);
+                console.log(`   ${mostRecentAssistant.text.substring(0, 100)}...`);
+
+                const assistantMessage = {
+                    type: 'assistant_messages',
+                    messages: [mostRecentAssistant],
+                    timestamp: Date.now()
+                };
+                const assistantData = JSON.stringify(assistantMessage) + '\n';
+                activeSocket.write(assistantData);
+
+                lastSentAssistantMessage = mostRecentAssistant.text;
+            } else if (lastSentAssistantMessage === mostRecentAssistant.text) {
+                console.log(`⏭️  Skipping assistant message (already sent)`);
+            }
+        }
 
         for (const [promptId, data] of pendingPrompts.entries()) {
             if (!data.verified) {
@@ -580,6 +629,27 @@ function checkForInjectedPrompts(filePath) {
                         const jsonData = JSON.stringify(ackMessage) + '\n';
                         activeSocket.write(jsonData);
                         console.log('✅ Prompt verified and acknowledged to iOS!');
+
+                        if (allAssistantEvents.length > 0) {
+                            const mostRecentAssistant = allAssistantEvents[allAssistantEvents.length - 1];
+
+                            if (lastSentAssistantMessage === null || lastSentAssistantMessage !== mostRecentAssistant.text) {
+                                console.log(`📤 Sending new assistant message to iOS:`);
+                                console.log(`   ${mostRecentAssistant.text.substring(0, 100)}...`);
+
+                                const assistantMessage = {
+                                    type: 'assistant_messages',
+                                    messages: [mostRecentAssistant],
+                                    timestamp: Date.now()
+                                };
+                                const assistantData = JSON.stringify(assistantMessage) + '\n';
+                                activeSocket.write(assistantData);
+
+                                lastSentAssistantMessage = mostRecentAssistant.text;
+                            } else {
+                                console.log(`⏭️  Skipping assistant message (already sent)`);
+                            }
+                        }
                     }
 
                     pendingPrompts.delete(promptId);

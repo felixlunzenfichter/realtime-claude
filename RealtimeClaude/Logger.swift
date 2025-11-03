@@ -292,6 +292,8 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             handleHandshakeMessage(jsonData)
         case "prompt_ack":
             handlePromptAckMessage(jsonData)
+        case "assistant_messages":
+            handleAssistantMessages(jsonData)
         default:
             error("Unexpected message type: \(messageType)")
         }
@@ -402,6 +404,22 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             let errorMessage = jsonData["error"] as? String ?? "Unknown error"
             error("❌ Failed to inject prompt: \(errorMessage)")
             promptStatusSubject.send(PromptStatusUpdate(prompt: originalPrompt, status: "failed"))
+        }
+    }
+
+    private func handleAssistantMessages(_ jsonData: [String: Any]) {
+        guard let messages = jsonData["messages"] as? [[String: Any]] else {
+            error("messages was nil in assistant_messages")
+            return
+        }
+
+        log("📨 Received \(messages.count) assistant messages from Mac")
+
+        for message in messages {
+            guard let text = message["text"] as? String else {
+                continue
+            }
+            realtimeAPI.readAssistantMessage(text)
         }
     }
 

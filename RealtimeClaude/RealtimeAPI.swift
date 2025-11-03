@@ -21,6 +21,7 @@ protocol RealtimeAPIProtocol: Sendable {
     func clearAccumulatedPrompts()
     func processInputAudioBuffer(_ data: Data)
     func restart()
+    func readAssistantMessage(_ message: String)
 }
 
 nonisolated(unsafe) let realtimeAPI: RealtimeAPIProtocol = RealtimeAPI()
@@ -410,12 +411,15 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func handleResponseCreated(_ json: [String: Any]) {
-        log("Response created - JSON: \(json)")
+        if let response = json["response"] as? [String: Any],
+           let status = response["status"] as? String {
+            log("Response created - status: \(status)")
+        } else {
+            log("Response created")
+        }
     }
 
     func handleResponseDoneEvent(_ json: [String: Any]) {
-        log("response.done received - Full JSON: \(json)")
-
         guard let response = json["response"] as? [String: Any],
               let output = response["output"] as? [[String: Any]] else {
             error("Missing response or output in response.done")
@@ -813,7 +817,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         send(event: audioEvent)
     }
 
-    func requestAudioResponse(for prompt: String) {
+    func requestTranscriptionConfirmation(for prompt: String) {
         queueResponseRequest { [weak self] in
             guard let self = self else { return }
 
@@ -826,7 +830,24 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                 ]
             ]
             self.send(event: responseEvent)
-            log("Requesting one-word audio acknowledgment")
+            log("Requesting one-word transcription confirmation")
+        }
+    }
+
+    func readAssistantMessage(_ message: String) {
+        queueResponseRequest { [weak self] in
+            guard let self = self else { return }
+
+            let responseEvent: [String: Any] = [
+                "type": "response.create",
+                "response": [
+                    "instructions": "Read this message aloud: \(message)",
+                    "output_modalities": ["audio"],
+                    "max_output_tokens": 100
+                ]
+            ]
+            self.send(event: responseEvent)
+            log("Requested assistant to read message: \(message)")
         }
     }
 
@@ -835,7 +856,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         lastPromptSubject.send("")
         log("🧹 Cleared accumulated prompts after successful prompt injection and creating voice response")
 
-        requestAudioResponse(for: promptToSummarize)
+        requestTranscriptionConfirmation(for: promptToSummarize)
     }
 
     func acknowledgeSuccessfulInterruptExecution() {
