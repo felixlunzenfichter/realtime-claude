@@ -2,6 +2,7 @@ import SwiftUI
 import Combine
 import Observation
 import CoreMotion
+import UIKit
 
 let INTERRUPT_MESSAGE = "[Request interrupted by user]"
 
@@ -281,6 +282,12 @@ struct WorkView: View {
                                         }
                                         .frame(height: 5)
                                     }
+                                }
+                                .onTapGesture {
+                                    viewModel.copyMessageToClipboard(message)
+                                }
+                                .onTapGesture(count: 2) {
+                                    viewModel.replayAudioForMessage(message)
                                 }
                                 .id(message.id)
                                 .listRowBackground(Color.clear)
@@ -669,7 +676,8 @@ class WorkViewModel {
         for (sequenceNumber, audioBuffer) in newBuffers {
             let audioBase64 = audioBuffer.base64EncodedString()
             let messageId = message.id
-            audioManager.scheduleOutputAudioBuffer(audioBase64) { [weak self] buffersPlayed in
+            let resetCount = (sequenceNumber == 1)
+            audioManager.scheduleOutputAudioBuffer(audioBase64, resetCount: resetCount) { [weak self] buffersPlayed in
                 guard let self = self else { return }
 
                 if self.currentPlayingMessageId != messageId {
@@ -683,6 +691,52 @@ class WorkViewModel {
                 }
             }
             scheduledSequenceNumbers[message.id] = sequenceNumber
+        }
+    }
+
+    func copyMessageToClipboard(_ message: Message) {
+        guard message.content != INTERRUPT_MESSAGE else { return }
+
+        UIPasteboard.general.string = message.content
+        log("Copied message to clipboard: \(message.content.prefix(50))...")
+    }
+
+    func replayAudioForMessage(_ message: Message) {
+        guard let conversationMessageId = message.conversationMessageId else {
+            log("No conversation message ID for replay")
+            return
+        }
+
+        let conversationContext = realtimeAPI.conversationContextSubject.value
+        guard let convMsg = conversationContext.first(where: { $0.id == conversationMessageId }) else {
+            log("Cannot find conversation message for replay")
+            return
+        }
+
+        guard !convMsg.audioBuffers.isEmpty else {
+            log("No audio buffers to replay")
+            return
+        }
+
+        log("Replaying audio for message with \(convMsg.audioBuffers.count) buffers")
+
+        scheduledSequenceNumbers[conversationMessageId] = 0
+
+        for (sequenceNumber, audioBuffer) in convMsg.audioBuffers {
+            let audioBase64 = audioBuffer.base64EncodedString()
+            let messageId = conversationMessageId
+            let resetCount = (sequenceNumber == 1)
+            audioManager.scheduleOutputAudioBuffer(audioBase64, resetCount: resetCount) { [weak self] buffersPlayed in
+                guard let self = self else { return }
+
+                if self.currentPlayingMessageId != messageId {
+                    self.currentPlayingMessageId = messageId
+                }
+
+                let totalBuffers = convMsg.audioBuffers.count
+                self.audioPlaybackProgress = totalBuffers > 0 ? Double(buffersPlayed) / Double(totalBuffers) : 0.0
+            }
+            scheduledSequenceNumbers[conversationMessageId] = sequenceNumber
         }
     }
 
