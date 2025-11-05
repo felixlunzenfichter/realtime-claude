@@ -350,6 +350,11 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         let totalUptime = jsonData["totalUptime"] as? Int ?? 0
         let todayUptime = jsonData["todayUptime"] as? Int ?? 0
 
+        if let currentAssistantMessage = jsonData["currentAssistantMessage"] as? String {
+            realtimeAPI.addAssistantMessage(currentAssistantMessage)
+            log("Loaded current assistant message from handshake: \(currentAssistantMessage)")
+        }
+
         var previousRunFailed = false
         if let previousErrors = jsonData["previousErrors"] as? [[String: Any]], !previousErrors.isEmpty {
             previousRunFailed = true
@@ -419,7 +424,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             guard let text = message["text"] as? String else {
                 continue
             }
-            realtimeAPI.readAssistantMessage(text)
+            realtimeAPI.addAssistantMessage(text)
         }
     }
 

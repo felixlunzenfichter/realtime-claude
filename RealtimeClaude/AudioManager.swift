@@ -13,7 +13,7 @@ protocol AudioManagerProtocol: Sendable {
     func stopRecording()
     func enablePlayback()
     func disablePlayback()
-    func scheduleOutputAudioBuffer(_ audioBase64: String)
+    func scheduleOutputAudioBuffer(_ audioBase64: String, onBufferPlayed: ((Int) -> Void)?)
 }
 
 nonisolated(unsafe) let audioManager: AudioManagerProtocol = AudioManager()
@@ -30,6 +30,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
 
     private var isPlaybackEnabled: Bool = true
     private var scheduledBufferCount: Int = 0
+    private var buffersPlayedCount: Int = 0
 
     init() {
         audioEngine = AVAudioEngine()
@@ -131,7 +132,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         log("Playback disabled")
     }
 
-    func scheduleOutputAudioBuffer(_ audioBase64: String) {
+    func scheduleOutputAudioBuffer(_ audioBase64: String, onBufferPlayed: ((Int) -> Void)?) {
         if !isPlaybackEnabled {
             debugLog(id: "scheduleAudio", message: "⛔ [Audio] Playback disabled, skipping audio")
             return
@@ -147,6 +148,10 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
             return
         }
 
+        if scheduledBufferCount == 0 {
+            buffersPlayedCount = 0
+        }
+
         responsePlayerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             guard let self = self else {
                 error("audioManager deallocated during audio playback")
@@ -154,6 +159,9 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
             }
 
             self.scheduledBufferCount -= 1
+            self.buffersPlayedCount += 1
+
+            onBufferPlayed?(self.buffersPlayedCount)
 
             if self.isRecordingAudioSubject.value {
                 self.responsePlayerNode.stop()
@@ -169,6 +177,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
                 }
             } else if self.scheduledBufferCount == 0 {
                 self.isPlayingAudioSubject.send(false)
+                self.buffersPlayedCount = 0
                 log("Stopped playing response")
             }
         }

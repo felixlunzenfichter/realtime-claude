@@ -7,13 +7,20 @@ enum APIState {
     case connected
     case speechDetected
     case speechStopped
-    case processing
     case restarting
+}
+
+struct ConversationMessage: Identifiable, Sendable {
+    let id = UUID()
+    var text: String
+    let role: String
+    var audioState: MessageAudioState?
+    var audioBuffers: [(Int, Data)] = []
 }
 
 protocol RealtimeAPIProtocol: Sendable {
     var apiStateSubject: CurrentValueSubject<APIState, Never> { get }
-    var lastPromptSubject: CurrentValueSubject<String, Never> { get }
+    var conversationContextSubject: CurrentValueSubject<[ConversationMessage], Never> { get }
 
     func connect(apiKey: String)
     func acknowledgeSuccessfulPromptInjection()
@@ -21,19 +28,22 @@ protocol RealtimeAPIProtocol: Sendable {
     func clearAccumulatedPrompts()
     func processInputAudioBuffer(_ data: Data)
     func restart()
-    func readAssistantMessage(_ message: String)
+    func addAssistantMessage(_ text: String)
 }
 
 nonisolated(unsafe) let realtimeAPI: RealtimeAPIProtocol = RealtimeAPI()
 
 private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sendable, RealtimeAPIProtocol {
     let apiStateSubject = CurrentValueSubject<APIState, Never>(.disconnected)
-    let lastPromptSubject = CurrentValueSubject<String, Never>("")
+    let conversationContextSubject = CurrentValueSubject<[ConversationMessage], Never>([])
 
     private let responseQueueThread = DispatchQueue(label: "com.realtimeapi.responsequeue", qos: .userInitiated)
+    private var currentUserMessageId: UUID?
 
     private var isResponseActive: Bool = false
-    private var responseRequestQueue: [() -> Void] = []
+    private var responseRequestQueue: [(UUID, () -> Void)] = []
+    private var currentProcessingMessageId: UUID?
+    private var currentAudioSequenceNumber: Int = 0
     private var totalBytesReceived: Int = 0
     private var totalBytesSent: Int = 0
     private var urlSession: URLSession?
@@ -252,7 +262,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                 "type": "realtime",
                 "output_modalities": ["audio"],
                 "instructions": """
-                You are the ears and mouth of the computer agent. You are NOT the brain.
+                You are the ears and mouth of the computer agent. You are NOT the brain. You have no knowledge yourself - the only knowledge you have is from the messages that have been manually appended to your context and are prepended with "Computer use assistant message:". That's the only knowledge you have. You are not yourself trying to answer anything. You are just communicating that knowledge. You should repeat what the user said so he knows that the transcriptions are correct, and then read out whatever assistant messages we're adding to the conversation. Those assistant messages are actually computed by Codex by OpenAI. The setup we have is multimodal GPT Realtime on top of the text-based Codex by OpenAI to reduce screen time to a minimum by knowing exactly when we have to look (mostly for code changes). Nine out of ten messages we can just look out the window, which is a lot healthier. You are just reading out the messages from Codex so that we reduce eye strain and screen time.
                 """,
                 "audio": [
                     "input": [
@@ -336,7 +346,26 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func callTranscriptionDeltaFunction() {
-        queueResponseRequest { [weak self] in
+        if currentUserMessageId == nil {
+            let userMessage = ConversationMessage(
+                text: "",
+                role: "user",
+                audioState: .queued
+            )
+            currentUserMessageId = userMessage.id
+
+            var currentContext = conversationContextSubject.value
+            currentContext.insert(userMessage, at: 0)
+            conversationContextSubject.send(currentContext)
+            log("Created new user message for transcription")
+        }
+
+        guard let userId = currentUserMessageId else {
+            error("No current user message ID")
+            return
+        }
+
+        queueResponseRequest(messageId: userId) { [weak self] in
             guard let self = self else { return }
 
             let responseCreate: [String: Any] = [
@@ -384,8 +413,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             emoji = "🟡"
         case .speechStopped:
             emoji = "🟠"
-        case .processing:
-            emoji = "🟣"
         case .restarting:
             emoji = "⚪"
         }
@@ -396,12 +423,12 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         }
     }
 
-    func queueResponseRequest(_ request: @escaping () -> Void) {
+    func queueResponseRequest(messageId: UUID, _ request: @escaping () -> Void) {
         responseQueueThread.async { [weak self] in
             guard let self = self else { return }
 
-            self.responseRequestQueue.append(request)
-            log("Response queue size: \(self.responseRequestQueue.count)")
+            self.responseRequestQueue.append((messageId, request))
+            log("Response queue: added request for message \(messageId) (total: \(self.responseRequestQueue.count))")
             self.processNextQueuedRequest()
         }
     }
@@ -485,8 +512,11 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                 return
             }
 
+            self.updateMessageAudioState(messageId: self.currentProcessingMessageId, newState: .doneProcessing)
+            self.currentProcessingMessageId = nil
+
             self.isResponseActive = false
-            if self.responseRequestQueue.isEmpty {
+            if self.responseRequestQueue.isEmpty && self.apiStateSubject.value != .connected {
                 self.updateAPIState(.connected)
             }
             self.processNextQueuedRequest()
@@ -507,8 +537,11 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                 return
             }
 
-            let nextRequest = self.responseRequestQueue.removeFirst()
-            log("Response queue: processing next (remaining: \(self.responseRequestQueue.count))")
+            let (messageId, nextRequest) = self.responseRequestQueue.removeFirst()
+            self.currentProcessingMessageId = messageId
+            self.currentAudioSequenceNumber = 0
+            self.updateMessageAudioState(messageId: messageId, newState: .processing)
+            log("Response queue: processing message \(messageId) (remaining: \(self.responseRequestQueue.count))")
             self.isResponseActive = true
             nextRequest()
         }
@@ -586,18 +619,31 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             debugLog(id: "transcriptionFiltered", message: "Filtered transcription: \(filteredTranscription)")
         }
 
-        let currentValue = lastPromptSubject.value
-        let newValue: String
+        var currentContext = conversationContextSubject.value
 
-        if currentValue.isEmpty {
-            newValue = filteredTranscription
+        if let currentUserId = currentUserMessageId,
+           let index = currentContext.firstIndex(where: { $0.id == currentUserId && $0.role == "user" }) {
+            let currentText = currentContext[index].text
+            let newValue = currentText.isEmpty ? filteredTranscription : currentText + "\n" + filteredTranscription
+            currentContext[index].text = newValue
+            conversationContextSubject.send(currentContext)
+            log("Updated user message: added '\(filteredTranscription)'")
+            log("Complete user message: \(newValue.replacingOccurrences(of: "\n", with: " "))")
         } else {
-            newValue = currentValue + "\n" + filteredTranscription
+            let userMessage = ConversationMessage(
+                text: filteredTranscription,
+                role: "user",
+                audioState: .queued
+            )
+            currentUserMessageId = userMessage.id
+            currentContext.insert(userMessage, at: 0)
+            conversationContextSubject.send(currentContext)
+            log("Created new user message: \(filteredTranscription)")
         }
 
-        lastPromptSubject.send(newValue)
-        log("Updated lastPromptSubject added: \(filteredTranscription)")
-        log("Updated lastPromptSubject complete: \(newValue.replacingOccurrences(of: "\n", with: " "))")
+        let currentContext2 = conversationContextSubject.value
+        let currentUserMessage = currentContext2.first(where: { $0.id == currentUserMessageId })
+        let newValue = currentUserMessage?.text ?? ""
 
         let resultDict: [String: Any] = [
             "status": "success",
@@ -661,11 +707,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func handleResponseAudioDelta(_ json: [String: Any]) {
-        guard let audioBase64 = json["delta"] as? String else {
-            error("Missing or invalid 'delta' field in response.audio.delta")
-            return
-        }
-        audioManager.scheduleOutputAudioBuffer(audioBase64)
+        debugLog(id: "audioDelta", message: "⚙️ [WS] Receiving audio delta (not scheduling)")
     }
 
     func handleResponseFunctionCallArgumentsDelta() {
@@ -682,7 +724,26 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             error("Missing or invalid 'delta' field in response.output_audio.delta")
             return
         }
-        audioManager.scheduleOutputAudioBuffer(audioBase64)
+
+        guard let audioData = Data(base64Encoded: audioBase64) else {
+            error("Failed to decode audio delta")
+            return
+        }
+
+        guard let messageId = currentProcessingMessageId else {
+            error("No current processing message ID for audio buffer")
+            return
+        }
+
+        var currentContext = conversationContextSubject.value
+        guard let index = currentContext.firstIndex(where: { $0.id == messageId }) else {
+            error("Cannot find message for audio buffer: \(messageId)")
+            return
+        }
+
+        currentAudioSequenceNumber += 1
+        currentContext[index].audioBuffers.append((currentAudioSequenceNumber, audioData))
+        conversationContextSubject.send(currentContext)
     }
 
     func handleResponseOutputAudioDone() {
@@ -720,7 +781,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func handleResponseOutputItemDone() {
-        
         log("Response output item done")
     }
 
@@ -757,7 +817,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
 
         log("response.output_item.added: type=\(itemType), full JSON: \(json)")
 
-        updateAPIState(.processing)
+        updateMessageAudioState(messageId: currentProcessingMessageId, newState: .processing)
 
         if itemType == "function_call" {
             guard let callId = item["call_id"] as? String else {
@@ -817,46 +877,100 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         send(event: audioEvent)
     }
 
-    func requestTranscriptionConfirmation(for prompt: String) {
-        queueResponseRequest { [weak self] in
+    func requestTranscriptionConfirmation(message: ConversationMessage) {
+        queueResponseRequest(messageId: message.id) { [weak self] in
             guard let self = self else { return }
 
             let responseEvent: [String: Any] = [
                 "type": "response.create",
                 "response": [
-                    "instructions": "Respond with just one word summarizing the action. For example, if prompted with 'push the changes', respond with 'pushing'.",
-                    "output_modalities": ["audio"],
-                    "max_output_tokens": 50
+                    "instructions": "To confirm that the transcription you just created is correct, please repeat what the user said in an extremely condensed manner so that we don't have to check the screen to see if the transcription is correct. Just by hearing what you said, we know that the correct transcription has been submitted for execution.",
+                    "output_modalities": ["audio"]
                 ]
             ]
             self.send(event: responseEvent)
-            log("Requesting one-word transcription confirmation")
+            log("Requesting one-word transcription confirmation for message: \(message.text)")
         }
     }
 
-    func readAssistantMessage(_ message: String) {
-        queueResponseRequest { [weak self] in
-            guard let self = self else { return }
+    func addAssistantMessage(_ text: String) {
+        let message = ConversationMessage(
+            text: text,
+            role: "assistant",
+            audioState: .queued
+        )
 
+        var currentContext = conversationContextSubject.value
+        currentContext.insert(message, at: 0)
+        conversationContextSubject.send(currentContext)
+
+        let contextText = "Computer use assistant message: \(text)"
+        let conversationItem: [String: Any] = [
+            "type": "conversation.item.create",
+            "item": [
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    ["type": "output_text", "text": contextText]
+                ]
+            ]
+        ]
+        send(event: conversationItem)
+
+        queueResponseRequest(messageId: message.id) { [weak self] in
+            guard let self = self else { return }
             let responseEvent: [String: Any] = [
                 "type": "response.create",
                 "response": [
-                    "instructions": "Read this message aloud: \(message)",
-                    "output_modalities": ["audio"],
-                    "max_output_tokens": 100
+                    "instructions": "Please give an extremely concise update over what just happened in the system so that the user knows whether he has to look at the screen or not.",
+                    "output_modalities": ["audio"]
                 ]
             ]
             self.send(event: responseEvent)
-            log("Requested assistant to read message: \(message)")
+            log("Queued audio generation for assistant message")
         }
+
+        log("Added assistant message to conversation context and realtime API: \(text)")
+    }
+
+    func updateMessageAudioState(messageId: UUID?, newState: MessageAudioState) {
+        guard let messageId = messageId else {
+            log("⚠️ Cannot update message audio state: messageId is nil")
+            return
+        }
+
+        var currentContext = conversationContextSubject.value
+        guard let index = currentContext.firstIndex(where: { $0.id == messageId }) else {
+            log("⚠️ Cannot update message audio state: message not found for id \(messageId)")
+            return
+        }
+
+        currentContext[index].audioState = newState
+        conversationContextSubject.send(currentContext)
+        log("Updated message audio state to: \(newState.statusText)")
     }
 
     func acknowledgeSuccessfulPromptInjection() {
-        let promptToSummarize = lastPromptSubject.value
-        lastPromptSubject.send("")
-        log("🧹 Cleared accumulated prompts after successful prompt injection and creating voice response")
+        guard let userId = currentUserMessageId else {
+            log("No current user message to process - skipping transcription confirmation")
+            return
+        }
 
-        requestTranscriptionConfirmation(for: promptToSummarize)
+        var currentContext = conversationContextSubject.value
+        guard let index = currentContext.firstIndex(where: { $0.id == userId }) else {
+            log("Could not find user message in conversation context - skipping")
+            return
+        }
+
+        currentContext[index].audioState = .queued
+        conversationContextSubject.send(currentContext)
+
+        let userMessage = currentContext[index]
+        log("🧹 Processing user message for transcription confirmation: \(userMessage.text)")
+
+        currentUserMessageId = nil
+
+        requestTranscriptionConfirmation(message: userMessage)
     }
 
     func acknowledgeSuccessfulInterruptExecution() {
@@ -864,8 +978,15 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func clearAccumulatedPrompts() {
-        lastPromptSubject.send("")
-        log("🗑️ Manually cleared accumulated prompts")
+        if let userId = currentUserMessageId {
+            var currentContext = conversationContextSubject.value
+            currentContext.removeAll(where: { $0.id == userId })
+            conversationContextSubject.send(currentContext)
+            currentUserMessageId = nil
+            log("🗑️ Manually cleared current user message")
+        } else {
+            log("🗑️ No user message to clear")
+        }
     }
 
     func restart() {

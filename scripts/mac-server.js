@@ -361,7 +361,8 @@ function sendHandshakeResponse(socket, stats) {
         todayUptime: stats.todayUptime,
         totalLogs: stats.totalLogs,
         apiKey: apiKey,
-        previousErrors: previousErrors
+        previousErrors: previousErrors,
+        currentAssistantMessage: lastSentAssistantMessage
     }) + '\n';
 
     socket.write(handshakeResponse);

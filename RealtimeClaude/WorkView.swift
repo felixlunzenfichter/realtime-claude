@@ -40,7 +40,6 @@ enum RecordingStatus {
     case isRecording
     case speechDetected
     case speechStopped
-    case processing
     case restarting
 
     var color: Color {
@@ -50,7 +49,6 @@ enum RecordingStatus {
         case .isRecording: return .green
         case .speechDetected: return .yellow
         case .speechStopped: return .orange
-        case .processing: return .purple
         case .restarting: return .gray
         }
     }
@@ -62,7 +60,6 @@ enum RecordingStatus {
         case .isRecording: return "Recording"
         case .speechDetected: return "Voice Activity Detected"
         case .speechStopped: return "Voice Activity Stopped"
-        case .processing: return "Processing..."
         case .restarting: return "Restarting..."
         }
     }
@@ -102,11 +99,35 @@ enum MessageStatus {
     }
 }
 
+enum MessageAudioState: Sendable {
+    case queued
+    case processing
+    case doneProcessing
+
+    var color: Color {
+        switch self {
+        case .queued: return .gray
+        case .processing: return .purple
+        case .doneProcessing: return .green
+        }
+    }
+
+    var statusText: String {
+        switch self {
+        case .queued: return "Queued"
+        case .processing: return "Processing"
+        case .doneProcessing: return "Done Processing"
+        }
+    }
+}
+
 struct Message: Identifiable {
     let id = UUID()
     var content: String
     let timestamp: Date
     var status: MessageStatus
+    var audioState: MessageAudioState?
+    var conversationMessageId: UUID?
 }
 
 struct ToggleBar: View {
@@ -192,51 +213,75 @@ struct WorkView: View {
                                 .id("topSpacer")
 
                             ForEach(viewModel.allMessages) { message in
-                                ZStack(alignment: .bottomTrailing) {
-                                    if message.content == INTERRUPT_MESSAGE {
-                                        HStack {
-                                            HStack(spacing: 6) {
-                                                if message.status == .sent {
-                                                    ProgressView()
-                                                        .scaleEffect(0.5)
-                                                        .frame(width: 10, height: 10)
-                                                } else {
-                                                    Image(systemName: message.status == .injected ? "stop.circle.fill" : "hand.raised.circle.fill")
+                                VStack(spacing: 0) {
+                                    ZStack(alignment: .bottomTrailing) {
+                                        if message.content == INTERRUPT_MESSAGE {
+                                            HStack {
+                                                HStack(spacing: 6) {
+                                                    if message.status == .sent {
+                                                        ProgressView()
+                                                            .scaleEffect(0.5)
+                                                            .frame(width: 10, height: 10)
+                                                    } else {
+                                                        Image(systemName: message.status == .injected ? "stop.circle.fill" : "hand.raised.circle.fill")
+                                                            .font(.system(size: 10))
+                                                            .foregroundColor(message.status == .injected ? .red : message.status.color)
+                                                    }
+                                                    Text(message.status == .sent ? "Request interrupt sent" : "Request interrupted")
                                                         .font(.system(size: 10))
                                                         .foregroundColor(message.status == .injected ? .red : message.status.color)
                                                 }
-                                                Text(message.status == .sent ? "Request interrupt sent" : "Request interrupted")
+
+                                                Spacer()
+
+                                                Text(message.timestamp, style: .time)
                                                     .font(.system(size: 10))
-                                                    .foregroundColor(message.status == .injected ? .red : message.status.color)
+                                                    .foregroundColor(message.status == .injected ? Color.red.opacity(0.7) : message.status.color.opacity(0.7))
                                             }
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 2)
+                                        } else {
+                                            Text(message.content.isEmpty ? "Recording..." : message.content)
+                                                .font(.body)
+                                                .foregroundColor(message.status.color)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                                .padding(.horizontal, 12)
+                                                .padding(.vertical, 6)
+                                        }
 
-                                            Spacer()
-
+                                        if message.content != INTERRUPT_MESSAGE {
                                             Text(message.timestamp, style: .time)
                                                 .font(.system(size: 10))
-                                                .foregroundColor(message.status == .injected ? Color.red.opacity(0.7) : message.status.color.opacity(0.7))
+                                                .foregroundColor(message.status.color.opacity(0.7))
                                         }
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 2)
-                                    } else {
-                                        Text(message.content.isEmpty ? "Recording..." : message.content)
-                                            .font(.body)
-                                            .foregroundColor(message.status.color)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .padding(.horizontal, 12)
-                                            .padding(.vertical, 6)
                                     }
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(message.content == INTERRUPT_MESSAGE && message.status == .injected ? Color.red.opacity(0.1) : message.status.color.opacity(0.1))
+                                    )
 
                                     if message.content != INTERRUPT_MESSAGE {
-                                        Text(message.timestamp, style: .time)
-                                            .font(.system(size: 10))
-                                            .foregroundColor(message.status.color.opacity(0.7))
+                                        GeometryReader { geometry in
+                                            ZStack(alignment: .leading) {
+                                                VStack {
+                                                    Spacer()
+                                                }
+                                                .frame(height: 5)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                                .glassEffect(.clear.tint(message.audioState?.color ?? message.status.color), in: .capsule)
+
+                                                if message.conversationMessageId == viewModel.currentPlayingMessageId && viewModel.audioPlaybackProgress > 0 {
+                                                    VStack {
+                                                        Spacer()
+                                                    }
+                                                    .frame(width: geometry.size.width * viewModel.audioPlaybackProgress, height: 5)
+                                                    .glassEffect(.clear.tint(Color.blue), in: .capsule)
+                                                }
+                                            }
+                                        }
+                                        .frame(height: 5)
                                     }
                                 }
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(message.content == INTERRUPT_MESSAGE && message.status == .injected ? Color.red.opacity(0.1) : message.status.color.opacity(0.1))
-                                )
                                 .id(message.id)
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
@@ -362,16 +407,19 @@ class WorkViewModel {
         didSet {
             log("Recording status changed: \(oldValue) → \(currentRecordingStatus)")
             if currentRecordingStatus == .connected {
-                let currentPrompt = realtimeAPI.lastPromptSubject.value
-                if !currentPrompt.isEmpty {
-                    log("Sending prompt to Claude Code: \(currentPrompt)")
-                    logger.sendPromptToMac(currentPrompt)
+                let conversationContext = realtimeAPI.conversationContextSubject.value
+                if let latestUserMessage = conversationContext.first(where: { $0.role == "user" }) {
+                    log("Sending prompt to Claude Code: \(latestUserMessage.text)")
+                    logger.sendPromptToMac(latestUserMessage.text)
                 }
             }
         }
     }
     var isRecordingAudio = false
     var isPlayingAudio = false
+    var audioPlaybackProgress: Double = 0.0
+    var currentPlayingMessageId: UUID?
+    private var scheduledSequenceNumbers: [UUID: Int] = [:]
     var isMicrophoneEnabled = false {
         didSet {
             handleMicrophoneToggle()
@@ -434,8 +482,6 @@ class WorkViewModel {
                     self.currentRecordingStatus = .speechDetected
                 case .speechStopped:
                     self.currentRecordingStatus = .speechStopped
-                case .processing:
-                    self.currentRecordingStatus = .processing
                 case .restarting:
                     self.currentRecordingStatus = .restarting
                 }
@@ -456,17 +502,15 @@ class WorkViewModel {
         audioManager.isPlayingAudioSubject
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isPlaying in
-                self?.isPlayingAudio = isPlaying
+                guard let self = self else { return }
+                self.isPlayingAudio = isPlaying
+
+                if !isPlaying {
+                    self.currentPlayingMessageId = nil
+                }
             }
             .store(in: &cancellables)
 
-        realtimeAPI.lastPromptSubject
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] prompt in
-                guard !prompt.isEmpty else { return }
-                self?.addMessage(prompt)
-            }
-            .store(in: &cancellables)
 
         logger.promptStatusSubject
             .receive(on: DispatchQueue.main)
@@ -494,6 +538,13 @@ class WorkViewModel {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] inputSource in
                 self?.audioInputSource = inputSource
+            }
+            .store(in: &cancellables)
+
+        realtimeAPI.conversationContextSubject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] conversationContext in
+                self?.updateConversationContext(conversationContext)
             }
             .store(in: &cancellables)
     }
@@ -566,7 +617,72 @@ class WorkViewModel {
                 timestamp: Date(),
                 status: .notSent
             )
-            messages.insert(message, at: 0)
+            let insertionIndex = messages.firstIndex(where: { $0.timestamp < message.timestamp }) ?? messages.count
+            messages.insert(message, at: insertionIndex)
+        }
+    }
+
+    func updateConversationContext(_ conversationContext: [ConversationMessage]) {
+        for convMsg in conversationContext {
+            let content: String
+            if convMsg.role == "assistant" {
+                content = "Assistant: \(convMsg.text)"
+            } else {
+                content = convMsg.text
+            }
+
+            if let index = messages.firstIndex(where: { $0.conversationMessageId == convMsg.id }) {
+                messages[index].content = content
+                messages[index].audioState = convMsg.audioState
+            } else {
+                let initialStatus: MessageStatus = convMsg.role == "assistant" ? .injected : .notSent
+
+                let message = Message(
+                    content: content,
+                    timestamp: Date(),
+                    status: initialStatus,
+                    audioState: convMsg.audioState,
+                    conversationMessageId: convMsg.id
+                )
+
+                let insertionIndex = messages.firstIndex(where: { $0.timestamp < message.timestamp }) ?? messages.count
+                messages.insert(message, at: insertionIndex)
+                log("Added \(convMsg.role) message to UI at index \(insertionIndex): \(convMsg.text)")
+            }
+
+            if !convMsg.audioBuffers.isEmpty {
+                scheduleNewAudioBuffers(convMsg)
+            }
+        }
+    }
+
+    func scheduleNewAudioBuffers(_ message: ConversationMessage) {
+        let lastScheduled = scheduledSequenceNumbers[message.id] ?? 0
+        let newBuffers = message.audioBuffers.filter { $0.0 > lastScheduled }
+
+        if newBuffers.isEmpty {
+            return
+        }
+
+        debugLog(id: "scheduleAudio", message: "Scheduling \(newBuffers.count) new audio buffers")
+
+        for (sequenceNumber, audioBuffer) in newBuffers {
+            let audioBase64 = audioBuffer.base64EncodedString()
+            let messageId = message.id
+            audioManager.scheduleOutputAudioBuffer(audioBase64) { [weak self] buffersPlayed in
+                guard let self = self else { return }
+
+                if self.currentPlayingMessageId != messageId {
+                    self.currentPlayingMessageId = messageId
+                }
+
+                let conversationContext = realtimeAPI.conversationContextSubject.value
+                if let message = conversationContext.first(where: { $0.id == messageId }) {
+                    let totalBuffers = message.audioBuffers.count
+                    self.audioPlaybackProgress = totalBuffers > 0 ? Double(buffersPlayed) / Double(totalBuffers) : 0.0
+                }
+            }
+            scheduledSequenceNumbers[message.id] = sequenceNumber
         }
     }
 
