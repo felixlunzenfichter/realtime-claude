@@ -5,6 +5,7 @@ import Combine
 protocol AudioManagerProtocol: Sendable {
     var isRecordingAudioSubject: CurrentValueSubject<Bool, Never> { get }
     var isPlayingAudioSubject: CurrentValueSubject<Bool, Never> { get }
+    var audioInputSourceSubject: CurrentValueSubject<String, Never> { get }
 
     func startAudioEngine()
     func stopAudioEngine()
@@ -20,6 +21,7 @@ nonisolated(unsafe) let audioManager: AudioManagerProtocol = AudioManager()
 final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     let isRecordingAudioSubject = CurrentValueSubject<Bool, Never>(false)
     let isPlayingAudioSubject = CurrentValueSubject<Bool, Never>(false)
+    let audioInputSourceSubject = CurrentValueSubject<String, Never>("Unknown")
 
     private let audioEngine: AVAudioEngine
     private let responsePlayerNode: AVAudioPlayerNode
@@ -40,6 +42,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         audioEngine.connect(responsePlayerNode, to: audioEngine.mainMixerNode, format: OPENAI_AUDIO_FORMAT)
 
         requestMicrophonePermission()
+        updateAudioInputSource()
     }
 
     func requestMicrophonePermission() {
@@ -54,9 +57,17 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         }
     }
 
+    func updateAudioInputSource() {
+        let session = AVAudioSession.sharedInstance()
+        let inputSource = session.currentRoute.inputs.first?.portName ?? "Unknown"
+        audioInputSourceSubject.send(inputSource)
+        log("Audio input source: \(inputSource)")
+    }
+
     func startAudioEngine() {
         do {
             try audioEngine.start()
+            updateAudioInputSource()
             log("Audio engine started successfully")
         } catch let startError {
             error("Failed to start audio engine: \(startError.localizedDescription)")

@@ -325,7 +325,7 @@ struct WorkView: View {
                 VStack(spacing: 0) {
                     Spacer()
 
-                    Text(viewModel.currentRecordingStatus.statusText)
+                    Text(viewModel.currentRecordingStatus == .isRecording ? "\(viewModel.currentRecordingStatus.statusText) (\(viewModel.audioInputSource))" : viewModel.currentRecordingStatus.statusText)
                         .font(.headline)
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
@@ -382,6 +382,7 @@ class WorkViewModel {
             handlePlaybackToggle()
         }
     }
+    var audioInputSource = "Unknown"
 
     var messages: [Message] = []
     var interrupts: [Message] = []
@@ -486,6 +487,13 @@ class WorkViewModel {
                 if messageStatus == .injected {
                     self?.removePendingInterrupts()
                 }
+            }
+            .store(in: &cancellables)
+
+        audioManager.audioInputSourceSubject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] inputSource in
+                self?.audioInputSource = inputSource
             }
             .store(in: &cancellables)
     }
