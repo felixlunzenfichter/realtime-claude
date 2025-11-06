@@ -14,6 +14,7 @@ protocol AudioManagerProtocol: Sendable {
     func enablePlayback()
     func disablePlayback()
     func scheduleOutputAudioBuffer(_ audioBase64: String, resetCount: Bool, onBufferPlayed: ((Int) -> Void)?)
+    func reset()
 }
 
 nonisolated(unsafe) let audioManager: AudioManagerProtocol = AudioManager()
@@ -67,9 +68,14 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
 
     func startAudioEngine() {
         do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playAndRecord, mode: .default)
+            try session.setActive(true)
+            try session.overrideOutputAudioPort(.speaker)
+
             try audioEngine.start()
             updateAudioInputSource()
-            log("Audio engine started successfully")
+            log("Audio engine started successfully with speaker output")
         } catch let startError {
             error("Failed to start audio engine: \(startError.localizedDescription)")
         }
@@ -130,6 +136,24 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         isPlaybackEnabled = false
         responsePlayerNode.stop()
         log("Playback disabled")
+    }
+
+    func reset() {
+        log("Resetting audio manager")
+
+        if isRecordingAudioSubject.value {
+            audioEngine.inputNode.removeTap(onBus: 0)
+            isRecordingAudioSubject.send(false)
+        }
+
+        responsePlayerNode.stop()
+
+        scheduledBufferCount = 0
+        buffersPlayedCount = 0
+
+        isPlayingAudioSubject.send(false)
+
+        log("Audio manager reset complete")
     }
 
     func scheduleOutputAudioBuffer(_ audioBase64: String, resetCount: Bool, onBufferPlayed: ((Int) -> Void)?) {

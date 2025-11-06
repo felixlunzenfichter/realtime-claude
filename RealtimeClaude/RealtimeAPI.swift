@@ -338,7 +338,15 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
 
     func send(event: [String: Any]) {
         guard let webSocketTask = webSocketTask else {
-            error("Cannot send event: WebSocket task is nil")
+            debugLog(id: "sendError", message: "❌ [WS] Unable to send: WebSocket task is nil, skipping")
+            return
+        }
+
+        let eventType = event["type"] as? String ?? "unknown"
+        let isConnectionEvent = eventType == "session.update" || eventType == "session.create"
+
+        if apiStateSubject.value == .disconnected && !isConnectionEvent {
+            debugLog(id: "sendError", message: "❌ [WS] Unable to send \(eventType): Disconnected, skipping")
             return
         }
 
@@ -356,7 +364,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         }
 
         let message = URLSessionWebSocketTask.Message.string(text)
-        let eventType = event["type"] as? String ?? "unknown"
 
         if eventType != "input_audio_buffer.append" {
             log("Sending event: \(eventType)")
@@ -1067,6 +1074,8 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     func attemptReconnect() {
         log("🔄 Attempting reconnection (attempt \(reconnectAttempts))")
         isReconnecting = true
+
+        audioManager.reset()
 
         conversationContextSubject.send([])
         currentUserMessageId = nil

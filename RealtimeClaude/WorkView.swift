@@ -630,6 +630,11 @@ class WorkViewModel {
     }
 
     func updateConversationContext(_ conversationContext: [ConversationMessage]) {
+        if conversationContext.isEmpty && !messages.isEmpty {
+            resetConversation()
+            return
+        }
+
         for convMsg in conversationContext {
             let content: String
             if convMsg.role == "assistant" {
@@ -661,6 +666,16 @@ class WorkViewModel {
                 scheduleNewAudioBuffers(convMsg)
             }
         }
+    }
+
+    func resetConversation() {
+        log("⚠️ Conversation reset - clearing all messages")
+
+        scheduledSequenceNumbers.removeAll()
+        messages.removeAll()
+
+        debugLog(id: "conversationReset", message: "🗑️ [Reset] Cleared all state due to reconnection")
+        log("🔄 Connection reset - conversation cleared")
     }
 
     func scheduleNewAudioBuffers(_ message: ConversationMessage) {
