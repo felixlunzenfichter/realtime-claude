@@ -22,7 +22,7 @@ protocol RealtimeAPIProtocol: Sendable {
     var apiStateSubject: CurrentValueSubject<APIState, Never> { get }
     var conversationContextSubject: CurrentValueSubject<[ConversationMessage], Never> { get }
 
-    func connect(apiKey: String)
+    func connect(apiKey: String?)
     func acknowledgeSuccessfulPromptInjection()
     func acknowledgeSuccessfulInterruptExecution()
     func clearAccumulatedPrompts()
@@ -48,6 +48,9 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     private var totalBytesSent: Int = 0
     private var urlSession: URLSession?
     private var webSocketTask: URLSessionWebSocketTask?
+    private var reconnectAttempts: Int = 0
+    private var reconnectTimer: DispatchSourceTimer?
+    private var isReconnecting: Bool = false
 
     fileprivate override init() {
         super.init()
@@ -61,10 +64,37 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             delegate: self,
             delegateQueue: OperationQueue.main
         )
+
+        if let existingApiKey = loadFromKeychain(key: "OPENAI_API_KEY") {
+            log("Found existing API key in Keychain, auto-connecting")
+            connect(apiKey: existingApiKey)
+        }
     }
 
-    func connect(apiKey: String) {
+    func connect(apiKey: String?) {
+        let resolvedApiKey: String
+        if let apiKey = apiKey {
+            saveToKeychain(key: "OPENAI_API_KEY", value: apiKey)
+            resolvedApiKey = apiKey
+        } else {
+            guard let loadedApiKey = loadFromKeychain(key: "OPENAI_API_KEY") else {
+                error("No API key provided and none found in Keychain")
+                return
+            }
+            resolvedApiKey = loadedApiKey
+        }
+
+        if apiStateSubject.value == .connected {
+            log("Already connected, skipping connection attempt")
+            return
+        }
+
         log("Attempting to connect to OpenAI Realtime API")
+
+        if !isReconnecting {
+            reconnectAttempts = 0
+        }
+        cancelReconnectTimer()
 
         guard let url = URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime") else {
             error("Invalid WebSocket URL")
@@ -72,7 +102,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         }
 
         var request = URLRequest(url: url)
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(resolvedApiKey)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 60.0
 
         log("Creating WebSocket task...")
@@ -99,6 +129,9 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             log("Using protocol: \(`protocol`)")
         }
 
+        reconnectAttempts = 0
+        cancelReconnectTimer()
+
         self.receiveMessage()
     }
 
@@ -106,7 +139,9 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                     webSocketTask: URLSessionWebSocketTask,
                     didCloseWith closeCode: URLSessionWebSocketTask.CloseCode,
                     reason: Data?) {
+        log("WebSocket closed with code: \(closeCode.rawValue)")
         updateAPIState(.disconnected)
+        scheduleReconnect()
     }
 
     func receiveMessage() {
@@ -246,6 +281,10 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func handleSessionCreated() {
+        if isReconnecting {
+            log("✅ Automatic reconnection after disconnect")
+            isReconnecting = false
+        }
         log("WebSocket connection established")
         sendSessionUpdate()
     }
@@ -852,7 +891,9 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     func handleError(_ connectionError: Error) {
         let nsError = connectionError as NSError
         let errorMessage = formatConnectionError(nsError)
-        error(errorMessage)
+        log("❌ \(errorMessage)")
+        updateAPIState(.disconnected)
+        scheduleReconnect()
     }
 
     func formatConnectionError(_ nsError: NSError) -> String {
@@ -999,9 +1040,110 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         audioManager.stopAudioEngine()
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
         webSocketTask = nil
+        cancelReconnectTimer()
+    }
+
+    func scheduleReconnect() {
+        guard loadFromKeychain(key: "OPENAI_API_KEY") != nil else {
+            error("Cannot schedule reconnect: API key not in Keychain")
+            return
+        }
+
+        cancelReconnectTimer()
+
+        reconnectAttempts += 1
+        let delay = min(pow(2.0, Double(reconnectAttempts - 1)), 30.0)
+        log("⏱️ Scheduling reconnection attempt \(reconnectAttempts) in \(String(format: "%.1f", delay))s")
+
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .userInitiated))
+        timer.schedule(deadline: .now() + delay)
+        timer.setEventHandler { [weak self] in
+            self?.attemptReconnect()
+        }
+        timer.resume()
+        reconnectTimer = timer
+    }
+
+    func attemptReconnect() {
+        log("🔄 Attempting reconnection (attempt \(reconnectAttempts))")
+        isReconnecting = true
+
+        conversationContextSubject.send([])
+        currentUserMessageId = nil
+        isResponseActive = false
+        responseRequestQueue = []
+        currentProcessingMessageId = nil
+        currentAudioSequenceNumber = 0
+
+        log("🗑️ Cleared conversation context for reconnection")
+
+        connect(apiKey: nil)
+    }
+
+    func cancelReconnectTimer() {
+        reconnectTimer?.cancel()
+        reconnectTimer = nil
+    }
+
+    func saveToKeychain(key: String, value: String) {
+        guard let data = value.data(using: .utf8) else {
+            error("Failed to encode keychain value as UTF8")
+            return
+        }
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+            kSecValueData as String: data
+        ]
+
+        let deleteStatus = SecItemDelete(query as CFDictionary)
+        log("Keychain delete status for \(key): \(deleteStatus)")
+
+        let addStatus = SecItemAdd(query as CFDictionary, nil)
+
+        guard addStatus == errSecSuccess else {
+            error("Failed to save to keychain: \(addStatus)")
+            return
+        }
+
+        log("Successfully saved \(key) to Keychain")
+    }
+
+    func loadFromKeychain(key: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        guard status == errSecSuccess else {
+            if status != errSecItemNotFound {
+                error("Failed to read from keychain: \(status)")
+            }
+            return nil
+        }
+
+        guard let data = result as? Data else {
+            error("Keychain data is not Data type")
+            return nil
+        }
+
+        guard let value = String(data: data, encoding: .utf8) else {
+            error("Failed to decode keychain data as UTF8")
+            return nil
+        }
+
+        log("Successfully loaded \(key) from Keychain")
+        return value
     }
 
     deinit {
+        cancelReconnectTimer()
         audioManager.stopAudioEngine()
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
         log("realtimeAPI deallocated")

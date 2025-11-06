@@ -75,10 +75,13 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     let testsPassedSubject = CurrentValueSubject<Int, Never>(0)
     let transmittedLogIdsSubject = CurrentValueSubject<[String], Never>([])
 
-    private let connection: NWConnection
+    private var connection: NWConnection
     private let macHostname = "Felixs-MacBook-Pro.local"
     private let port: UInt16 = 8082
     private let tcpProcessingQueue = DispatchQueue(label: "logger.tcp.processing", qos: .userInitiated)
+    private var reconnectAttempts: Int = 0
+    private var reconnectTimer: DispatchSourceTimer?
+    private var isConnectionReady: Bool = false
 
     private let TEST_DEFINITIONS: [Int: String] = [
         1: "Successful handshake",
@@ -96,21 +99,35 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     private var totalBytesSentToMac: Int = 0
 
     fileprivate init() {
-
-        guard let portValue = NWEndpoint.Port(rawValue: port) else {
-            fatalError("Invalid port number: \(port)")
-        }
-
+        let portValue = NWEndpoint.Port(rawValue: port) ?? NWEndpoint.Port(integerLiteral: 8082)
         let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(macHostname), port: portValue)
         connection = NWConnection(to: endpoint, using: .tcp)
 
-        connection.stateUpdateHandler = { state in
+        setupConnection()
+    }
+
+    private func setupConnection() {
+        connection.stateUpdateHandler = { [weak self] state in
+            guard let self = self else { return }
+
             switch state {
             case .ready:
+                log("Connected to Mac server")
+                self.isConnectionReady = true
+                self.reconnectAttempts = 0
+                self.cancelReconnectTimer()
                 self.startReceiving()
                 self.sendStartMessage()
             case .failed(let connectionError):
-                error("Logger connection failed: \(connectionError)")
+                log("Logger connection failed: \(connectionError)")
+                self.isConnectionReady = false
+                self.scheduleReconnect()
+            case .waiting(let waitError):
+                log("Waiting to connect to Mac: \(waitError)")
+                self.isConnectionReady = false
+                self.scheduleReconnect()
+            case .cancelled:
+                self.isConnectionReady = false
             default:
                 break
             }
@@ -155,6 +172,10 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         tcpProcessingQueue.async { [weak self] in
             guard let self = self else { return }
 
+            guard self.isConnectionReady else {
+                return
+            }
+
             guard let newlineData = "\n".data(using: .utf8) else {
                 error("Failed to convert newline to UTF-8 data")
                 return
@@ -174,7 +195,10 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
             self.connection.send(content: jsonData, completion: .contentProcessed { sendError in
                 if let sendError = sendError {
-                    error("Failed to send \(messageType): \(sendError)")
+                    let nsError = sendError as NSError
+                    if nsError.code != 89 {
+                        log("❌ Failed to send \(messageType): \(sendError)")
+                    }
                 }
             })
         }
@@ -218,7 +242,8 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             guard let self = self else { return }
 
             if let receiveError = receiveError {
-                error("Logger receive failed: \(receiveError)")
+                log("Logger receive failed: \(receiveError)")
+                self.scheduleReconnect()
                 return
             }
 
@@ -454,6 +479,43 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         sendMessage(jsonData, messageType: "prompt", logMessage: "📤 [iOS → macOS] Sending prompt: \(prompt)")
 
         promptStatusSubject.send(PromptStatusUpdate(prompt: prompt, status: "sent"))
+    }
+
+    private func scheduleReconnect() {
+        cancelReconnectTimer()
+
+        reconnectAttempts += 1
+        let delay = min(pow(2.0, Double(reconnectAttempts - 1)), 30.0)
+        log("⏱️ Scheduling Mac reconnection attempt \(reconnectAttempts) in \(String(format: "%.1f", delay))s")
+
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .userInitiated))
+        timer.schedule(deadline: .now() + delay)
+        timer.setEventHandler { [weak self] in
+            self?.attemptReconnect()
+        }
+        timer.resume()
+        reconnectTimer = timer
+    }
+
+    private func attemptReconnect() {
+        log("🔄 Attempting Mac reconnection (attempt \(reconnectAttempts))")
+
+        connection.cancel()
+
+        guard let portValue = NWEndpoint.Port(rawValue: port) else {
+            log("❌ Invalid port number: \(port)")
+            return
+        }
+
+        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(macHostname), port: portValue)
+        connection = NWConnection(to: endpoint, using: .tcp)
+
+        setupConnection()
+    }
+
+    private func cancelReconnectTimer() {
+        reconnectTimer?.cancel()
+        reconnectTimer = nil
     }
 }
 
