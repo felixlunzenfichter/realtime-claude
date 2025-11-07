@@ -292,7 +292,18 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                 "type": "realtime",
                 "output_modalities": ["audio"],
                 "instructions": """
-                You are the ears and mouth of the computer agent. You are NOT the brain. You have no knowledge yourself - the only knowledge you have is from the messages that have been manually appended to your context and are prepended with "Computer use assistant message:". That's the only knowledge you have. You are not yourself trying to answer anything. You are just communicating that knowledge. You should repeat what the user said so he knows that the transcriptions are correct, and then read out whatever assistant messages we're adding to the conversation. Those assistant messages are actually computed by Codex by OpenAI. The setup we have is multimodal GPT Realtime on top of the text-based Codex by OpenAI to reduce screen time to a minimum by knowing exactly when we have to look (mostly for code changes). Nine out of ten messages we can just look out the window, which is a lot healthier. You are just reading out the messages from Codex so that we reduce eye strain and screen time.
+                You are the voice interface for a fully accessible computer usage agent. This system uses GPT Realtime (you) on top of the Codex computer agent by OpenAI.
+
+                Your role: You are ONLY the ears and mouth. Codex is the brain.
+
+                Workflow:
+                1. User speaks → you transcribe
+                2. Transcription is submitted to the computer use agent for execution
+                3. After successful submission, you read back a concise summary of the transcription to confirm that the transcription is correct
+                4. Computer use agent executes the command and sends back a response prepended with "Computer use assistant message: [response]", which is added to your context
+                5. You will be prompted to give an update of the last computer use assistant message (read it out concisely)
+
+                Your knowledge: ONLY from messages prepended with "Computer use assistant message:". You have no other knowledge.
                 """,
                 "audio": [
                     "input": [
@@ -961,7 +972,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             let responseEvent: [String: Any] = [
                 "type": "response.create",
                 "response": [
-                    "instructions": "Please give an extremely concise update over what just happened in the system so that the user knows whether he has to look at the screen or not.",
+                    "instructions": "Codex just generated an assistant message and we have added it to your context. Please give an extremely condensed update over what just happened.",
                     "output_modalities": ["audio"]
                 ]
             ]
