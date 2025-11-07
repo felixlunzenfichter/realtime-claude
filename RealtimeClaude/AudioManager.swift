@@ -88,7 +88,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         }
         isRecordingAudioSubject.send(true)
         responsePlayerNode.stop()
-        responsePlayerNode.reset()
         installInputAudioTap()
         log("Started recording")
     }
@@ -99,6 +98,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         isRecordingAudioSubject.send(false)
         log("Stopped recording")
 
+        responsePlayerNode.reset()
         responsePlayerNode.play()
         sendSilence()
     }
@@ -132,7 +132,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     func disablePlayback() {
         isPlaybackEnabled = false
         responsePlayerNode.stop()
-        responsePlayerNode.reset()
         log("Playback disabled")
     }
 
