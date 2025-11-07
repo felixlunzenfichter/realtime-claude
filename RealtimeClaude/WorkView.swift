@@ -123,12 +123,12 @@ enum MessageAudioState: Sendable {
 }
 
 struct Message: Identifiable {
-    let id = UUID()
+    let id: UUID
     var content: String
     let timestamp: Date
     var status: MessageStatus
     var audioState: MessageAudioState?
-    var conversationMessageId: UUID?
+    var role: String
 }
 
 struct ToggleBar: View {
@@ -271,7 +271,7 @@ struct WorkView: View {
                                                 .frame(maxWidth: .infinity, alignment: .leading)
                                                 .glassEffect(.clear.tint(message.audioState?.color ?? message.status.color), in: .capsule)
 
-                                                if message.conversationMessageId == viewModel.currentPlayingMessageId && viewModel.audioPlaybackProgress > 0 {
+                                                if message.id == viewModel.currentPlayingMessageId && viewModel.audioPlaybackProgress > 0 {
                                                     VStack {
                                                         Spacer()
                                                     }
@@ -414,10 +414,9 @@ class WorkViewModel {
         didSet {
             log("Recording status changed: \(oldValue) → \(currentRecordingStatus)")
             if currentRecordingStatus == .connected {
-                let conversationContext = realtimeAPI.conversationContextSubject.value
-                if let latestUserMessage = conversationContext.first(where: { $0.role == "user" }) {
-                    log("Sending prompt to Claude Code: \(latestUserMessage.text)")
-                    logger.sendPromptToMac(latestUserMessage.text)
+                if let latestMessage = messages.first(where: { $0.role == "user" && ($0.status == .notSent || $0.status == .sent) }) {
+                    log("Sending prompt to Claude Code: \(latestMessage.content)")
+                    logger.sendPromptToMac(latestMessage.content)
                 }
             }
         }
@@ -537,6 +536,7 @@ class WorkViewModel {
 
                 if messageStatus == .injected {
                     self?.removePendingInterrupts()
+                    self?.failOlderSendingMessages(injectedPrompt: statusUpdate.prompt)
                 }
             }
             .store(in: &cancellables)
@@ -620,9 +620,12 @@ class WorkViewModel {
             messages[index].content = content
         } else {
             let message = Message(
+                id: UUID(),
                 content: content,
                 timestamp: Date(),
-                status: .notSent
+                status: .notSent,
+                audioState: nil,
+                role: "user"
             )
             let insertionIndex = messages.firstIndex(where: { $0.timestamp < message.timestamp }) ?? messages.count
             messages.insert(message, at: insertionIndex)
@@ -643,18 +646,19 @@ class WorkViewModel {
                 content = convMsg.text
             }
 
-            if let index = messages.firstIndex(where: { $0.conversationMessageId == convMsg.id }) {
+            if let index = messages.firstIndex(where: { $0.id == convMsg.id }) {
                 messages[index].content = content
                 messages[index].audioState = convMsg.audioState
             } else {
                 let initialStatus: MessageStatus = convMsg.role == "assistant" ? .injected : .notSent
 
                 let message = Message(
+                    id: convMsg.id,
                     content: content,
                     timestamp: Date(),
                     status: initialStatus,
                     audioState: convMsg.audioState,
-                    conversationMessageId: convMsg.id
+                    role: convMsg.role
                 )
 
                 let insertionIndex = messages.firstIndex(where: { $0.timestamp < message.timestamp }) ?? messages.count
@@ -717,13 +721,8 @@ class WorkViewModel {
     }
 
     func replayAudioForMessage(_ message: Message) {
-        guard let conversationMessageId = message.conversationMessageId else {
-            log("No conversation message ID for replay")
-            return
-        }
-
         let conversationContext = realtimeAPI.conversationContextSubject.value
-        guard let convMsg = conversationContext.first(where: { $0.id == conversationMessageId }) else {
+        guard let convMsg = conversationContext.first(where: { $0.id == message.id }) else {
             log("Cannot find conversation message for replay")
             return
         }
@@ -735,11 +734,11 @@ class WorkViewModel {
 
         log("Replaying audio for message with \(convMsg.audioBuffers.count) buffers")
 
-        scheduledSequenceNumbers[conversationMessageId] = 0
+        scheduledSequenceNumbers[message.id] = 0
 
         for (sequenceNumber, audioBuffer) in convMsg.audioBuffers {
             let audioBase64 = audioBuffer.base64EncodedString()
-            let messageId = conversationMessageId
+            let messageId = message.id
             let resetCount = (sequenceNumber == 1)
             audioManager.scheduleOutputAudioBuffer(audioBase64, resetCount: resetCount) { [weak self] buffersPlayed in
                 guard let self = self else { return }
@@ -751,7 +750,7 @@ class WorkViewModel {
                 let totalBuffers = convMsg.audioBuffers.count
                 self.audioPlaybackProgress = totalBuffers > 0 ? Double(buffersPlayed) / Double(totalBuffers) : 0.0
             }
-            scheduledSequenceNumbers[conversationMessageId] = sequenceNumber
+            scheduledSequenceNumbers[message.id] = sequenceNumber
         }
     }
 
@@ -762,6 +761,21 @@ class WorkViewModel {
         }
         if let index = interrupts.firstIndex(where: { $0.content == prompt }) {
             interrupts[index].status = status
+        }
+    }
+
+    func failOlderSendingMessages(injectedPrompt: String) {
+        guard let injectedIndex = messages.firstIndex(where: { $0.content == injectedPrompt }) else {
+            return
+        }
+
+        let injectedTimestamp = messages[injectedIndex].timestamp
+
+        for i in 0..<messages.count {
+            if messages[i].timestamp < injectedTimestamp && messages[i].status == .sent {
+                messages[i].status = .failed
+                log("❌ Marked older message as failed: \(messages[i].content)")
+            }
         }
     }
 
@@ -793,9 +807,12 @@ class WorkViewModel {
 
     func addInterrupt() {
         let interrupt = Message(
+            id: UUID(),
             content: INTERRUPT_MESSAGE,
             timestamp: Date(),
-            status: .notSent
+            status: .notSent,
+            audioState: nil,
+            role: "user"
         )
         interrupts.insert(interrupt, at: 0)
 
