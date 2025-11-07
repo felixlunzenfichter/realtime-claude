@@ -88,6 +88,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         }
         isRecordingAudioSubject.send(true)
         responsePlayerNode.stop()
+        responsePlayerNode.reset()
         installInputAudioTap()
         log("Started recording")
     }
@@ -131,6 +132,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     func disablePlayback() {
         isPlaybackEnabled = false
         responsePlayerNode.stop()
+        responsePlayerNode.reset()
         log("Playback disabled")
     }
 
@@ -143,6 +145,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         }
 
         responsePlayerNode.stop()
+        responsePlayerNode.reset()
 
         scheduledBufferCount = 0
         buffersPlayedCount = 0
@@ -183,11 +186,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
                 self.buffersPlayedCount += 1
 
                 onBufferPlayed?(self.buffersPlayedCount)
-
-                if self.isRecordingAudioSubject.value {
-                    self.responsePlayerNode.stop()
-                    log("🎤 Stopped response player node because microphone is active")
-                }
 
                 if self.scheduledBufferCount > 0 {
                     if self.isPlayingAudioSubject.value {
