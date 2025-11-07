@@ -85,16 +85,14 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
     private let TEST_DEFINITIONS: [Int: String] = [
         1: "Successful handshake",
-        2: "WebSocket connection established",
-        3: "Voice activity detection started",
-        4: "Voice activity detection stopped",
-        5: "Prompt successfully injected into terminal",
-        6: "Started playing response",
-        7: "Stopped playing response"
+        2: "Voice activity detection started",
+        3: "Voice activity detection stopped",
+        4: "Prompt successfully injected into terminal",
+        5: "Started playing response",
+        6: "Stopped playing response"
     ]
 
     private var dataBuffer = Data()
-    private var passedTestNumbers: Set<Int> = []
     private var totalBytesReceived: Int = 0
     private var totalBytesSentToMac: Int = 0
 
@@ -334,10 +332,9 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
         let currentLogs = logsSubject.value
         if let logMessage = currentLogs.first(where: { $0.id == logId }) {
-            let nextTestNumber = (passedTestNumbers.max() ?? 0) + 1
+            let nextTestNumber = testsPassedSubject.value + 1
             if let testString = TEST_DEFINITIONS[nextTestNumber],
                logMessage.message.contains(testString) {
-                passedTestNumbers.insert(nextTestNumber)
                 testsPassedSubject.send(nextTestNumber)
                 log("✅ Test \(nextTestNumber) passed: \(testString)")
             }

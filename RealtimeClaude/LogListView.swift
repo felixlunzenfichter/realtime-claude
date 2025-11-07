@@ -10,7 +10,7 @@ class LogListViewModel {
     var showDebugLogs: Bool = false
     var showErrorLogs: Bool = true
     var showRegularLogs: Bool = true
-    var passedTestNumbers: Set<Int> = []
+    var successfulTests: Int = 0
     var totalLogs: Int = 0
     var totalTests: Int = 0
     var transmittedLogIds: [String] = []
@@ -61,10 +61,6 @@ class LogListViewModel {
 
     var sessionLogsCount: Int {
         transmittedLogIds.count
-    }
-
-    var successfulTests: Int {
-        passedTestNumbers.max() ?? 0
     }
 
     var sessionStartTime: Date? {
@@ -122,7 +118,7 @@ class LogListViewModel {
             self.previousRunFailed = stats.previousRunFailed
         }
 
-        setupSubscription(logger.testsPassedSubject) { self.passedTestNumbers.insert($0) }
+        setupSubscription(logger.testsPassedSubject) { self.successfulTests = $0 }
     }
 
     func setupSubscription<T>(_ subject: CurrentValueSubject<T, Never>, updateProperty: @escaping (T) -> Void) {

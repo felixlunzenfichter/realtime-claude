@@ -272,7 +272,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func handleSessionCreated() {
-        log("WebSocket connection established")
         sendSessionUpdate()
     }
 
@@ -386,10 +385,12 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
 
     func handleSpeechStarted() {
         updateAPIState(.speechDetected)
+        log("Voice activity detection started")
     }
 
     func handleSpeechStopped() {
         updateAPIState(.speechStopped)
+        log("Voice activity detection stopped")
         callTranscriptionDeltaFunction()
     }
 
@@ -745,15 +746,27 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         if let item = json["item"] as? [String: Any],
            let id = item["id"] as? String,
            let type = item["type"] as? String {
-            log("conversation.item.added: id=\(id), type=\(type)")
+            log("conversation.item.added: id=\(id), type=\(type), full JSON: \(json)")
         }
     }
 
     func handleConversationItemDone(_ json: [String: Any]) {
         if let item = json["item"] as? [String: Any],
            let id = item["id"] as? String,
+           let type = item["type"] as? String,
            let status = item["status"] as? String {
-            log("conversation.item.done: id=\(id), status=\(status)")
+            log("conversation.item.done: id=\(id), status=\(status), full JSON: \(json)")
+
+            if let role = item["role"] as? String, role == "assistant" {
+                if type == "message",
+                   status == "completed",
+                   let content = item["content"] as? [[String: Any]],
+                   let firstContent = content.first,
+                   let contentType = firstContent["type"] as? String, contentType == "output_text" {
+                    log("✅ Context item completed, advancing queue")
+                    markResponseComplete()
+                }
+            }
         }
     }
 
@@ -973,7 +986,10 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                 ]
             ]
             self.send(event: conversationItem)
+        }
 
+        queueResponseRequest(messageId: message.id) { [weak self] in
+            guard let self = self else { return }
             let responseEvent: [String: Any] = [
                 "type": "response.create",
                 "response": [
