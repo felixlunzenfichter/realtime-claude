@@ -86,6 +86,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
             debugLog(id: "startRecording", message: "⚠️ [Audio] Already recording, ignoring")
             return
         }
+        isRecordingAudioSubject.send(true)
         responsePlayerNode.stop()
         installInputAudioTap()
         log("Started recording")
@@ -173,30 +174,32 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
                 return
             }
 
-            if resetCount {
-                self.buffersPlayedCount = 0
-            }
-
-            self.scheduledBufferCount -= 1
-            self.buffersPlayedCount += 1
-
-            onBufferPlayed?(self.buffersPlayedCount)
-
-            if self.isRecordingAudioSubject.value {
-                self.responsePlayerNode.stop()
-                log("🎤 Stopped response player node because microphone is active")
-            }
-
-            if self.scheduledBufferCount > 0 {
-                if self.isPlayingAudioSubject.value {
-                    debugLog(id: "audioPlayback", message: "🎵 [Audio] Already playing")
-                } else {
-                    self.isPlayingAudioSubject.send(true)
-                    log("Started playing response")
+            DispatchQueue.main.async {
+                if resetCount {
+                    self.buffersPlayedCount = 0
                 }
-            } else if self.scheduledBufferCount == 0 {
-                self.isPlayingAudioSubject.send(false)
-                log("Stopped playing response")
+
+                self.scheduledBufferCount -= 1
+                self.buffersPlayedCount += 1
+
+                onBufferPlayed?(self.buffersPlayedCount)
+
+                if self.isRecordingAudioSubject.value {
+                    self.responsePlayerNode.stop()
+                    log("🎤 Stopped response player node because microphone is active")
+                }
+
+                if self.scheduledBufferCount > 0 {
+                    if self.isPlayingAudioSubject.value {
+                        debugLog(id: "audioPlayback", message: "🎵 [Audio] Already playing")
+                    } else {
+                        self.isPlayingAudioSubject.send(true)
+                        log("Started playing response")
+                    }
+                } else if self.scheduledBufferCount == 0 {
+                    self.isPlayingAudioSubject.send(false)
+                    log("Stopped playing response")
+                }
             }
         }
 
@@ -275,10 +278,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
             guard let self = self else {
                 error("audioManager deallocated during audio tap")
                 return
-            }
-
-            if !self.isRecordingAudioSubject.value {
-                self.isRecordingAudioSubject.send(true)
             }
 
             guard let convertedBuffer = self.convertToOpenAIFormat(buffer) else {
