@@ -746,7 +746,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         if let item = json["item"] as? [String: Any],
            let id = item["id"] as? String,
            let type = item["type"] as? String {
-            log("conversation.item.added: id=\(id), type=\(type), full JSON: \(json)")
+            debugLog(id: "conversationItem", message: "conversation.item.added: id=\(id), type=\(type)")
         }
     }
 
@@ -755,7 +755,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
            let id = item["id"] as? String,
            let type = item["type"] as? String,
            let status = item["status"] as? String {
-            log("conversation.item.done: id=\(id), status=\(status), full JSON: \(json)")
+            debugLog(id: "conversationItem", message: "conversation.item.done: id=\(id), status=\(status)")
 
             if let role = item["role"] as? String, role == "assistant" {
                 if type == "message",
@@ -879,7 +879,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             return
         }
 
-        log("response.output_item.added: type=\(itemType), full JSON: \(json)")
+        debugLog(id: "outputItem", message: "response.output_item.added: type=\(itemType)")
 
         updateMessageAudioState(messageId: currentProcessingMessageId, newState: .processing)
 
