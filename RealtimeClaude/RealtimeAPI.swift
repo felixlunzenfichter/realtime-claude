@@ -72,29 +72,23 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func connect(apiKey: String?) {
-        let resolvedApiKey: String
         if let apiKey = apiKey {
             saveToKeychain(key: "OPENAI_API_KEY", value: apiKey)
-            resolvedApiKey = apiKey
-        } else {
-            guard let loadedApiKey = loadFromKeychain(key: "OPENAI_API_KEY") else {
-                error("No API key provided and none found in Keychain")
-                return
-            }
-            resolvedApiKey = loadedApiKey
         }
 
-        if apiStateSubject.value == .connected {
-            log("Already connected, skipping connection attempt")
+        guard let resolvedApiKey = loadFromKeychain(key: "OPENAI_API_KEY") else {
+            error("No API key found in Keychain")
             return
         }
 
-        log("Attempting to connect to OpenAI Realtime API")
-
-        if !isReconnecting {
-            reconnectAttempts = 0
+        if apiStateSubject.value == .connected || isReconnecting {
+            log("Already connected or reconnecting, skipping connection attempt")
+            return
         }
-        cancelReconnectTimer()
+
+        isReconnecting = true
+
+        log("Attempting to connect to OpenAI Realtime API")
 
         guard let url = URL(string: "wss://api.openai.com/v1/realtime?model=gpt-realtime") else {
             error("Invalid WebSocket URL")
@@ -128,9 +122,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         if let `protocol` = `protocol` {
             log("Using protocol: \(`protocol`)")
         }
-
-        reconnectAttempts = 0
-        cancelReconnectTimer()
 
         self.receiveMessage()
     }
@@ -281,17 +272,17 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func handleSessionCreated() {
-        if isReconnecting {
-            log("✅ Automatic reconnection after disconnect")
-            isReconnecting = false
-        }
         log("WebSocket connection established")
         sendSessionUpdate()
     }
 
     func handleSessionUpdated() {
         updateAPIState(.connected)
+        isReconnecting = false
+        reconnectAttempts = 0
+        cancelReconnectTimer()
         audioManager.startAudioEngine()
+        processNextQueuedRequest()
     }
 
     func sendSessionUpdate() {
@@ -1073,7 +1064,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
 
     func attemptReconnect() {
         log("🔄 Attempting reconnection (attempt \(reconnectAttempts))")
-        isReconnecting = true
 
         audioManager.reset()
 

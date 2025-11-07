@@ -68,11 +68,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
 
     func startAudioEngine() {
         do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playAndRecord, mode: .default)
-            try session.setActive(true)
-            try session.overrideOutputAudioPort(.speaker)
-
             try audioEngine.start()
             updateAudioInputSource()
             log("Audio engine started successfully with speaker output")
@@ -201,7 +196,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
                 }
             } else if self.scheduledBufferCount == 0 {
                 self.isPlayingAudioSubject.send(false)
-                self.buffersPlayedCount = 0
                 log("Stopped playing response")
             }
         }
@@ -278,17 +272,22 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         let format = inputNode.outputFormat(forBus: 0)
 
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-            guard let self = self else { return }
+            guard let self = self else {
+                error("audioManager deallocated during audio tap")
+                return
+            }
 
             if !self.isRecordingAudioSubject.value {
                 self.isRecordingAudioSubject.send(true)
             }
 
             guard let convertedBuffer = self.convertToOpenAIFormat(buffer) else {
+                error("Failed to convert audio buffer to OpenAI format")
                 return
             }
 
             guard let data = self.bufferToData(convertedBuffer) else {
+                error("Failed to convert audio buffer to data")
                 return
             }
 
