@@ -13,9 +13,11 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 const logsDir = path.join('private', 'logs');
+const lastAssistantMessageFile = path.join('private', 'last-assistant-message.txt');
 let currentSessionFile = null;
 let currentSessionNumber = 0;
 let activeSocket = null;
+let lastSentAssistantMessage = null;
 
 const server = net.createServer((socket) => {
     console.log('iOS client connected');
@@ -43,6 +45,8 @@ const server = net.createServer((socket) => {
         console.error(`⚠️ Socket error (continuing): ${err.message}`);
     });
 });
+
+loadLastAssistantMessage();
 
 server.listen(8082, '0.0.0.0', () => {
     console.log(`Mac server listening on :8082 | ${getSessionCount()} sessions`);
@@ -370,6 +374,12 @@ function sendHandshakeResponse(socket, stats) {
     if (previousErrors.length > 0) {
         console.log(`📤 Sent ${previousErrors.length} previous error(s) to iOS app`);
     }
+
+    if (lastSentAssistantMessage) {
+        console.log(`📤 Handshake includes assistant message: ${lastSentAssistantMessage.substring(0, 100)}...`);
+    } else {
+        console.log(`📤 Handshake sent with no assistant message (null)`);
+    }
 }
 
 function getPreviousSessionErrors(currentSessionNumber) {
@@ -469,7 +479,27 @@ function sendAcknowledgment(socket, logId) {
 
 let pendingPrompts = new Map();
 let promptCounter = 0;
-let lastSentAssistantMessage = null;
+
+function loadLastAssistantMessage() {
+    try {
+        if (fs.existsSync(lastAssistantMessageFile)) {
+            lastSentAssistantMessage = fs.readFileSync(lastAssistantMessageFile, 'utf8');
+            console.log(`📋 Loaded last assistant message from disk: ${lastSentAssistantMessage.substring(0, 80)}...`);
+        } else {
+            console.log('📋 No previous assistant message found');
+        }
+    } catch (error) {
+        console.error(`⚠️ Failed to load last assistant message: ${error.message}`);
+    }
+}
+
+function saveLastAssistantMessage(message) {
+    try {
+        fs.writeFileSync(lastAssistantMessageFile, message, 'utf8');
+    } catch (error) {
+        console.error(`⚠️ Failed to save last assistant message: ${error.message}`);
+    }
+}
 
 function initializeClaudeMonitoring() {
     const claudeProjectsPath = path.join(process.env.HOME, '.claude', 'projects');
@@ -588,6 +618,7 @@ function checkForInjectedPrompts(filePath) {
                 activeSocket.write(assistantData);
 
                 lastSentAssistantMessage = mostRecentAssistant.text;
+                saveLastAssistantMessage(lastSentAssistantMessage);
             } else if (lastSentAssistantMessage === mostRecentAssistant.text) {
                 console.log(`⏭️  Skipping assistant message (already sent)`);
             }
@@ -647,6 +678,7 @@ function checkForInjectedPrompts(filePath) {
                                 activeSocket.write(assistantData);
 
                                 lastSentAssistantMessage = mostRecentAssistant.text;
+                                saveLastAssistantMessage(lastSentAssistantMessage);
                             } else {
                                 console.log(`⏭️  Skipping assistant message (already sent)`);
                             }

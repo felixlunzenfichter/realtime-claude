@@ -477,7 +477,10 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
 
             self.responseRequestQueue.append((messageId, request))
             log("Response queue: added request for message \(messageId) (total: \(self.responseRequestQueue.count))")
-            self.processNextQueuedRequest()
+
+            if self.apiStateSubject.value != .disconnected {
+                self.processNextQueuedRequest()
+            }
         }
     }
 
@@ -954,33 +957,33 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         currentContext.insert(message, at: 0)
         conversationContextSubject.send(currentContext)
 
-        let contextText = "Computer use assistant message: \(text)"
-        let conversationItem: [String: Any] = [
-            "type": "conversation.item.create",
-            "item": [
-                "type": "message",
-                "role": "assistant",
-                "content": [
-                    ["type": "output_text", "text": contextText]
-                ]
-            ]
-        ]
-        send(event: conversationItem)
+        log("Added assistant message to queue: \(text)")
 
         queueResponseRequest(messageId: message.id) { [weak self] in
             guard let self = self else { return }
+            let contextText = "Computer use assistant message: \(text)"
+            let conversationItem: [String: Any] = [
+                "type": "conversation.item.create",
+                "item": [
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        ["type": "output_text", "text": contextText]
+                    ]
+                ]
+            ]
+            self.send(event: conversationItem)
+
             let responseEvent: [String: Any] = [
                 "type": "response.create",
                 "response": [
-                    "instructions": "Codex just generated an assistant message and we have added it to your context. Please give an extremely condensed update over what just happened.",
+                    "instructions": "Codex just generated an assistant message and we have added it to your context. Please give an extremely condensed update over what just happened. No fluff.",
                     "output_modalities": ["audio"]
                 ]
             ]
             self.send(event: responseEvent)
             log("Queued audio generation for assistant message")
         }
-
-        log("Added assistant message to conversation context and realtime API: \(text)")
     }
 
     func updateMessageAudioState(messageId: UUID?, newState: MessageAudioState) {

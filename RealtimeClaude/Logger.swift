@@ -334,13 +334,12 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
         let currentLogs = logsSubject.value
         if let logMessage = currentLogs.first(where: { $0.id == logId }) {
-            for (testNumber, testString) in TEST_DEFINITIONS.sorted(by: { $0.key < $1.key }) {
-                if !passedTestNumbers.contains(testNumber) && logMessage.message.contains(testString) {
-                    passedTestNumbers.insert(testNumber)
-                    testsPassedSubject.send(testNumber)
-                    log("✅ Test \(testNumber) passed: \(testString)")
-                    break
-                }
+            let nextTestNumber = (passedTestNumbers.max() ?? 0) + 1
+            if let testString = TEST_DEFINITIONS[nextTestNumber],
+               logMessage.message.contains(testString) {
+                passedTestNumbers.insert(nextTestNumber)
+                testsPassedSubject.send(nextTestNumber)
+                log("✅ Test \(nextTestNumber) passed: \(testString)")
             }
 
             if logMessage.type == .error {
