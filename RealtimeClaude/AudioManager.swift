@@ -67,18 +67,32 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     }
 
     func startAudioEngine() {
-        do {
-            try audioEngine.start()
-            updateAudioInputSource()
-            log("Audio engine started successfully with speaker output")
-        } catch let startError {
-            error("Failed to start audio engine: \(startError.localizedDescription)")
+        DispatchQueue.main.async {
+            do {
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+                try session.setActive(true)
+                try session.overrideOutputAudioPort(.speaker)
+
+                try self.audioEngine.start()
+                self.updateAudioInputSource()
+                log("Audio engine started successfully with speaker output")
+            } catch let startError {
+                error("Failed to start audio engine: \(startError.localizedDescription)")
+            }
         }
     }
 
     func stopAudioEngine() {
-        audioEngine.stop()
-        log("Audio engine stopped")
+        DispatchQueue.main.async {
+            self.audioEngine.stop()
+            do {
+                try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+                log("Audio engine stopped and session deactivated")
+            } catch {
+                log("Audio engine stopped (session deactivation failed: \(error.localizedDescription))")
+            }
+        }
     }
 
     func startRecording() {
