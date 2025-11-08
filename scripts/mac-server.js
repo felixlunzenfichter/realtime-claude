@@ -764,7 +764,9 @@ EOF`;
 }
 
 function injectIntoTerminal(prompt, callback) {
-    const escapedPrompt = prompt;
+    const escapedPrompt = prompt
+        .replace(/"/g, '')
+        .replace(/'/g, '');
 
     console.log(`🔤 Injecting prompt into Terminal: "${escapedPrompt}"`);
 
