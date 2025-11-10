@@ -47,6 +47,16 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         updateAudioInputSource()
     }
 
+    deinit {
+        audioEngine.stop()
+        do {
+            try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            log("AudioManager deinitialized and audio session released")
+        } catch {
+            log("AudioManager deinitialized (session deactivation failed: \(error.localizedDescription))")
+        }
+    }
+
     func requestMicrophonePermission() {
         log("Requesting microphone permission...")
         Task {
