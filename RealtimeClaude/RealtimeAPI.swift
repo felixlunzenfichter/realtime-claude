@@ -944,6 +944,11 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func requestTranscriptionConfirmation(message: ConversationMessage) {
+        if !audioManager.getIsPlaybackEnabled() {
+            log("Playback disabled, skipping transcription confirmation")
+            return
+        }
+
         queueResponseRequest(messageId: message.id) { [weak self] in
             guard let self = self else { return }
 
@@ -988,17 +993,22 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             self.send(event: conversationItem)
         }
 
-        queueResponseRequest(messageId: message.id) { [weak self] in
-            guard let self = self else { return }
-            let responseEvent: [String: Any] = [
-                "type": "response.create",
-                "response": [
-                    "instructions": "Codex just generated an assistant message and we have added it to your context. Please give an extremely condensed update over what just happened. No fluff.",
-                    "output_modalities": ["audio"]
+        if audioManager.getIsPlaybackEnabled() {
+            queueResponseRequest(messageId: message.id) { [weak self] in
+                guard let self = self else { return }
+
+                let responseEvent: [String: Any] = [
+                    "type": "response.create",
+                    "response": [
+                        "instructions": "Codex just generated an assistant message and we have added it to your context. Please give an extremely condensed update over what just happened. No fluff.",
+                        "output_modalities": ["audio"]
+                    ]
                 ]
-            ]
-            self.send(event: responseEvent)
-            log("Queued audio generation for assistant message")
+                self.send(event: responseEvent)
+                log("Queued audio generation for assistant message")
+            }
+        } else {
+            log("Playback disabled, skipping assistant message audio")
         }
     }
 

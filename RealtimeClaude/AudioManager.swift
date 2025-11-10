@@ -11,6 +11,7 @@ protocol AudioManagerProtocol: Sendable {
     func stopAudioEngine()
     func startRecording()
     func stopRecording()
+    func getIsPlaybackEnabled() -> Bool
     func enablePlayback()
     func disablePlayback()
     func scheduleOutputAudioBuffer(_ audioBase64: String, resetCount: Bool, onBufferPlayed: ((Int) -> Void)?)
@@ -29,7 +30,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     private let audioConverter: AVAudioConverter
     private let OPENAI_AUDIO_FORMAT = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24000, channels: 1, interleaved: false)!
 
-    private var isPlaybackEnabled: Bool = true
+    private var isPlaybackEnabled: Bool = false
     private var scheduledBufferCount: Int = 0
     private var buffersPlayedCount: Int = 0
 
@@ -146,6 +147,10 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         var silenceBuffer = [Int16](repeating: 0, count: numSamples)
         let data = Data(bytes: &silenceBuffer, count: silenceBuffer.count * MemoryLayout<Int16>.size)
         return data
+    }
+
+    func getIsPlaybackEnabled() -> Bool {
+        return isPlaybackEnabled
     }
 
     func enablePlayback() {
