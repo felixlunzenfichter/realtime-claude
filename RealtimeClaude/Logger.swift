@@ -339,7 +339,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
                 log("✅ Test \(nextTestNumber) passed: \(testString)")
             }
 
-            if logMessage.type == .error {
+            if logMessage.type == .error && logMessage.message == "Manual restart triggered from log view" {
                 showRestartAlert(fileName: logMessage.shortFileName, functionName: logMessage.functionName, message: logMessage.message)
             }
         }

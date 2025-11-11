@@ -14,6 +14,7 @@ process.on('unhandledRejection', (reason, promise) => {
 
 const logsDir = path.join('private', 'logs');
 const lastAssistantMessageFile = path.join('private', 'last-assistant-message.txt');
+const CLAUDE_WINDOW_PATTERN = 'claude --dangerously-skip-permissions';
 let currentSessionFile = null;
 let currentSessionNumber = 0;
 let activeSocket = null;
@@ -165,7 +166,7 @@ function handlePromptMessage(socket, logData) {
     if (prompt === '[Request interrupted by user]') {
         console.log('🛑 Detected stop signal - sending ESC instead of typing text');
 
-        switchToWindow('claude', (switchSuccess, switchError) => {
+        switchToWindow(CLAUDE_WINDOW_PATTERN, (switchSuccess, switchError) => {
             if (!switchSuccess) {
                 console.log(`⚠️ Failed to switch to Claude Code window: ${switchError}`);
                 console.log(`📝 Proceeding with interrupt anyway...`);
@@ -770,7 +771,7 @@ function injectIntoTerminal(prompt, callback) {
 
     console.log(`🔤 Injecting prompt into Terminal: "${escapedPrompt}"`);
 
-    switchToWindow('claude', (switchSuccess, switchError) => {
+    switchToWindow(CLAUDE_WINDOW_PATTERN, (switchSuccess, switchError) => {
         if (!switchSuccess) {
             console.log(`⚠️ Failed to switch to Claude Code window: ${switchError}`);
             console.log(`📝 Proceeding with injection anyway...`);

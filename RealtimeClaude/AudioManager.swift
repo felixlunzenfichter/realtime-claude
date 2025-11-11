@@ -50,12 +50,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
 
     deinit {
         audioEngine.stop()
-        do {
-            try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-            log("AudioManager deinitialized and audio session released")
-        } catch {
-            log("AudioManager deinitialized (session deactivation failed: \(error.localizedDescription))")
-        }
     }
 
     func requestMicrophonePermission() {
@@ -82,8 +76,8 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
             do {
                 let session = AVAudioSession.sharedInstance()
                 try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
-                try session.setActive(true)
                 try session.overrideOutputAudioPort(.speaker)
+                try session.setActive(true)
 
                 try self.audioEngine.start()
                 self.updateAudioInputSource()
