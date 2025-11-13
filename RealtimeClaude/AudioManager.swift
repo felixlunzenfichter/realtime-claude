@@ -74,10 +74,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     func startAudioEngine() {
         DispatchQueue.main.async {
             do {
-                let session = AVAudioSession.sharedInstance()
-                try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
-                try session.overrideOutputAudioPort(.speaker)
-                try session.setActive(true)
 
                 try self.audioEngine.start()
                 self.updateAudioInputSource()
@@ -91,12 +87,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     func stopAudioEngine() {
         DispatchQueue.main.async {
             self.audioEngine.stop()
-            do {
-                try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-                log("Audio engine stopped and session deactivated")
-            } catch {
-                log("Audio engine stopped (session deactivation failed: \(error.localizedDescription))")
-            }
         }
     }
 
