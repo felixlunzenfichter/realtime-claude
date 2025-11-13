@@ -339,7 +339,7 @@ struct WorkView: View {
                         isOn: $viewModel.isPlaybackEnabled,
                         icon: viewModel.isPlayingAudio ? "speaker.wave.3.fill" : "speaker.slash.fill",
                         action: {
-                            viewModel.isPlaybackEnabled.toggle()
+                            viewModel.togglePlayback()
                         }
                     ),
                     ToggleBar.ToggleItem(
@@ -431,11 +431,7 @@ class WorkViewModel {
             handleMicrophoneToggle()
         }
     }
-    var isPlaybackEnabled = true {
-        didSet {
-            handlePlaybackToggle()
-        }
-    }
+    var isPlaybackEnabled = audioManager.getIsPlaybackEnabled()
     var audioInputSource = "Unknown"
 
     var messages: [Message] = []
@@ -548,6 +544,13 @@ class WorkViewModel {
             }
             .store(in: &cancellables)
 
+        audioManager.isPlaybackEnabledSubject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isEnabled in
+                self?.isPlaybackEnabled = isEnabled
+            }
+            .store(in: &cancellables)
+
         realtimeAPI.conversationContextSubject
             .receive(on: DispatchQueue.main)
             .sink { [weak self] conversationContext in
@@ -614,6 +617,13 @@ class WorkViewModel {
         }
     }
 
+    func togglePlayback() {
+        if isPlaybackEnabled {
+            audioManager.disablePlayback()
+        } else {
+            audioManager.enablePlayback()
+        }
+    }
 
     func addMessage(_ content: String) {
         if let index = messages.firstIndex(where: { $0.status != .injected }) {

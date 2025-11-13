@@ -6,6 +6,7 @@ protocol AudioManagerProtocol: Sendable {
     var isRecordingAudioSubject: CurrentValueSubject<Bool, Never> { get }
     var isPlayingAudioSubject: CurrentValueSubject<Bool, Never> { get }
     var audioInputSourceSubject: CurrentValueSubject<String, Never> { get }
+    var isPlaybackEnabledSubject: CurrentValueSubject<Bool, Never> { get }
 
     func startAudioEngine()
     func stopAudioEngine()
@@ -24,13 +25,14 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     let isRecordingAudioSubject = CurrentValueSubject<Bool, Never>(false)
     let isPlayingAudioSubject = CurrentValueSubject<Bool, Never>(false)
     let audioInputSourceSubject = CurrentValueSubject<String, Never>("Unknown")
+    let isPlaybackEnabledSubject = CurrentValueSubject<Bool, Never>(true)
 
     private let audioEngine: AVAudioEngine
     private let responsePlayerNode: AVAudioPlayerNode
     private let audioConverter: AVAudioConverter
     private let OPENAI_AUDIO_FORMAT = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24000, channels: 1, interleaved: false)!
 
-    private var isPlaybackEnabled: Bool = false
+    private var isPlaybackEnabled: Bool = true
     private var scheduledBufferCount: Int = 0
     private var buffersPlayedCount: Int = 0
 
@@ -139,11 +141,13 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
 
     func enablePlayback() {
         isPlaybackEnabled = true
+        isPlaybackEnabledSubject.send(true)
         log("Playback enabled")
     }
 
     func disablePlayback() {
         isPlaybackEnabled = false
+        isPlaybackEnabledSubject.send(false)
         responsePlayerNode.stop()
         log("Playback disabled")
     }

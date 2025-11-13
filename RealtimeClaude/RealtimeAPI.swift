@@ -956,7 +956,8 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                 "type": "response.create",
                 "response": [
                     "instructions": "To confirm that the transcription you just created is correct, please repeat what the user said in an extremely condensed manner so that we don't have to check the screen to see if the transcription is correct. Just by hearing what you said, we know that the correct transcription has been submitted for execution.",
-                    "output_modalities": ["audio"]
+                    "output_modalities": ["audio"],
+                    "max_output_tokens": 100
                 ]
             ]
             self.send(event: responseEvent)
@@ -1001,7 +1002,8 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                     "type": "response.create",
                     "response": [
                         "instructions": "Codex just generated an assistant message and we have added it to your context. Please give an extremely condensed update over what just happened. No fluff.",
-                        "output_modalities": ["audio"]
+                        "output_modalities": ["audio"],
+                        "max_output_tokens": 100
                     ]
                 ]
                 self.send(event: responseEvent)
