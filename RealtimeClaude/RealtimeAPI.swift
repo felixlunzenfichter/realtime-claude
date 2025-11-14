@@ -219,7 +219,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         case "response.output_audio.delta":
             handleResponseOutputAudioDelta(json)
         case "response.output_audio.done":
-            handleResponseOutputAudioDone()
+            handleResponseOutputAudioDone(json)
         case "response.output_audio_transcript.delta":
             handleResponseOutputAudioTranscriptDelta()
         case "response.output_audio_transcript.done":
@@ -810,7 +810,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         conversationContextSubject.send(currentContext)
     }
 
-    func handleResponseOutputAudioDone() {
+    func handleResponseOutputAudioDone(_ json: [String: Any]) {
         log("Audio output completed")
     }
 
@@ -955,7 +955,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             let responseEvent: [String: Any] = [
                 "type": "response.create",
                 "response": [
-                    "instructions": "To confirm that the transcription you just created is correct, please repeat what the user said in an extremely condensed manner so that we don't have to check the screen to see if the transcription is correct. Just by hearing what you said, we know that the correct transcription has been submitted for execution.",
+                    "instructions": "You have 100 audio tokens (around 3 seconds) to confirm the transcription. Briefly repeat what the user said.",
                     "output_modalities": ["audio"],
                     "max_output_tokens": 100
                 ]
@@ -1001,7 +1001,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                 let responseEvent: [String: Any] = [
                     "type": "response.create",
                     "response": [
-                        "instructions": "Codex just generated an assistant message and we have added it to your context. Please give an extremely condensed update over what just happened. No fluff.",
+                        "instructions": "You have 100 audio tokens (around 3 seconds) to summarize what just happened. Give a brief update on the assistant's action.",
                         "output_modalities": ["audio"],
                         "max_output_tokens": 100
                     ]

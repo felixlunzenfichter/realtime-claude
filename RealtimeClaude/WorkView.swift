@@ -262,25 +262,34 @@ struct WorkView: View {
                                     )
 
                                     if message.content != INTERRUPT_MESSAGE {
-                                        GeometryReader { geometry in
-                                            ZStack(alignment: .leading) {
-                                                VStack {
-                                                    Spacer()
-                                                }
-                                                .frame(height: 5)
-                                                .frame(maxWidth: .infinity, alignment: .leading)
-                                                .glassEffect(.clear.tint(message.audioState?.color ?? message.status.color), in: .capsule)
-
-                                                if message.id == viewModel.currentPlayingMessageId && viewModel.audioPlaybackProgress > 0 {
+                                        ZStack {
+                                            GeometryReader { geometry in
+                                                ZStack(alignment: .leading) {
                                                     VStack {
                                                         Spacer()
                                                     }
-                                                    .frame(width: geometry.size.width * viewModel.audioPlaybackProgress, height: 5)
-                                                    .glassEffect(.clear.tint(Color.blue), in: .capsule)
+                                                    .frame(height: 10)
+                                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                                    .glassEffect(.clear.tint(message.audioState?.color ?? message.status.color), in: .capsule)
+
+                                                    if message.id == viewModel.currentPlayingMessageId && viewModel.audioPlaybackProgress > 0 {
+                                                        VStack {
+                                                            Spacer()
+                                                        }
+                                                        .frame(width: geometry.size.width * viewModel.audioPlaybackProgress, height: 10)
+                                                        .glassEffect(.clear.tint(Color.blue), in: .capsule)
+                                                    }
                                                 }
                                             }
+                                            .frame(height: 10)
+
+                                            if let audioInfo = viewModel.getAudioInfo(for: message.id, progress: message.id == viewModel.currentPlayingMessageId ? viewModel.audioPlaybackProgress : 0) {
+                                                Text(audioInfo)
+                                                    .font(.system(size: 8))
+                                                    .foregroundColor(.black)
+                                                    .frame(height: 8)
+                                            }
                                         }
-                                        .frame(height: 5)
                                     }
                                 }
                                 .onTapGesture {
@@ -623,6 +632,25 @@ class WorkViewModel {
         } else {
             audioManager.enablePlayback()
         }
+    }
+
+    func getAudioInfo(for messageId: UUID, progress: Double) -> String? {
+        let conversationContext = realtimeAPI.conversationContextSubject.value
+        guard let convMsg = conversationContext.first(where: { $0.id == messageId }) else {
+            return nil
+        }
+
+        let bufferCount = convMsg.audioBuffers.count
+        guard bufferCount > 0 else {
+            return nil
+        }
+
+        let totalBytes = convMsg.audioBuffers.reduce(0) { $0 + $1.1.count }
+        let totalSamples = totalBytes / 2
+        let totalDuration = Double(totalSamples) / 24000.0
+        let currentSeconds = totalDuration * progress
+
+        return String(format: "%.1f/%.1fs", currentSeconds, totalDuration)
     }
 
     func addMessage(_ content: String) {
