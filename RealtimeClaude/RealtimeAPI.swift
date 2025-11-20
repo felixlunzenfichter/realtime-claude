@@ -436,7 +436,8 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                                     ]
                                 ],
                                 "required": ["deltaTranscription"],
-                                "additionalProperties": false
+                                "additionalProperties": false,
+                                "strict": true
                             ]
                         ]
                     ],
