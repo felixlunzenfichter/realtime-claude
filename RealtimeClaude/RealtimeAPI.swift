@@ -569,7 +569,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             self.currentProcessingMessageId = nil
 
             self.isResponseActive = false
-            if self.responseRequestQueue.isEmpty && self.apiStateSubject.value != .connected {
+            if self.responseRequestQueue.isEmpty && self.apiStateSubject.value != .connected && self.apiStateSubject.value == .speechStopped {
                 self.updateAPIState(.connected)
             }
             self.processNextQueuedRequest()
