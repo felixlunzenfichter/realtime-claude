@@ -432,13 +432,12 @@ function handleLogMessage(socket, logData) {
 function handleErrorMessage(socket, logData) {
     reportErrorToConsole(logData);
     persistLogToFile(logData);
+    confirmLogReception(socket, logData.id);
 
-    // Only restart for manual restart trigger
+    // Only restart for manual restart trigger (after confirmation)
     if (logData.message === "Manual restart triggered from log view") {
         executeDeployment();
     }
-
-    confirmLogReception(socket, logData.id);
 }
 
 function reportErrorToConsole(logData) {
