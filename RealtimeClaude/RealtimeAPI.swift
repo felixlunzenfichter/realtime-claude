@@ -955,9 +955,9 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             let responseEvent: [String: Any] = [
                 "type": "response.create",
                 "response": [
-                    "instructions": "You have 100 audio tokens (around 3 seconds) to confirm the transcription. Briefly repeat what the user said.",
+                    "instructions": "Maximum three words only. Either a short sentence or just keywords to confirm the transcription.",
                     "output_modalities": ["audio"],
-                    "max_output_tokens": 100
+                    "max_output_tokens": 50
                 ]
             ]
             self.send(event: responseEvent)
@@ -1001,9 +1001,9 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                 let responseEvent: [String: Any] = [
                     "type": "response.create",
                     "response": [
-                        "instructions": "You have 100 audio tokens (around 3 seconds) to summarize what just happened. Give a brief update on the assistant's action.",
+                        "instructions": "Maximum three words only. Summarize the action that was just taken by Codex, the terminal agent.",
                         "output_modalities": ["audio"],
-                        "max_output_tokens": 100
+                        "max_output_tokens": 50
                     ]
                 ]
                 self.send(event: responseEvent)
