@@ -37,6 +37,16 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     private var buffersPlayedCount: Int = 0
 
     init() {
+        // Configure audio session ONCE at init - never touch it again
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+            try session.setActive(true)
+            log("Audio session configured: playAndRecord with defaultToSpeaker")
+        } catch {
+            log("Failed to configure audio session: \(error.localizedDescription)")
+        }
+
         audioEngine = AVAudioEngine()
 
         let inputFormat = audioEngine.inputNode.outputFormat(forBus: 0)
@@ -52,6 +62,12 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
 
     deinit {
         audioEngine.stop()
+        do {
+            try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            log("Audio session deactivated")
+        } catch {
+            log("Failed to deactivate audio session: \(error.localizedDescription)")
+        }
     }
 
     func requestMicrophonePermission() {
