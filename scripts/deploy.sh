@@ -13,7 +13,35 @@ cd "$SCRIPT_DIR"
 
 echo ""
 echo "--------------------------------------------------------------------------------"
-echo "STEP 1: DEVICE DISCOVERY"
+echo "STEP 1: DEPLOY MAC SERVER"
+echo "--------------------------------------------------------------------------------"
+echo ""
+
+if pgrep -f "node scripts/mac-server.js" > /dev/null; then
+    echo "🧹 Stopping Mac server..."
+    pkill -f "node scripts/mac-server.js" 2>/dev/null || true
+    if lsof -ti:8082 > /dev/null 2>&1; then
+        lsof -ti:8082 | xargs kill -9 2>/dev/null || true
+    fi
+    echo "✅ Mac server stopped"
+fi
+
+echo "🚀 Starting Mac server..."
+set +m
+(node scripts/mac-server.js 2>&1 | sed "s/^/[SERVER] /") &
+
+for i in {1..100}; do
+    if pgrep -f "node scripts/mac-server.js" > /dev/null; then
+        ELAPSED=$(echo "scale=1; $i * 0.1" | bc)
+        echo "✅ Mac server started in ~${ELAPSED}s"
+        break
+    fi
+    sleep 0.1
+done
+
+echo ""
+echo "--------------------------------------------------------------------------------"
+echo "STEP 2: DEVICE DISCOVERY"
 echo "--------------------------------------------------------------------------------"
 echo ""
 
@@ -42,7 +70,7 @@ echo "   Device ID: $DEVICECTL_ID"
 
 echo ""
 echo "--------------------------------------------------------------------------------"
-echo "STEP 2: BUILD IOS APPLICATION"
+echo "STEP 3: BUILD IOS APPLICATION"
 echo "--------------------------------------------------------------------------------"
 echo ""
 
@@ -116,36 +144,6 @@ echo "   Binary: $APP_PATH"
 
 echo ""
 echo "--------------------------------------------------------------------------------"
-echo "--------------------------------------------------------------------------------"
-echo "STEP 3: DEPLOY MAC SERVER"
-echo "--------------------------------------------------------------------------------"
-echo ""
-
-if pgrep -f "node scripts/mac-server.js" > /dev/null; then
-    echo "🧹 Stopping Mac server..."
-    pkill -f "node scripts/mac-server.js" 2>/dev/null || true
-    if lsof -ti:8082 > /dev/null 2>&1; then
-        lsof -ti:8082 | xargs kill -9 2>/dev/null || true
-    fi
-    echo "✅ Mac server stopped"
-fi
-
-echo "🚀 Starting Mac server..."
-set +m
-(node scripts/mac-server.js 2>&1 | sed "s/^/[SERVER] /") &
-
-for i in {1..100}; do
-    if pgrep -f "node scripts/mac-server.js" > /dev/null; then
-        ELAPSED=$(echo "scale=1; $i * 0.1" | bc)
-        echo "✅ Mac server started in ~${ELAPSED}s"
-        break
-    fi
-    sleep 0.1
-done
-
-echo ""
-
-
 echo "STEP 4: DEPLOY IOS APP"
 echo "--------------------------------------------------------------------------------"
 echo ""
