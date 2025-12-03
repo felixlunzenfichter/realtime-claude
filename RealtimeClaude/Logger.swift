@@ -371,9 +371,10 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         let totalUptime = jsonData["totalUptime"] as? Int ?? 0
         let todayUptime = jsonData["todayUptime"] as? Int ?? 0
 
-        if let currentAssistantMessage = jsonData["currentAssistantMessage"] as? String {
-            realtimeAPI.addAssistantMessage(currentAssistantMessage)
-            log("Loaded current assistant message from handshake: \(currentAssistantMessage)")
+        if let currentAssistantMessage = jsonData["currentAssistantMessage"] as? String,
+           let summary = jsonData["currentAssistantMessageSummary"] as? String {
+            realtimeAPI.addAssistantMessage(currentAssistantMessage, summary: summary)
+            log("Loaded assistant message from handshake with TTS: \"\(summary)\"")
         }
 
         var previousRunFailed = false
@@ -416,15 +417,20 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         }
 
         let originalPrompt = jsonData["originalPrompt"] as? String ?? "Unknown prompt"
+        guard let summary = jsonData["summary"] as? String else {
+            error("Missing summary in prompt ACK message")
+            return
+        }
 
         if status == "success" {
             log("✅ Prompt successfully injected into terminal: \(originalPrompt)")
+            log("   Summary: \(summary)")
             promptStatusSubject.send(PromptStatusUpdate(prompt: originalPrompt, status: "injected"))
 
             if originalPrompt == "[Request interrupted by user]" {
                 realtimeAPI.acknowledgeSuccessfulInterruptExecution()
             } else {
-                realtimeAPI.acknowledgeSuccessfulPromptInjection()
+                realtimeAPI.acknowledgeSuccessfulPromptInjection(summary: summary)
             }
         } else {
             let errorMessage = jsonData["error"] as? String ?? "Unknown error"
@@ -442,10 +448,11 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         log("📨 Received \(messages.count) assistant messages from Mac")
 
         for message in messages {
-            guard let text = message["text"] as? String else {
+            guard let text = message["text"] as? String,
+                  let summary = message["summary"] as? String else {
                 continue
             }
-            realtimeAPI.addAssistantMessage(text)
+            realtimeAPI.addAssistantMessage(text, summary: summary)
         }
     }
 

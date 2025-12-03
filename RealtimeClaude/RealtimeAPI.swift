@@ -14,8 +14,9 @@ struct ConversationMessage: Identifiable, Sendable {
     let id = UUID()
     var text: String
     let role: String
+    var summary: String?
     var audioState: MessageAudioState?
-    var audioBuffers: [(Int, Data)] = []
+    var audioData: Data?
 }
 
 protocol RealtimeAPIProtocol: Sendable {
@@ -23,12 +24,12 @@ protocol RealtimeAPIProtocol: Sendable {
     var conversationContextSubject: CurrentValueSubject<[ConversationMessage], Never> { get }
 
     func connect(apiKey: String?)
-    func acknowledgeSuccessfulPromptInjection()
+    func acknowledgeSuccessfulPromptInjection(summary: String)
     func acknowledgeSuccessfulInterruptExecution()
     func clearAccumulatedPrompts()
     func processInputAudioBuffer(_ data: Data)
     func restart()
-    func addAssistantMessage(_ text: String)
+    func addAssistantMessage(_ text: String, summary: String)
 }
 
 nonisolated(unsafe) let realtimeAPI: RealtimeAPIProtocol = RealtimeAPI()
@@ -43,7 +44,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     private var isResponseActive: Bool = false
     private var responseRequestQueue: [(UUID, () -> Void)] = []
     private var currentProcessingMessageId: UUID?
-    private var currentAudioSequenceNumber: Int = 0
     private var totalBytesReceived: Int = 0
     private var totalBytesSent: Int = 0
     private var urlSession: URLSession?
@@ -291,18 +291,20 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                 "type": "realtime",
                 "output_modalities": ["audio"],
                 "instructions": """
-                You are the voice interface for a fully accessible computer usage agent. This system uses GPT Realtime (you) on top of the Codex computer agent by OpenAI.
+                You are a transcription system on top of the Codex terminal agent.
 
-                Your role: You are ONLY the ears and mouth. Codex is the brain.
+                Your role: You read exactly and transcribe exactly. You are ONLY the ears and mouth. The Codex terminal agent is the brain.
 
                 Workflow:
-                1. User speaks → you transcribe
-                2. Transcription is submitted to the computer use agent for execution
-                3. After successful submission, you read back a concise summary of the transcription to confirm that the transcription is correct
-                4. Computer use agent executes the command and sends back a response prepended with "Computer use assistant message: [response]", which is added to your context
-                5. You will be prompted to give an update of the last computer use assistant message (read it out concisely)
+                1. User speaks → you transcribe EXACTLY what they said
+                2. Transcription is submitted to the Codex terminal agent for execution
+                3. After successful submission, a summary is read back to confirm correct transcription
+                4. The Codex terminal agent executes and sends responses prepended with "Computer use assistant message:"
+                5. These responses are summarized and read aloud to the user
 
                 Your knowledge: ONLY from messages prepended with "Computer use assistant message:". You have no other knowledge.
+
+                IMPORTANT: Transcribe exactly what the user says. Do not interpret, summarize, or modify their words.
                 """,
                 "audio": [
                     "input": [
@@ -592,7 +594,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
 
             let (messageId, nextRequest) = self.responseRequestQueue.removeFirst()
             self.currentProcessingMessageId = messageId
-            self.currentAudioSequenceNumber = 0
             self.updateMessageAudioState(messageId: messageId, newState: .processing)
             log("Response queue: processing message \(messageId) (remaining: \(self.responseRequestQueue.count))")
             self.isResponseActive = true
@@ -784,31 +785,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
     }
 
     func handleResponseOutputAudioDelta(_ json: [String: Any]) {
-        debugLog(id: "audioOutputDelta", message: "⚙️ [WS] Receiving audio output")
-        guard let audioBase64 = json["delta"] as? String else {
-            error("Missing or invalid 'delta' field in response.output_audio.delta")
-            return
-        }
-
-        guard let audioData = Data(base64Encoded: audioBase64) else {
-            error("Failed to decode audio delta")
-            return
-        }
-
-        guard let messageId = currentProcessingMessageId else {
-            error("No current processing message ID for audio buffer")
-            return
-        }
-
-        var currentContext = conversationContextSubject.value
-        guard let index = currentContext.firstIndex(where: { $0.id == messageId }) else {
-            error("Cannot find message for audio buffer: \(messageId)")
-            return
-        }
-
-        currentAudioSequenceNumber += 1
-        currentContext[index].audioBuffers.append((currentAudioSequenceNumber, audioData))
-        conversationContextSubject.send(currentContext)
+        debugLog(id: "audioOutputDelta", message: "⚙️ [WS] Receiving audio output (ignored - using TTS)")
     }
 
     func handleResponseOutputAudioDone(_ json: [String: Any]) {
@@ -958,7 +935,8 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
                 "response": [
                     "instructions": "Maximum three words only. Either a short sentence or just keywords to confirm the transcription.",
                     "output_modalities": ["audio"],
-                    "max_output_tokens": 50
+                    "max_output_tokens": 50,
+                    "tool_choice": "none"
                 ]
             ]
             self.send(event: responseEvent)
@@ -966,10 +944,11 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         }
     }
 
-    func addAssistantMessage(_ text: String) {
+    func addAssistantMessage(_ text: String, summary: String) {
         let message = ConversationMessage(
             text: text,
             role: "assistant",
+            summary: summary,
             audioState: .queued
         )
 
@@ -979,6 +958,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
 
         log("Added assistant message to queue: \(text)")
 
+        // Add to conversation context
         queueResponseRequest(messageId: message.id) { [weak self] in
             guard let self = self else { return }
             let contextText = "Computer use assistant message: \(text)"
@@ -995,24 +975,83 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
             self.send(event: conversationItem)
         }
 
+        // Use TTS directly for audio
         if audioManager.getIsPlaybackEnabled() {
-            queueResponseRequest(messageId: message.id) { [weak self] in
-                guard let self = self else { return }
-
-                let responseEvent: [String: Any] = [
-                    "type": "response.create",
-                    "response": [
-                        "instructions": "Maximum three words only. Summarize the action that was just taken by Codex, the terminal agent.",
-                        "output_modalities": ["audio"],
-                        "max_output_tokens": 50
-                    ]
-                ]
-                self.send(event: responseEvent)
-                log("Queued audio generation for assistant message")
-            }
+            speakWithTTS(text: summary, messageId: message.id)
         } else {
             log("Playback disabled, skipping assistant message audio")
         }
+    }
+
+    private func speakWithTTS(text: String, messageId: UUID) {
+        guard let apiKey = loadFromKeychain(key: "OPENAI_API_KEY") else {
+            error("No API key for TTS")
+            return
+        }
+
+        updateMessageAudioState(messageId: messageId, newState: .processing)
+
+        let url = URL(string: "https://api.openai.com/v1/audio/speech")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body: [String: Any] = [
+            "model": "tts-1",
+            "input": text,
+            "voice": "fable",
+            "response_format": "pcm"
+        ]
+
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: body) else {
+            error("Failed to serialize TTS request")
+            return
+        }
+        request.httpBody = jsonData
+
+        log("Requesting TTS for: \(text)")
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, requestError in
+            guard let self = self else { return }
+
+            if let requestError = requestError {
+                error("TTS request failed: \(requestError.localizedDescription)")
+                return
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                error("TTS response was not HTTP")
+                return
+            }
+
+            guard httpResponse.statusCode == 200 else {
+                error("TTS returned status \(httpResponse.statusCode)")
+                return
+            }
+
+            guard let audioData = data else {
+                error("TTS returned no data")
+                return
+            }
+
+            log("TTS received \(audioData.count) bytes of audio")
+
+            // Store audio for replay and play directly
+            var currentContext = self.conversationContextSubject.value
+            if let index = currentContext.firstIndex(where: { $0.id == messageId }) {
+                currentContext[index].audioData = audioData
+                self.conversationContextSubject.send(currentContext)
+            }
+
+            let audioBase64 = audioData.base64EncodedString()
+            audioManager.scheduleOutputAudioBuffer(audioBase64, resetCount: true, onBufferPlayed: nil)
+
+            DispatchQueue.main.async {
+                self.updateMessageAudioState(messageId: messageId, newState: .doneProcessing)
+                log("TTS audio playing")
+            }
+        }.resume()
     }
 
     func updateMessageAudioState(messageId: UUID?, newState: MessageAudioState) {
@@ -1032,7 +1071,7 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         log("Updated message audio state to: \(newState.statusText)")
     }
 
-    func acknowledgeSuccessfulPromptInjection() {
+    func acknowledgeSuccessfulPromptInjection(summary: String) {
         guard let userId = currentUserMessageId else {
             log("No current user message to process - skipping transcription confirmation")
             return
@@ -1045,14 +1084,18 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         }
 
         currentContext[index].audioState = .queued
+        currentContext[index].summary = summary
         conversationContextSubject.send(currentContext)
 
         let userMessage = currentContext[index]
         log("🧹 Processing user message for transcription confirmation: \(userMessage.text)")
+        log("   Using summary: \(summary)")
 
         currentUserMessageId = nil
 
-        requestTranscriptionConfirmation(message: userMessage)
+        if audioManager.getIsPlaybackEnabled() {
+            speakWithTTS(text: summary, messageId: userMessage.id)
+        }
     }
 
     func acknowledgeSuccessfulInterruptExecution() {
@@ -1115,7 +1158,6 @@ private class RealtimeAPI: NSObject, URLSessionWebSocketDelegate, @unchecked Sen
         isResponseActive = false
         responseRequestQueue = []
         currentProcessingMessageId = nil
-        currentAudioSequenceNumber = 0
 
         log("🗑️ Cleared conversation context for reconnection")
 

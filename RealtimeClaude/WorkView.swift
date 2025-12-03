@@ -125,6 +125,7 @@ enum MessageAudioState: Sendable {
 struct Message: Identifiable {
     let id: UUID
     var content: String
+    var summary: String?
     let timestamp: Date
     var status: MessageStatus
     var audioState: MessageAudioState?
@@ -242,12 +243,21 @@ struct WorkView: View {
                                             .padding(.horizontal, 12)
                                             .padding(.vertical, 2)
                                         } else {
-                                            Text(message.content.isEmpty ? "Recording..." : message.content)
-                                                .font(.body)
-                                                .foregroundColor(message.status.color)
-                                                .frame(maxWidth: .infinity, alignment: .leading)
-                                                .padding(.horizontal, 12)
-                                                .padding(.vertical, 6)
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text(message.content.isEmpty ? "Recording..." : message.content)
+                                                    .font(.body)
+                                                    .foregroundColor(message.status.color)
+                                                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                                                if let summary = message.summary {
+                                                    Text("Summary: \(summary)")
+                                                        .font(.caption)
+                                                        .foregroundColor(.purple)
+                                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                                }
+                                            }
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 6)
                                         }
 
                                         if message.content != INTERRUPT_MESSAGE {
@@ -262,34 +272,12 @@ struct WorkView: View {
                                     )
 
                                     if message.content != INTERRUPT_MESSAGE {
-                                        ZStack {
-                                            GeometryReader { geometry in
-                                                ZStack(alignment: .leading) {
-                                                    VStack {
-                                                        Spacer()
-                                                    }
-                                                    .frame(height: 10)
-                                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                                    .glassEffect(.clear.tint(message.audioState?.color ?? message.status.color), in: .capsule)
-
-                                                    if message.id == viewModel.currentPlayingMessageId && viewModel.audioPlaybackProgress > 0 {
-                                                        VStack {
-                                                            Spacer()
-                                                        }
-                                                        .frame(width: geometry.size.width * viewModel.audioPlaybackProgress, height: 10)
-                                                        .glassEffect(.clear.tint(Color.blue), in: .capsule)
-                                                    }
-                                                }
-                                            }
-                                            .frame(height: 10)
-
-                                            if let audioInfo = viewModel.getAudioInfo(for: message.id, progress: message.id == viewModel.currentPlayingMessageId ? viewModel.audioPlaybackProgress : 0) {
-                                                Text(audioInfo)
-                                                    .font(.system(size: 8))
-                                                    .foregroundColor(.black)
-                                                    .frame(height: 8)
-                                            }
+                                        VStack {
+                                            Spacer()
                                         }
+                                        .frame(height: 10)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .glassEffect(.clear.tint(message.audioState?.color ?? message.status.color), in: .capsule)
                                     }
                                 }
                                 .onTapGesture {
@@ -423,18 +411,16 @@ class WorkViewModel {
         didSet {
             log("Recording status changed: \(oldValue) → \(currentRecordingStatus)")
             if currentRecordingStatus == .connected {
-                if let latestMessage = messages.first(where: { $0.role == "user" && ($0.status == .notSent || $0.status == .sent) }) {
-                    log("Sending prompt to Claude Code: \(latestMessage.content)")
-                    logger.sendPromptToMac(latestMessage.content)
+                if let index = messages.firstIndex(where: { $0.role == "user" && $0.status == .notSent }) {
+                    log("Sending prompt to Claude Code: \(messages[index].content)")
+                    logger.sendPromptToMac(messages[index].content)
+                    messages[index].status = .sent  // Mark as sent to prevent duplicate sends
                 }
             }
         }
     }
     var isRecordingAudio = false
     var isPlayingAudio = false
-    var audioPlaybackProgress: Double = 0.0
-    var currentPlayingMessageId: UUID?
-    private var scheduledSequenceNumbers: [UUID: Int] = [:]
     var isMicrophoneEnabled = false {
         didSet {
             handleMicrophoneToggle()
@@ -515,10 +501,6 @@ class WorkViewModel {
             .sink { [weak self] isPlaying in
                 guard let self = self else { return }
                 self.isPlayingAudio = isPlaying
-
-                if !isPlaying {
-                    self.currentPlayingMessageId = nil
-                }
             }
             .store(in: &cancellables)
 
@@ -634,25 +616,6 @@ class WorkViewModel {
         }
     }
 
-    func getAudioInfo(for messageId: UUID, progress: Double) -> String? {
-        let conversationContext = realtimeAPI.conversationContextSubject.value
-        guard let convMsg = conversationContext.first(where: { $0.id == messageId }) else {
-            return nil
-        }
-
-        let bufferCount = convMsg.audioBuffers.count
-        guard bufferCount > 0 else {
-            return nil
-        }
-
-        let totalBytes = convMsg.audioBuffers.reduce(0) { $0 + $1.1.count }
-        let totalSamples = totalBytes / 2
-        let totalDuration = Double(totalSamples) / 24000.0
-        let currentSeconds = totalDuration * progress
-
-        return String(format: "%.1f/%.1fs", currentSeconds, totalDuration)
-    }
-
     func addMessage(_ content: String) {
         if let index = messages.firstIndex(where: { $0.status != .injected }) {
             messages[index].content = content
@@ -660,6 +623,7 @@ class WorkViewModel {
             let message = Message(
                 id: UUID(),
                 content: content,
+                summary: nil,
                 timestamp: Date(),
                 status: .notSent,
                 audioState: nil,
@@ -686,6 +650,7 @@ class WorkViewModel {
 
             if let index = messages.firstIndex(where: { $0.id == convMsg.id }) {
                 messages[index].content = content
+                messages[index].summary = convMsg.summary
                 messages[index].audioState = convMsg.audioState
             } else {
                 let initialStatus: MessageStatus = convMsg.role == "assistant" ? .injected : .notSent
@@ -693,6 +658,7 @@ class WorkViewModel {
                 let message = Message(
                     id: convMsg.id,
                     content: content,
+                    summary: convMsg.summary,
                     timestamp: Date(),
                     status: initialStatus,
                     audioState: convMsg.audioState,
@@ -703,52 +669,14 @@ class WorkViewModel {
                 messages.insert(message, at: insertionIndex)
                 log("Added \(convMsg.role) message to UI at index \(insertionIndex): \(convMsg.text)")
             }
-
-            if !convMsg.audioBuffers.isEmpty {
-                scheduleNewAudioBuffers(convMsg)
-            }
         }
     }
 
     func resetConversation() {
         log("⚠️ Conversation reset - clearing all messages")
-
-        scheduledSequenceNumbers.removeAll()
         messages.removeAll()
-
         debugLog(id: "conversationReset", message: "🗑️ [Reset] Cleared all state due to reconnection")
         log("🔄 Connection reset - conversation cleared")
-    }
-
-    func scheduleNewAudioBuffers(_ message: ConversationMessage) {
-        let lastScheduled = scheduledSequenceNumbers[message.id] ?? 0
-        let newBuffers = message.audioBuffers.filter { $0.0 > lastScheduled }
-
-        if newBuffers.isEmpty {
-            return
-        }
-
-        debugLog(id: "scheduleAudio", message: "Scheduling \(newBuffers.count) new audio buffers")
-
-        for (sequenceNumber, audioBuffer) in newBuffers {
-            let audioBase64 = audioBuffer.base64EncodedString()
-            let messageId = message.id
-            let resetCount = (sequenceNumber == 1)
-            audioManager.scheduleOutputAudioBuffer(audioBase64, resetCount: resetCount) { [weak self] buffersPlayed in
-                guard let self = self else { return }
-
-                if self.currentPlayingMessageId != messageId {
-                    self.currentPlayingMessageId = messageId
-                }
-
-                let conversationContext = realtimeAPI.conversationContextSubject.value
-                if let message = conversationContext.first(where: { $0.id == messageId }) {
-                    let totalBuffers = message.audioBuffers.count
-                    self.audioPlaybackProgress = totalBuffers > 0 ? Double(buffersPlayed) / Double(totalBuffers) : 0.0
-                }
-            }
-            scheduledSequenceNumbers[message.id] = sequenceNumber
-        }
     }
 
     func copyMessageToClipboard(_ message: Message) {
@@ -760,36 +688,15 @@ class WorkViewModel {
 
     func replayAudioForMessage(_ message: Message) {
         let conversationContext = realtimeAPI.conversationContextSubject.value
-        guard let convMsg = conversationContext.first(where: { $0.id == message.id }) else {
-            log("Cannot find conversation message for replay")
+        guard let convMsg = conversationContext.first(where: { $0.id == message.id }),
+              let audioData = convMsg.audioData else {
+            log("No audio data to replay")
             return
         }
 
-        guard !convMsg.audioBuffers.isEmpty else {
-            log("No audio buffers to replay")
-            return
-        }
-
-        log("Replaying audio for message with \(convMsg.audioBuffers.count) buffers")
-
-        scheduledSequenceNumbers[message.id] = 0
-
-        for (sequenceNumber, audioBuffer) in convMsg.audioBuffers {
-            let audioBase64 = audioBuffer.base64EncodedString()
-            let messageId = message.id
-            let resetCount = (sequenceNumber == 1)
-            audioManager.scheduleOutputAudioBuffer(audioBase64, resetCount: resetCount) { [weak self] buffersPlayed in
-                guard let self = self else { return }
-
-                if self.currentPlayingMessageId != messageId {
-                    self.currentPlayingMessageId = messageId
-                }
-
-                let totalBuffers = convMsg.audioBuffers.count
-                self.audioPlaybackProgress = totalBuffers > 0 ? Double(buffersPlayed) / Double(totalBuffers) : 0.0
-            }
-            scheduledSequenceNumbers[message.id] = sequenceNumber
-        }
+        log("Replaying audio (\(audioData.count) bytes)")
+        let audioBase64 = audioData.base64EncodedString()
+        audioManager.scheduleOutputAudioBuffer(audioBase64, resetCount: true, onBufferPlayed: nil)
     }
 
     func updateMessageStatus(_ prompt: String, status: MessageStatus) {
@@ -847,6 +754,7 @@ class WorkViewModel {
         let interrupt = Message(
             id: UUID(),
             content: INTERRUPT_MESSAGE,
+            summary: nil,
             timestamp: Date(),
             status: .notSent,
             audioState: nil,

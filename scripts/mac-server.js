@@ -1,8 +1,9 @@
 const net = require('net');
 const fs = require('fs');
 const path = require('path');
-const { exec, spawn } = require('child_process');
+const { exec, spawn, execSync } = require('child_process');
 const chokidar = require('chokidar');
+
 
 process.on('uncaughtException', (error) => {
     console.error(`⚠️ Uncaught exception (continuing): ${error.stack || error}`);
@@ -19,6 +20,69 @@ let currentSessionFile = null;
 let currentSessionNumber = 0;
 let activeSocket = null;
 let lastSentAssistantMessage = null;
+let lastSentAssistantTimestamp = null;
+
+const MAX_SUMMARY_CHARS = 100;
+
+async function summarizeWithClaude(text) {
+    // Clean text for shell: remove newlines, normalize whitespace
+    const cleanText = text.replace(/[\n\r]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+    let lastResult = null;
+    let attempt = 0;
+
+    console.log(`📝 Text to summarize (${cleanText.length} chars): "${cleanText.substring(0, 100)}..."`);
+
+    const MAX_ATTEMPTS = 10;
+    while (attempt < MAX_ATTEMPTS) {
+        attempt++;
+        try {
+            const retryNote = attempt > 1 ? ` (attempt ${attempt}/${MAX_ATTEMPTS})` : '';
+            console.log(`🤖 Summarizing with Claude Haiku${retryNote}...`);
+
+            let prompt;
+            if (attempt === 1 || lastResult === null) {
+                prompt = `Summarize this text in under 50 characters. Output ONLY the summary, nothing else.
+
+Text: "${cleanText}"
+
+Summary:`;
+            } else {
+                prompt = `Your previous summary was ${lastResult.length} characters (too long). Summarize in UNDER 50 CHARACTERS. Output ONLY the summary, nothing else.
+
+Text: "${cleanText}"
+
+Summary:`;
+            }
+
+            // Write prompt to temp file to avoid shell escaping issues
+            const tempFile = '/tmp/claude-prompt.txt';
+            fs.writeFileSync(tempFile, prompt);
+
+            // No session ID - each summarization is stateless
+            let result = execSync(`cat "${tempFile}" | claude --model haiku --print -`, {
+                encoding: 'utf8',
+                timeout: 30000
+            }).trim();
+
+            lastResult = result;
+            console.log(`   Result: "${result}" (${result.length} chars)`);
+
+            if (result.length <= MAX_SUMMARY_CHARS) {
+                return result;
+            }
+
+            console.log(`   ⚠️ Too long (${result.length} chars), retrying...`);
+
+        } catch (error) {
+            console.error(`   ❌ Claude headless failed: ${error.message}, retrying...`);
+        }
+    }
+
+    // If all attempts failed, return the last result (even if too long) or a fallback
+    console.log(`   ⚠️ Max attempts reached, using last result`);
+    return lastResult || text.substring(0, MAX_SUMMARY_CHARS);
+}
 
 const server = net.createServer((socket) => {
     console.log('iOS client connected');
@@ -83,6 +147,8 @@ function handleMessage(socket, logData) {
         handleStartMessage(socket);
     } else if (isPromptMessage(logData)) {
         handlePromptMessage(socket, logData);
+    } else if (isSpeakMessage(logData)) {
+        handleSpeakMessage(socket, logData);
     } else if (isErrorMessage(logData)) {
         handleErrorMessage(socket, logData);
     } else if (isLogMessage(logData)) {
@@ -90,6 +156,51 @@ function handleMessage(socket, logData) {
     } else {
         handleUnknownMessage(logData);
     }
+}
+
+function isSpeakMessage(logData) {
+    return logData.type === 'speak';
+}
+
+const MAX_SPEAK_LENGTH = 50;
+
+function handleSpeakMessage(socket, logData) {
+    const { text, summary } = logData;
+
+    if (!summary) {
+        const response = { type: 'speak_result', success: false, error: 'No summary provided' };
+        socket.write(JSON.stringify(response) + '\n');
+        return;
+    }
+
+    if (summary.length > MAX_SPEAK_LENGTH) {
+        const response = {
+            type: 'speak_result',
+            success: false,
+            error: `Summary too long: ${summary.length} chars. Max is ${MAX_SPEAK_LENGTH}. Shorten it and try again.`
+        };
+        socket.write(JSON.stringify(response) + '\n');
+        console.log(`❌ Speak rejected: ${summary.length} chars > ${MAX_SPEAK_LENGTH}`);
+        return;
+    }
+
+    console.log(`🔊 Speaking: "${summary}" (full: "${(text || summary).substring(0, 50)}...")`);
+
+    if (activeSocket) {
+        const assistantMessage = {
+            type: 'assistant_messages',
+            messages: [{
+                text: text || summary,
+                summary: summary,
+                timestamp: Date.now()
+            }],
+            timestamp: Date.now()
+        };
+        activeSocket.write(JSON.stringify(assistantMessage) + '\n');
+    }
+
+    const response = { type: 'speak_result', success: true };
+    socket.write(JSON.stringify(response) + '\n');
 }
 
 function isStartMessage(logData) {
@@ -112,10 +223,10 @@ function handleUnknownMessage(logData) {
     console.error('Unknown message type:', logData.type);
 }
 
-function handleStartMessage(socket) {
+async function handleStartMessage(socket) {
     createNewSession();
     const stats = gatherSessionStatistics();
-    sendHandshakeResponse(socket, stats);
+    await sendHandshakeResponse(socket, stats);
     logHandshakeDetails(stats);
 }
 
@@ -354,10 +465,21 @@ function countLinesInContent(content) {
     return content.split('\n').filter(line => line.trim()).length;
 }
 
-function sendHandshakeResponse(socket, stats) {
+async function sendHandshakeResponse(socket, stats) {
     const apiKey = fs.readFileSync(path.join('private', 'secrets.txt'), 'utf8').trim();
 
     const previousErrors = getPreviousSessionErrors(stats.sessionNumber);
+
+    // Summarize the last assistant message if we have one
+    let assistantMessageSummary = null;
+    if (lastSentAssistantMessage) {
+        console.log(`📝 Summarizing last assistant message for handshake...`);
+        try {
+            assistantMessageSummary = await summarizeWithClaude(lastSentAssistantMessage);
+        } catch (error) {
+            console.error(`⚠️ Failed to summarize assistant message: ${error.message}`);
+        }
+    }
 
     const handshakeResponse = JSON.stringify({
         type: 'handshake',
@@ -367,7 +489,8 @@ function sendHandshakeResponse(socket, stats) {
         totalLogs: stats.totalLogs,
         apiKey: apiKey,
         previousErrors: previousErrors,
-        currentAssistantMessage: lastSentAssistantMessage
+        currentAssistantMessage: lastSentAssistantMessage,
+        currentAssistantMessageSummary: assistantMessageSummary
     }) + '\n';
 
     socket.write(handshakeResponse);
@@ -378,6 +501,9 @@ function sendHandshakeResponse(socket, stats) {
 
     if (lastSentAssistantMessage) {
         console.log(`📤 Handshake includes assistant message: ${lastSentAssistantMessage.substring(0, 100)}...`);
+        if (assistantMessageSummary) {
+            console.log(`📤 Summary: "${assistantMessageSummary}"`);
+        }
     } else {
         console.log(`📤 Handshake sent with no assistant message (null)`);
     }
@@ -606,28 +732,6 @@ function checkForInjectedPrompts(filePath) {
 
         const lastMessage = userEvents.length > 0 ? userEvents[userEvents.length - 1].text.substring(0, 100).replace(/\n/g, ' ') : 'none';
 
-        if (allAssistantEvents.length > 0) {
-            const mostRecentAssistant = allAssistantEvents[allAssistantEvents.length - 1];
-            console.log(`📋 Most recent assistant message: ${mostRecentAssistant.text.substring(0, 100)}...`);
-
-            if (activeSocket && (lastSentAssistantMessage === null || lastSentAssistantMessage !== mostRecentAssistant.text)) {
-                console.log(`📤 Sending new assistant message to iOS:`);
-                console.log(`   ${mostRecentAssistant.text.substring(0, 100)}...`);
-
-                const assistantMessage = {
-                    type: 'assistant_messages',
-                    messages: [mostRecentAssistant],
-                    timestamp: Date.now()
-                };
-                const assistantData = JSON.stringify(assistantMessage) + '\n';
-                activeSocket.write(assistantData);
-
-                lastSentAssistantMessage = mostRecentAssistant.text;
-                saveLastAssistantMessage(lastSentAssistantMessage);
-            } else if (lastSentAssistantMessage === mostRecentAssistant.text) {
-                console.log(`⏭️  Skipping assistant message (already sent)`);
-            }
-        }
 
         for (const [promptId, data] of pendingPrompts.entries()) {
             if (!data.verified) {
@@ -655,39 +759,8 @@ function checkForInjectedPrompts(filePath) {
                     data.verifiedAt = Date.now();
 
                     if (activeSocket) {
-                        const ackMessage = {
-                            type: 'prompt_ack',
-                            status: 'success',
-                            method: 'conversation_event_verification',
-                            originalPrompt: data.originalPrompt,
-                            timestamp: Date.now()
-                        };
-
-                        const jsonData = JSON.stringify(ackMessage) + '\n';
-                        activeSocket.write(jsonData);
-                        console.log('✅ Prompt verified and acknowledged to iOS!');
-
-                        if (allAssistantEvents.length > 0) {
-                            const mostRecentAssistant = allAssistantEvents[allAssistantEvents.length - 1];
-
-                            if (lastSentAssistantMessage === null || lastSentAssistantMessage !== mostRecentAssistant.text) {
-                                console.log(`📤 Sending new assistant message to iOS:`);
-                                console.log(`   ${mostRecentAssistant.text.substring(0, 100)}...`);
-
-                                const assistantMessage = {
-                                    type: 'assistant_messages',
-                                    messages: [mostRecentAssistant],
-                                    timestamp: Date.now()
-                                };
-                                const assistantData = JSON.stringify(assistantMessage) + '\n';
-                                activeSocket.write(assistantData);
-
-                                lastSentAssistantMessage = mostRecentAssistant.text;
-                                saveLastAssistantMessage(lastSentAssistantMessage);
-                            } else {
-                                console.log(`⏭️  Skipping assistant message (already sent)`);
-                            }
-                        }
+                        // Summarize the user's prompt and send with ack
+                        sendPromptAckWithSummary(data.originalPrompt);
                     }
 
                     pendingPrompts.delete(promptId);
@@ -714,8 +787,82 @@ function checkForInjectedPrompts(filePath) {
             }
         }
 
+        // Check for new assistant messages to send to iOS
+        if (allAssistantEvents.length > 0) {
+            const latestAssistant = allAssistantEvents[allAssistantEvents.length - 1];
+
+            // Only send if this is a genuinely new message (different content)
+            if (latestAssistant.text !== lastSentAssistantMessage) {
+                console.log(`📨 New assistant message detected: "${latestAssistant.text.substring(0, 80)}..."`);
+
+                // Save IMMEDIATELY to prevent duplicate sends (before async summarization)
+                lastSentAssistantMessage = latestAssistant.text;
+                lastSentAssistantTimestamp = latestAssistant.timestamp;
+                saveLastAssistantMessage(latestAssistant.text);
+
+                // Summarize and send to iOS
+                sendAssistantMessageToiOS(latestAssistant.text);
+            }
+        }
+
     } catch (err) {
         console.error(`❌ Error checking file ${filePath}:`, err.message);
+    }
+}
+
+async function sendPromptAckWithSummary(originalPrompt) {
+    try {
+        const summary = await summarizeWithClaude(originalPrompt);
+
+        const ackMessage = {
+            type: 'prompt_ack',
+            status: 'success',
+            method: 'conversation_event_verification',
+            originalPrompt: originalPrompt,
+            summary: summary,
+            timestamp: Date.now()
+        };
+
+        activeSocket.write(JSON.stringify(ackMessage) + '\n');
+        console.log(`✅ Prompt verified with summary: "${summary}"`);
+    } catch (error) {
+        console.error(`❌ Failed to summarize prompt: ${error.message}`);
+        // Send ack without summary as fallback
+        const ackMessage = {
+            type: 'prompt_ack',
+            status: 'success',
+            method: 'conversation_event_verification',
+            originalPrompt: originalPrompt,
+            timestamp: Date.now()
+        };
+        activeSocket.write(JSON.stringify(ackMessage) + '\n');
+        console.log('✅ Prompt verified (no summary)');
+    }
+}
+
+async function sendAssistantMessageToiOS(text) {
+    if (!activeSocket) {
+        console.log('   ⚠️ No iOS client connected - skipping');
+        return;
+    }
+
+    try {
+        const summary = await summarizeWithClaude(text);
+
+        const assistantMessage = {
+            type: 'assistant_messages',
+            messages: [{
+                text: text,
+                summary: summary,
+                timestamp: Date.now()
+            }],
+            timestamp: Date.now()
+        };
+
+        activeSocket.write(JSON.stringify(assistantMessage) + '\n');
+        console.log(`✅ Sent assistant message to iOS with summary: "${summary}"`);
+    } catch (error) {
+        console.error(`❌ Failed to send assistant message: ${error.message}`);
     }
 }
 
@@ -828,3 +975,4 @@ EOF`;
         });
     });
 }
+
