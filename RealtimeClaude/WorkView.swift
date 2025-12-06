@@ -219,10 +219,24 @@ struct WorkView: View {
                                             .padding(.vertical, 2)
                                         } else {
                                             VStack(alignment: .leading, spacing: 4) {
-                                                Text(message.role == "assistant" ? "Assistant: \(message.text)" : (message.text.isEmpty ? "Recording..." : message.text))
-                                                    .font(.body)
-                                                    .foregroundColor(message.status.color)
-                                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                                if message.role == "user" {
+                                                    if let transcription = message.transcription {
+                                                        Text("Transcription: \(transcription)")
+                                                            .font(.caption)
+                                                            .foregroundColor(.gray)
+                                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                                    }
+
+                                                    Text(message.text.isEmpty ? "" : "Prompt: \(message.text)")
+                                                        .font(.body)
+                                                        .foregroundColor(message.status.color)
+                                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                                } else {
+                                                    Text("Assistant: \(message.text)")
+                                                        .font(.body)
+                                                        .foregroundColor(message.status.color)
+                                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                                }
 
                                                 if let summary = message.summary {
                                                     Text("Summary: \(summary)")
@@ -483,7 +497,7 @@ class WorkViewModel {
         realtimeAPI.conversationContextSubject
             .receive(on: DispatchQueue.main)
             .sink { [weak self] conversationContext in
-                self?.allMessages = conversationContext
+                self?.allMessages = conversationContext.sorted { $0.timestamp > $1.timestamp }
             }
             .store(in: &cancellables)
 
@@ -598,7 +612,8 @@ class WorkViewModel {
     }
 
     func stopClaudeCode() {
-        log("🛑 Sending stop signal")
+        log("🛑 Adding stop signal to conversation")
+        _ = realtimeAPI.addInterruptMessage(INTERRUPT_MESSAGE)
         logger.sendPromptToMac(INTERRUPT_MESSAGE)
     }
 

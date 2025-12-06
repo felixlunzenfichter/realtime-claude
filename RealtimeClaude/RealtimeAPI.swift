@@ -20,12 +20,25 @@ enum MessageStatus: Sendable {
 
 struct ConversationMessage: Identifiable, Sendable {
     let id = UUID()
+    let timestamp: Date
+    var transcription: String?
     var text: String
     let role: String
     var summary: String?
     var audioState: MessageAudioState?
     var audioData: Data?
     var status: MessageStatus = .notSent
+
+    init(transcription: String? = nil, text: String, role: String, summary: String? = nil, audioState: MessageAudioState? = nil, audioData: Data? = nil, status: MessageStatus = .notSent) {
+        self.timestamp = Date()
+        self.transcription = transcription
+        self.text = text
+        self.role = role
+        self.summary = summary
+        self.audioState = audioState
+        self.audioData = audioData
+        self.status = status
+    }
 }
 
 protocol RealtimeAPIProtocol: Sendable {
@@ -41,6 +54,7 @@ protocol RealtimeAPIProtocol: Sendable {
     func finalizeMessage()
     func restart()
     func addAssistantMessage(_ text: String, summary: String)
+    func addInterruptMessage(_ text: String) -> UUID
 }
 
 nonisolated(unsafe) let realtimeAPI: RealtimeAPIProtocol = RealtimeAPI()
@@ -73,10 +87,12 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
             .sink { [weak self] update in
                 guard let self = self else { return }
 
-                if update.isFinal {
-                    self.handleFinalTranscription(update.text)
+                if update.isRaw {
+                    self.handleRawTranscription(update.transcription)
+                } else if update.isFinal {
+                    self.handleFinalTranscription(transcription: update.transcription, prompt: update.prompt ?? update.transcription, summary: update.summary)
                 } else {
-                    self.handleInterimTranscription(update.text)
+                    self.handleInterimTranscription(transcription: update.transcription, prompt: update.prompt ?? update.transcription, summary: update.summary)
                 }
             }
         log("Subscribed to Mac transcription updates")
@@ -92,20 +108,20 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
     func processInputAudioBuffer(_ data: Data) {
     }
 
-    private func handleInterimTranscription(_ text: String) {
+    private func handleRawTranscription(_ text: String) {
         if text.isEmpty { return }
 
         var currentContext = conversationContextSubject.value
-        let displayText = accumulatedText.isEmpty ? text : accumulatedText + " " + text
 
         if let userId = currentUserMessageId,
            let index = currentContext.firstIndex(where: { $0.id == userId }) {
-            currentContext[index].text = displayText + "..."
+            currentContext[index].transcription = text
             currentContext[index].status = .recording
             conversationContextSubject.send(currentContext)
         } else {
             var userMessage = ConversationMessage(
-                text: displayText + "...",
+                transcription: text,
+                text: "",
                 role: "user",
                 audioState: .processing
             )
@@ -116,25 +132,50 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         }
     }
 
-    private func handleFinalTranscription(_ text: String) {
-        if !text.isEmpty {
-            accumulatedText = accumulatedText.isEmpty ? text : accumulatedText + " " + text
-            log("Accumulated: \(accumulatedText)")
+    private func handleInterimTranscription(transcription: String, prompt: String, summary: String?) {
+        if prompt.isEmpty { return }
+
+        var currentContext = conversationContextSubject.value
+
+        if let userId = currentUserMessageId,
+           let index = currentContext.firstIndex(where: { $0.id == userId }) {
+            currentContext[index].transcription = transcription
+            currentContext[index].text = prompt
+            currentContext[index].summary = summary
+            currentContext[index].status = .recording
+            conversationContextSubject.send(currentContext)
+        } else {
+            var userMessage = ConversationMessage(
+                transcription: transcription,
+                text: prompt,
+                role: "user",
+                summary: summary,
+                audioState: .processing
+            )
+            userMessage.status = .recording
+            currentUserMessageId = userMessage.id
+            currentContext.insert(userMessage, at: 0)
+            conversationContextSubject.send(currentContext)
+        }
+    }
+
+    private func handleFinalTranscription(transcription: String, prompt: String, summary: String?) {
+        if !prompt.isEmpty {
+            accumulatedText = prompt
+            log("Final transcription: \(accumulatedText)")
         }
 
         var currentContext = conversationContextSubject.value
 
         if let userId = currentUserMessageId,
            let index = currentContext.firstIndex(where: { $0.id == userId }) {
-            if accumulatedText.isEmpty {
-                currentContext.remove(at: index)
-                currentUserMessageId = nil
-            } else {
-                currentContext[index].text = accumulatedText
-                currentContext[index].audioState = .processing
-            }
+            currentContext[index].transcription = transcription
+            currentContext[index].text = accumulatedText.isEmpty ? "..." : accumulatedText
+            currentContext[index].audioState = .processing
             conversationContextSubject.send(currentContext)
         }
+
+        finalizeMessage()
     }
 
     func finalizeMessage() {
@@ -156,7 +197,6 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
             logger.sendPromptToMac(accumulatedText)
         }
 
-        currentUserMessageId = nil
         accumulatedText = ""
 
         updateAPIState(.connected)
@@ -180,10 +220,7 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         currentContext[index].status = .injected
         conversationContextSubject.send(currentContext)
 
-        if currentUserMessageId == lastUserMessage.id {
-            currentUserMessageId = nil
-            accumulatedText = ""
-        }
+        currentUserMessageId = nil
 
         log("Acknowledged: \(lastUserMessage.text)")
         log("Summary: \(summary)")
@@ -200,10 +237,13 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
     func clearAccumulatedPrompts() {
         if let userId = currentUserMessageId {
             var currentContext = conversationContextSubject.value
-            currentContext.removeAll(where: { $0.id == userId })
-            conversationContextSubject.send(currentContext)
+            if let index = currentContext.firstIndex(where: { $0.id == userId }) {
+                currentContext[index].text = "[cancelled]"
+                currentContext[index].status = .failed
+                conversationContextSubject.send(currentContext)
+            }
             currentUserMessageId = nil
-            log("Cleared current user message")
+            log("Marked current user message as cancelled")
         }
         accumulatedText = ""
         logger.sendAudioControlToMac("reset")
@@ -238,6 +278,22 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         if audioManager.getIsPlaybackEnabled() {
             speakWithTTS(text: summary, messageId: message.id)
         }
+    }
+
+    func addInterruptMessage(_ text: String) -> UUID {
+        var message = ConversationMessage(
+            text: text,
+            role: "user",
+            audioState: nil
+        )
+        message.status = .sent
+
+        var currentContext = conversationContextSubject.value
+        currentContext.insert(message, at: 0)
+        conversationContextSubject.send(currentContext)
+
+        log("Added interrupt message: \(text)")
+        return message.id
     }
 
     private func speakWithTTS(text: String, messageId: UUID) {

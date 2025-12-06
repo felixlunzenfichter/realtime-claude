@@ -19,8 +19,11 @@ struct PromptStatusUpdate {
 }
 
 struct TranscriptionUpdate {
-    let text: String
+    let transcription: String
+    let prompt: String?
+    let summary: String?
     let isFinal: Bool
+    let isRaw: Bool
 }
 
 protocol LoggerProtocol {
@@ -468,17 +471,32 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     }
 
     private func handleTranscriptionMessage(_ jsonData: [String: Any]) {
-        guard let text = jsonData["text"] as? String else {
-            error("text was nil in transcription message")
+        let status = jsonData["status"] as? String ?? "partial"
+        let isFinal = status == "final" || status == "final_raw"
+        let isRaw = status == "raw" || status == "final_raw"
+
+        let transcription = jsonData["transcription"] as? String ?? ""
+        let prompt = jsonData["prompt"] as? String
+        let summary = jsonData["summary"] as? String
+
+        if transcription.isEmpty {
+            error("transcription was empty in transcription message")
             return
         }
 
-        let status = jsonData["status"] as? String ?? "partial"
-        let isFinal = status == "final"
+        if isRaw {
+            debugLog(id: "transcription", message: "🎤 [RAW] \(transcription)")
+        } else {
+            debugLog(id: "transcription", message: "🎤 [\(status)] \(prompt ?? transcription)")
+        }
 
-        debugLog(id: "transcription", message: "🎤 [\(status)] \(text)")
-
-        transcriptionSubject.send(TranscriptionUpdate(text: text, isFinal: isFinal))
+        transcriptionSubject.send(TranscriptionUpdate(
+            transcription: transcription,
+            prompt: prompt,
+            summary: summary,
+            isFinal: isFinal,
+            isRaw: isRaw
+        ))
     }
 
     private func sendStartMessage() {

@@ -128,7 +128,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         log("Stopped recording")
 
         logger.sendAudioControlToMac("stop")
-        realtimeAPI.finalizeMessage()
 
         responsePlayerNode.reset()
         responsePlayerNode.play()
