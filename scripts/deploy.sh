@@ -81,7 +81,7 @@ echo ""
 BUILD_LOG=$(mktemp)
 
 # Try build without clean first (faster)
-if /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild build -project RealtimeClaude.xcodeproj -scheme RealtimeClaude -destination "generic/platform=iOS" CODE_SIGN_IDENTITY="Apple Development" TARGETED_DEVICE_FAMILY=$DEVICE_FAMILY > "$BUILD_LOG" 2>&1; then
+if /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild build -project RealtimeClaude.xcodeproj -scheme RealtimeClaude -destination "generic/platform=iOS" TARGETED_DEVICE_FAMILY=$DEVICE_FAMILY DEVELOPMENT_TEAM=W26GVS4M5S CODE_SIGN_IDENTITY="Apple Development" > "$BUILD_LOG" 2>&1; then
     # Build succeeded
     echo "   ✅ Build successful"
 
@@ -108,7 +108,7 @@ else
 
     /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild clean -project RealtimeClaude.xcodeproj -scheme RealtimeClaude -destination "generic/platform=iOS" TARGETED_DEVICE_FAMILY=$DEVICE_FAMILY > /dev/null 2>&1
 
-    if /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild build -project RealtimeClaude.xcodeproj -scheme RealtimeClaude -destination "generic/platform=iOS" CODE_SIGN_IDENTITY="Apple Development" TARGETED_DEVICE_FAMILY=$DEVICE_FAMILY > "$BUILD_LOG" 2>&1; then
+    if /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild build -project RealtimeClaude.xcodeproj -scheme RealtimeClaude -destination "generic/platform=iOS" TARGETED_DEVICE_FAMILY=$DEVICE_FAMILY DEVELOPMENT_TEAM=W26GVS4M5S CODE_SIGN_IDENTITY="Apple Development" > "$BUILD_LOG" 2>&1; then
         echo "   ✅ Clean build successful"
 
         # Check for warnings even on success

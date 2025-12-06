@@ -10,6 +10,14 @@ enum APIState {
     case restarting
 }
 
+enum MessageStatus: Sendable {
+    case recording
+    case notSent
+    case sent
+    case injected
+    case failed
+}
+
 struct ConversationMessage: Identifiable, Sendable {
     let id = UUID()
     var text: String
@@ -17,6 +25,7 @@ struct ConversationMessage: Identifiable, Sendable {
     var summary: String?
     var audioState: MessageAudioState?
     var audioData: Data?
+    var status: MessageStatus = .notSent
 }
 
 protocol RealtimeAPIProtocol: Sendable {
@@ -92,13 +101,15 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         if let userId = currentUserMessageId,
            let index = currentContext.firstIndex(where: { $0.id == userId }) {
             currentContext[index].text = displayText + "..."
+            currentContext[index].status = .recording
             conversationContextSubject.send(currentContext)
         } else {
-            let userMessage = ConversationMessage(
+            var userMessage = ConversationMessage(
                 text: displayText + "...",
                 role: "user",
                 audioState: .processing
             )
+            userMessage.status = .recording
             currentUserMessageId = userMessage.id
             currentContext.insert(userMessage, at: 0)
             conversationContextSubject.send(currentContext)
@@ -138,9 +149,15 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
            let index = currentContext.firstIndex(where: { $0.id == userId }) {
             currentContext[index].text = accumulatedText
             currentContext[index].audioState = .queued
+            currentContext[index].status = .sent
             conversationContextSubject.send(currentContext)
-            log("Message finalized: \(accumulatedText)")
+
+            log("Sending message to Mac: \(accumulatedText)")
+            logger.sendPromptToMac(accumulatedText)
         }
+
+        currentUserMessageId = nil
+        accumulatedText = ""
 
         updateAPIState(.connected)
     }
@@ -148,7 +165,7 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
     func acknowledgeSuccessfulPromptInjection(summary: String) {
         var currentContext = conversationContextSubject.value
 
-        guard let lastUserMessage = currentContext.first(where: { $0.role == "user" && $0.audioState == .queued }) else {
+        guard let lastUserMessage = currentContext.first(where: { $0.role == "user" && $0.status == .sent }) else {
             log("No user message to acknowledge")
             return
         }
@@ -160,6 +177,7 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
 
         currentContext[index].summary = summary
         currentContext[index].audioState = .doneProcessing
+        currentContext[index].status = .injected
         conversationContextSubject.send(currentContext)
 
         if currentUserMessageId == lastUserMessage.id {

@@ -66,14 +66,10 @@ enum RecordingStatus {
     }
 }
 
-enum MessageStatus {
-    case notSent
-    case sent
-    case injected
-    case failed
-
+extension MessageStatus {
     var color: Color {
         switch self {
+        case .recording: return .white
         case .notSent: return .white
         case .sent: return .orange
         case .injected: return .green
@@ -83,19 +79,11 @@ enum MessageStatus {
 
     var statusText: String {
         switch self {
+        case .recording: return "Recording..."
         case .notSent: return ""
         case .sent: return "Sending..."
         case .injected: return ""
-        case .failed: return "Failed ✗"
-        }
-    }
-
-    var sortPriority: Int {
-        switch self {
-        case .failed: return 0
-        case .notSent: return 1
-        case .sent: return 2
-        case .injected: return 3
+        case .failed: return "Failed"
         }
     }
 }
@@ -122,15 +110,6 @@ enum MessageAudioState: Sendable {
     }
 }
 
-struct Message: Identifiable {
-    let id: UUID
-    var content: String
-    var summary: String?
-    let timestamp: Date
-    var status: MessageStatus
-    var audioState: MessageAudioState?
-    var role: String
-}
 
 struct ToggleBar: View {
     struct ToggleItem {
@@ -217,7 +196,7 @@ struct WorkView: View {
                             ForEach(viewModel.allMessages) { message in
                                 VStack(spacing: 0) {
                                     ZStack(alignment: .bottomTrailing) {
-                                        if message.content == INTERRUPT_MESSAGE {
+                                        if message.text == INTERRUPT_MESSAGE {
                                             HStack {
                                                 HStack(spacing: 6) {
                                                     if message.status == .sent {
@@ -235,16 +214,12 @@ struct WorkView: View {
                                                 }
 
                                                 Spacer()
-
-                                                Text(message.timestamp, style: .time)
-                                                    .font(.system(size: 10))
-                                                    .foregroundColor(message.status == .injected ? Color.red.opacity(0.7) : message.status.color.opacity(0.7))
                                             }
                                             .padding(.horizontal, 12)
                                             .padding(.vertical, 2)
                                         } else {
                                             VStack(alignment: .leading, spacing: 4) {
-                                                Text(message.content.isEmpty ? "Recording..." : message.content)
+                                                Text(message.role == "assistant" ? "Assistant: \(message.text)" : (message.text.isEmpty ? "Recording..." : message.text))
                                                     .font(.body)
                                                     .foregroundColor(message.status.color)
                                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -259,19 +234,13 @@ struct WorkView: View {
                                             .padding(.horizontal, 12)
                                             .padding(.vertical, 6)
                                         }
-
-                                        if message.content != INTERRUPT_MESSAGE {
-                                            Text(message.timestamp, style: .time)
-                                                .font(.system(size: 10))
-                                                .foregroundColor(message.status.color.opacity(0.7))
-                                        }
                                     }
                                     .background(
                                         RoundedRectangle(cornerRadius: 8)
-                                            .fill(message.content == INTERRUPT_MESSAGE && message.status == .injected ? Color.red.opacity(0.1) : message.status.color.opacity(0.1))
+                                            .fill(message.text == INTERRUPT_MESSAGE && message.status == .injected ? Color.red.opacity(0.1) : message.status.color.opacity(0.1))
                                     )
 
-                                    if message.content != INTERRUPT_MESSAGE {
+                                    if message.text != INTERRUPT_MESSAGE {
                                         VStack {
                                             Spacer()
                                         }
@@ -292,7 +261,7 @@ struct WorkView: View {
                                 .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
                                 .swipeActions(edge: .leading, allowsFullSwipe: true) {
                                     Button {
-                                        viewModel.sendMessage(message.content)
+                                        viewModel.sendMessage(message.text)
                                     } label: {
                                         Label("Send", systemImage: "paperplane.fill")
                                     }
@@ -374,13 +343,21 @@ struct WorkView: View {
                 VStack(spacing: 0) {
                     Spacer()
 
-                    Text(viewModel.currentRecordingStatus == .isRecording ? "\(viewModel.currentRecordingStatus.statusText) (\(viewModel.audioInputSource))" : viewModel.currentRecordingStatus.statusText)
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .frame(minHeight: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")))
-                        .glassEffect(.regular.tint(viewModel.currentRecordingStatus.color.opacity(0.5)))
-                        .padding(.horizontal, ACTUAL_SCREEN_WIDTH / 8)
+                    VStack(spacing: 4) {
+                        Text(viewModel.currentRecordingStatus == .isRecording ? "\(viewModel.currentRecordingStatus.statusText) (\(viewModel.audioInputSource))" : viewModel.currentRecordingStatus.statusText)
+                            .font(.headline)
+                            .foregroundColor(.white)
+
+                        if let loadingStatus = viewModel.loadingStatus {
+                            Text(loadingStatus)
+                                .font(.caption)
+                                .foregroundColor(.yellow)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")))
+                    .glassEffect(.regular.tint(viewModel.currentRecordingStatus.color.opacity(0.5)))
+                    .padding(.horizontal, ACTUAL_SCREEN_WIDTH / 8)
 
 
                     Spacer()
@@ -407,18 +384,7 @@ struct WorkView: View {
 
 @Observable
 class WorkViewModel {
-    var currentRecordingStatus: RecordingStatus = .disconnected {
-        didSet {
-            log("Recording status changed: \(oldValue) → \(currentRecordingStatus)")
-            if currentRecordingStatus == .connected {
-                if let index = messages.firstIndex(where: { $0.role == "user" && $0.status == .notSent }) {
-                    log("Sending prompt to Claude Code: \(messages[index].content)")
-                    logger.sendPromptToMac(messages[index].content)
-                    messages[index].status = .sent  // Mark as sent to prevent duplicate sends
-                }
-            }
-        }
-    }
+    var currentRecordingStatus: RecordingStatus = .disconnected
     var isRecordingAudio = false
     var isPlayingAudio = false
     var isMicrophoneEnabled = false {
@@ -428,15 +394,9 @@ class WorkViewModel {
     }
     var isPlaybackEnabled = audioManager.getIsPlaybackEnabled()
     var audioInputSource = "Unknown"
+    var loadingStatus: String? = nil
 
-    var messages: [Message] = []
-    var interrupts: [Message] = []
-
-    var allMessages: [Message] {
-        (messages + interrupts)
-            .sorted { $0.timestamp > $1.timestamp }
-            .sorted { $0.status.sortPriority < $1.status.sortPriority }
-    }
+    var allMessages: [ConversationMessage] = []
 
     private let motionManager = CMMotionManager()
     var pitch: Double = 0
@@ -505,28 +465,6 @@ class WorkViewModel {
             .store(in: &cancellables)
 
 
-        logger.promptStatusSubject
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] statusUpdate in
-                let messageStatus: MessageStatus
-                switch statusUpdate.status {
-                case "sent":
-                    messageStatus = .sent
-                case "injected":
-                    messageStatus = .injected
-                case "failed":
-                    messageStatus = .failed
-                default:
-                    messageStatus = .notSent
-                }
-                self?.updateMessageStatus(statusUpdate.prompt, status: messageStatus)
-
-                if messageStatus == .injected {
-                    self?.removePendingInterrupts()
-                    self?.failOlderSendingMessages(injectedPrompt: statusUpdate.prompt)
-                }
-            }
-            .store(in: &cancellables)
 
         audioManager.audioInputSourceSubject
             .receive(on: DispatchQueue.main)
@@ -545,7 +483,14 @@ class WorkViewModel {
         realtimeAPI.conversationContextSubject
             .receive(on: DispatchQueue.main)
             .sink { [weak self] conversationContext in
-                self?.updateConversationContext(conversationContext)
+                self?.allMessages = conversationContext
+            }
+            .store(in: &cancellables)
+
+        realtimeAPI.loadingStatusSubject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] status in
+                self?.loadingStatus = status
             }
             .store(in: &cancellables)
     }
@@ -616,80 +561,16 @@ class WorkViewModel {
         }
     }
 
-    func addMessage(_ content: String) {
-        if let index = messages.firstIndex(where: { $0.status != .injected }) {
-            messages[index].content = content
-        } else {
-            let message = Message(
-                id: UUID(),
-                content: content,
-                summary: nil,
-                timestamp: Date(),
-                status: .notSent,
-                audioState: nil,
-                role: "user"
-            )
-            let insertionIndex = messages.firstIndex(where: { $0.timestamp < message.timestamp }) ?? messages.count
-            messages.insert(message, at: insertionIndex)
-        }
+
+    func copyMessageToClipboard(_ message: ConversationMessage) {
+        guard message.text != INTERRUPT_MESSAGE else { return }
+
+        UIPasteboard.general.string = message.text
+        log("Copied message to clipboard: \(message.text.prefix(50))...")
     }
 
-    func updateConversationContext(_ conversationContext: [ConversationMessage]) {
-        if conversationContext.isEmpty && !messages.isEmpty {
-            resetConversation()
-            return
-        }
-
-        for convMsg in conversationContext {
-            let content: String
-            if convMsg.role == "assistant" {
-                content = "Assistant: \(convMsg.text)"
-            } else {
-                content = convMsg.text
-            }
-
-            if let index = messages.firstIndex(where: { $0.id == convMsg.id }) {
-                messages[index].content = content
-                messages[index].summary = convMsg.summary
-                messages[index].audioState = convMsg.audioState
-            } else {
-                let initialStatus: MessageStatus = convMsg.role == "assistant" ? .injected : .notSent
-
-                let message = Message(
-                    id: convMsg.id,
-                    content: content,
-                    summary: convMsg.summary,
-                    timestamp: Date(),
-                    status: initialStatus,
-                    audioState: convMsg.audioState,
-                    role: convMsg.role
-                )
-
-                let insertionIndex = messages.firstIndex(where: { $0.timestamp < message.timestamp }) ?? messages.count
-                messages.insert(message, at: insertionIndex)
-                log("Added \(convMsg.role) message to UI at index \(insertionIndex): \(convMsg.text)")
-            }
-        }
-    }
-
-    func resetConversation() {
-        log("⚠️ Conversation reset - clearing all messages")
-        messages.removeAll()
-        debugLog(id: "conversationReset", message: "🗑️ [Reset] Cleared all state due to reconnection")
-        log("🔄 Connection reset - conversation cleared")
-    }
-
-    func copyMessageToClipboard(_ message: Message) {
-        guard message.content != INTERRUPT_MESSAGE else { return }
-
-        UIPasteboard.general.string = message.content
-        log("Copied message to clipboard: \(message.content.prefix(50))...")
-    }
-
-    func replayAudioForMessage(_ message: Message) {
-        let conversationContext = realtimeAPI.conversationContextSubject.value
-        guard let convMsg = conversationContext.first(where: { $0.id == message.id }),
-              let audioData = convMsg.audioData else {
+    func replayAudioForMessage(_ message: ConversationMessage) {
+        guard let audioData = message.audioData else {
             log("No audio data to replay")
             return
         }
@@ -699,30 +580,6 @@ class WorkViewModel {
         audioManager.scheduleOutputAudioBuffer(audioBase64, resetCount: true, onBufferPlayed: nil)
     }
 
-    func updateMessageStatus(_ prompt: String, status: MessageStatus) {
-        if let index = messages.firstIndex(where: { $0.content == prompt }) {
-            messages[index].status = status
-            return
-        }
-        if let index = interrupts.firstIndex(where: { $0.content == prompt }) {
-            interrupts[index].status = status
-        }
-    }
-
-    func failOlderSendingMessages(injectedPrompt: String) {
-        guard let injectedIndex = messages.firstIndex(where: { $0.content == injectedPrompt }) else {
-            return
-        }
-
-        let injectedTimestamp = messages[injectedIndex].timestamp
-
-        for i in 0..<messages.count {
-            if messages[i].timestamp < injectedTimestamp && messages[i].status == .sent {
-                messages[i].status = .failed
-                log("❌ Marked older message as failed: \(messages[i].content)")
-            }
-        }
-    }
 
     func sendMessage(_ content: String) {
         log("📤 Manually sending message: \(content)")
@@ -730,52 +587,18 @@ class WorkViewModel {
     }
 
     func deleteMessage(_ id: UUID) {
-        if let index = messages.firstIndex(where: { $0.id == id }) {
-            let message = messages[index]
+        guard let message = allMessages.first(where: { $0.id == id }) else { return }
 
-            if index == 0 && message.status != .injected {
-                realtimeAPI.clearAccumulatedPrompts()
-                log("🗑️ Deleted current message and cleared accumulated prompts")
-            } else {
-                log("🗑️ Deleted message")
-            }
-
-            messages.remove(at: index)
-            return
+        if message.status != .injected {
+            realtimeAPI.clearAccumulatedPrompts()
+            log("🗑️ Deleted current message and cleared accumulated prompts")
+        } else {
+            log("🗑️ Deleted message (view only)")
         }
-
-        if let index = interrupts.firstIndex(where: { $0.id == id }) {
-            interrupts.remove(at: index)
-            log("🗑️ Deleted interrupt signal")
-        }
-    }
-
-    func addInterrupt() {
-        let interrupt = Message(
-            id: UUID(),
-            content: INTERRUPT_MESSAGE,
-            summary: nil,
-            timestamp: Date(),
-            status: .notSent,
-            audioState: nil,
-            role: "user"
-        )
-        interrupts.insert(interrupt, at: 0)
-
-        log("🛑 Added interrupt signal to conversation")
-    }
-
-    func removePendingInterrupts() {
-        let removedCount = interrupts.filter { $0.status != .injected }.count
-        interrupts.removeAll { $0.status != .injected }
-        log("🗑️ Removed \(removedCount) pending interrupt(s) after successful interrupt execution")
     }
 
     func stopClaudeCode() {
-        log("🛑 Adding stop signal to conversation")
-
-        addInterrupt()
-
+        log("🛑 Sending stop signal")
         logger.sendPromptToMac(INTERRUPT_MESSAGE)
     }
 

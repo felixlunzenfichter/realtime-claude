@@ -138,6 +138,39 @@ function handleAudioMessage(socket, logData) {
     }
 }
 
+function isHallucination(text) {
+    if (!text || text.length < 10) return true;
+
+    const words = text.toLowerCase().split(/\s+/);
+    if (words.length < 3) return false;
+
+    const wordCounts = {};
+    for (const word of words) {
+        if (word.length > 2) {
+            wordCounts[word] = (wordCounts[word] || 0) + 1;
+        }
+    }
+
+    for (const [word, count] of Object.entries(wordCounts)) {
+        if (count > 3 && count / words.length > 0.3) {
+            console.log(`⚠️ Hallucination detected: "${word}" repeated ${count}x`);
+            return true;
+        }
+    }
+
+    const phrases = ['thank you', 'thanks for', 'please subscribe', 'like and subscribe'];
+    for (const phrase of phrases) {
+        const regex = new RegExp(phrase, 'gi');
+        const matches = text.match(regex);
+        if (matches && matches.length > 2) {
+            console.log(`⚠️ Hallucination detected: "${phrase}" repeated ${matches.length}x`);
+            return true;
+        }
+    }
+
+    return false;
+}
+
 async function triggerTranscription() {
     if (isTranscribing) {
         pendingTranscription = true;
@@ -166,7 +199,7 @@ async function triggerTranscription() {
 
         const text = await transcribeAudio(tempFile);
 
-        if (text && text !== lastTranscription && activeSocket && isRecordingAudio) {
+        if (text && text !== lastTranscription && activeSocket && isRecordingAudio && !isHallucination(text)) {
             lastTranscription = text;
             console.log(`🎤 [INTERIM] ${text}`);
 
@@ -259,7 +292,7 @@ async function handleAudioControlMessage(socket, logData) {
     } else if (action === 'reset') {
         console.log('🎤 Audio reset');
         isRecordingAudio = false;
-        stopInterimTranscription();
+        pendingTranscription = false;
         audioBuffer = Buffer.alloc(0);
         lastTranscription = '';
     }

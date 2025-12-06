@@ -18,6 +18,11 @@ struct PromptStatusUpdate {
     let status: String
 }
 
+struct TranscriptionUpdate {
+    let text: String
+    let isFinal: Bool
+}
+
 protocol LoggerProtocol {
     var logsSubject: CurrentValueSubject<[LogMessage], Never> { get }
     var debugLogsSubject: CurrentValueSubject<[(LogMessage, Int)], Never> { get }
@@ -25,8 +30,11 @@ protocol LoggerProtocol {
     var sessionStatsSubject: CurrentValueSubject<SessionStats, Never> { get }
     var testsPassedSubject: CurrentValueSubject<Int, Never> { get }
     var promptStatusSubject: PassthroughSubject<PromptStatusUpdate, Never> { get }
+    var transcriptionSubject: PassthroughSubject<TranscriptionUpdate, Never> { get }
 
     func sendPromptToMac(_ prompt: String)
+    func sendAudioToMac(_ audioData: Data)
+    func sendAudioControlToMac(_ action: String)
 }
 
 enum LogType: Codable {
@@ -74,6 +82,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     let sessionStatsSubject = CurrentValueSubject<SessionStats, Never>(SessionStats(sessionNumber: 0, totalUptime: 0, todayUptime: 0, totalLogs: 0, totalTests: 0, previousRunFailed: false))
     let testsPassedSubject = CurrentValueSubject<Int, Never>(0)
     let transmittedLogIdsSubject = CurrentValueSubject<[String], Never>([])
+    let transcriptionSubject = PassthroughSubject<TranscriptionUpdate, Never>()
 
     private var connection: NWConnection
     private let macHostname = "Felixs-MacBook-Pro.local"
@@ -317,6 +326,8 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             handlePromptAckMessage(jsonData)
         case "assistant_messages":
             handleAssistantMessages(jsonData)
+        case "transcription":
+            handleTranscriptionMessage(jsonData)
         default:
             error("Unexpected message type: \(messageType)")
         }
@@ -359,7 +370,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
     private func handleHandshakeMessage(_ jsonData: [String: Any]) {
         if let apiKey = jsonData["apiKey"] as? String {
-            realtimeAPI.connect(apiKey: apiKey)
+            realtimeAPI.saveAPIKey(apiKey)
         }
 
         guard let sessionNumber = jsonData["sessionNumber"] as? Int else {
@@ -456,6 +467,20 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         }
     }
 
+    private func handleTranscriptionMessage(_ jsonData: [String: Any]) {
+        guard let text = jsonData["text"] as? String else {
+            error("text was nil in transcription message")
+            return
+        }
+
+        let status = jsonData["status"] as? String ?? "partial"
+        let isFinal = status == "final"
+
+        debugLog(id: "transcription", message: "🎤 [\(status)] \(text)")
+
+        transcriptionSubject.send(TranscriptionUpdate(text: text, isFinal: isFinal))
+    }
+
     private func sendStartMessage() {
         let startMessage = ["type": "start"] as [String: Any]
 
@@ -482,6 +507,34 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         sendMessage(jsonData, messageType: "prompt", logMessage: "📤 [iOS → macOS] Sending prompt: \(prompt)")
 
         promptStatusSubject.send(PromptStatusUpdate(prompt: prompt, status: "sent"))
+    }
+
+    func sendAudioToMac(_ audioData: Data) {
+        let audioMessage: [String: Any] = [
+            "type": "audio",
+            "audioData": audioData.base64EncodedString()
+        ]
+
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: audioMessage) else {
+            error("Failed to serialize audio message to JSON")
+            return
+        }
+
+        sendMessage(jsonData, messageType: "audio")
+    }
+
+    func sendAudioControlToMac(_ action: String) {
+        let controlMessage: [String: Any] = [
+            "type": "audio_control",
+            "action": action
+        ]
+
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: controlMessage) else {
+            error("Failed to serialize audio control message to JSON")
+            return
+        }
+
+        sendMessage(jsonData, messageType: "audio_control", logMessage: "📤 [iOS → macOS] Audio control: \(action)")
     }
 
     private func scheduleReconnect() {

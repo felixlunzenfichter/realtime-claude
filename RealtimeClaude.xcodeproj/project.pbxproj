@@ -27,6 +27,7 @@
 		B316EC092D3454C000205815 /* WorkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkView.swift; sourceTree = "<group>"; };
 		B316EC0A2D3454C000205817 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B316EC0B2D3454C000205819 /* AudioManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioManager.swift; sourceTree = "<group>"; };
+		B316EC0C2D3454C000205820 /* RealtimeClaude.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = RealtimeClaude.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -67,6 +68,7 @@
 				B316EC082D3454C000205813 /* IntFormatter.swift */,
 				B316EC092D3454C000205815 /* WorkView.swift */,
 				B316EC0A2D3454C000205817 /* Assets.xcassets */,
+				B316EC0C2D3454C000205820 /* RealtimeClaude.entitlements */,
 			);
 			path = RealtimeClaude;
 			sourceTree = "<group>";
@@ -114,6 +116,8 @@
 				Base,
 			);
 			mainGroup = B316EBF72D3454C000205805;
+			packageReferences = (
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B316EC012D3454C000205805 /* Products */;
 			projectDirPath = "";
@@ -223,6 +227,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = RealtimeClaude/RealtimeClaude.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = W26GVS4M5S;
