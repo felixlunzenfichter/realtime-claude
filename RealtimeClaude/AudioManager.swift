@@ -30,7 +30,8 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     private let audioEngine: AVAudioEngine
     private let responsePlayerNode: AVAudioPlayerNode
     private let audioConverter: AVAudioConverter
-    private let OPENAI_AUDIO_FORMAT = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24000, channels: 1, interleaved: false)!
+    private let WHISPER_AUDIO_FORMAT = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: false)!
+    private let TTS_OUTPUT_FORMAT = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24000, channels: 1, interleaved: false)!
 
     private var isPlaybackEnabled: Bool = true
     private var scheduledBufferCount: Int = 0
@@ -40,9 +41,9 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         // Configure audio session ONCE at init - never touch it again
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP])
             try session.setActive(true)
-            log("Audio session configured: playAndRecord with defaultToSpeaker")
+            log("Audio session configured: playAndRecord with defaultToSpeaker + Bluetooth A2DP output")
         } catch {
             log("Failed to configure audio session: \(error.localizedDescription)")
         }
@@ -50,11 +51,11 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         audioEngine = AVAudioEngine()
 
         let inputFormat = audioEngine.inputNode.outputFormat(forBus: 0)
-        audioConverter = AVAudioConverter(from: inputFormat, to: OPENAI_AUDIO_FORMAT)!
+        audioConverter = AVAudioConverter(from: inputFormat, to: WHISPER_AUDIO_FORMAT)!
 
         responsePlayerNode = AVAudioPlayerNode()
         audioEngine.attach(responsePlayerNode)
-        audioEngine.connect(responsePlayerNode, to: audioEngine.mainMixerNode, format: OPENAI_AUDIO_FORMAT)
+        audioEngine.connect(responsePlayerNode, to: audioEngine.mainMixerNode, format: TTS_OUTPUT_FORMAT)
 
         requestMicrophonePermission()
         updateAudioInputSource()
@@ -115,6 +116,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         }
         isRecordingAudioSubject.send(true)
         responsePlayerNode.stop()
+        logger.sendAudioControlToMac("start")
         installInputAudioTap()
         log("Started recording")
     }
@@ -125,30 +127,11 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         isRecordingAudioSubject.send(false)
         log("Stopped recording")
 
+        logger.sendAudioControlToMac("stop")
+        realtimeAPI.finalizeMessage()
+
         responsePlayerNode.reset()
         responsePlayerNode.play()
-        sendSilence()
-    }
-
-    private func sendSilence() {
-        guard realtimeAPI.apiStateSubject.value == .speechDetected else {
-            log("Speech stopped detected, stopping silence")
-            return
-        }
-
-        realtimeAPI.processInputAudioBuffer(generateSilenceBuffer(durationMs: 100))
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.sendSilence()
-        }
-    }
-
-    private func generateSilenceBuffer(durationMs: Int) -> Data {
-        let sampleRate = 24000
-        let numSamples = (sampleRate * durationMs) / 1000
-        var silenceBuffer = [Int16](repeating: 0, count: numSamples)
-        let data = Data(bytes: &silenceBuffer, count: silenceBuffer.count * MemoryLayout<Int16>.size)
-        return data
     }
 
     func getIsPlaybackEnabled() -> Bool {
@@ -198,7 +181,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
             return
         }
 
-        guard let buffer = createPCMBuffer(from: audioData, format: OPENAI_AUDIO_FORMAT) else {
+        guard let buffer = createPCMBuffer(from: audioData, format: TTS_OUTPUT_FORMAT) else {
             error("Failed to create PCM buffer from response audio")
             return
         }
@@ -265,8 +248,8 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         return buffer
     }
 
-    func convertToOpenAIFormat(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-        let outputFrameCapacity = AVAudioFrameCount(Double(buffer.frameLength) * 24000.0 / buffer.format.sampleRate)
+    func convertToWhisperFormat(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        let outputFrameCapacity = AVAudioFrameCount(Double(buffer.frameLength) * 16000.0 / buffer.format.sampleRate)
 
         guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: audioConverter.outputFormat, frameCapacity: outputFrameCapacity) else {
             error("Failed to create converted buffer")
@@ -310,19 +293,68 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
                 return
             }
 
-            guard let convertedBuffer = self.convertToOpenAIFormat(buffer) else {
-                error("Failed to convert audio buffer to OpenAI format")
+            guard let convertedBuffer = self.convertToFloat32Format(buffer) else {
+                error("Failed to convert audio buffer to float32 format")
                 return
             }
 
-            guard let data = self.bufferToData(convertedBuffer) else {
+            guard let data = self.bufferToFloat32Data(convertedBuffer) else {
                 error("Failed to convert audio buffer to data")
                 return
             }
 
-            realtimeAPI.processInputAudioBuffer(data)
+            logger.sendAudioToMac(data)
+
+            guard let int16Buffer = self.convertToWhisperFormat(buffer) else {
+                return
+            }
+            guard let int16Data = self.bufferToData(int16Buffer) else {
+                return
+            }
+            realtimeAPI.processInputAudioBuffer(int16Data)
         }
 
-        log("Audio tap installed")
+        log("Audio tap installed - streaming to Mac with VAD")
+    }
+
+    func convertToFloat32Format(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        let float32Format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
+        let outputFrameCapacity = AVAudioFrameCount(Double(buffer.frameLength) * 16000.0 / buffer.format.sampleRate)
+
+        guard let converter = AVAudioConverter(from: buffer.format, to: float32Format) else {
+            error("Failed to create float32 audio converter")
+            return nil
+        }
+
+        guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: float32Format, frameCapacity: outputFrameCapacity) else {
+            error("Failed to create converted buffer")
+            return nil
+        }
+
+        let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
+            outStatus.pointee = .haveData
+            return buffer
+        }
+
+        var converterError: NSError? = nil
+        let status = converter.convert(to: convertedBuffer, error: &converterError, withInputFrom: inputBlock)
+
+        if let converterError = converterError {
+            error("Audio conversion failed: \(converterError.localizedDescription)")
+            return nil
+        }
+
+        return status == .haveData ? convertedBuffer : nil
+    }
+
+    func bufferToFloat32Data(_ buffer: AVAudioPCMBuffer) -> Data? {
+        guard let channelData = buffer.floatChannelData?[0] else {
+            error("Failed to get float channel data")
+            return nil
+        }
+
+        let frameLength = Int(buffer.frameLength)
+        let data = Data(bytes: channelData, count: frameLength * MemoryLayout<Float>.size)
+        return data
     }
 }

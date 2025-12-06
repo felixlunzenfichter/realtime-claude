@@ -4,7 +4,6 @@ const path = require('path');
 const { exec, spawn, execSync } = require('child_process');
 const chokidar = require('chokidar');
 
-
 process.on('uncaughtException', (error) => {
     console.error(`⚠️ Uncaught exception (continuing): ${error.stack || error}`);
 });
@@ -16,11 +15,18 @@ process.on('unhandledRejection', (reason, promise) => {
 const logsDir = path.join('private', 'logs');
 const lastAssistantMessageFile = path.join('private', 'last-assistant-message.txt');
 const CLAUDE_WINDOW_PATTERN = 'claude --dangerously-skip-permissions';
+const WHISPER_MODEL = '/Users/felixlunzenfichter/.cache/huggingface/hub/whisper-large-v3-mlx-direct';
+const WHISPER_VENV = '/Users/felixlunzenfichter/Documents/realtime-claude/whisper-venv-312';
 let currentSessionFile = null;
 let currentSessionNumber = 0;
 let activeSocket = null;
 let lastSentAssistantMessage = null;
 let lastSentAssistantTimestamp = null;
+let audioBuffer = Buffer.alloc(0);
+let isTranscribing = false;
+let lastTranscription = '';
+let isRecordingAudio = false;
+let pendingTranscription = false;
 
 const MAX_SUMMARY_CHARS = 100;
 
@@ -84,6 +90,189 @@ Summary:`;
     return lastResult || text.substring(0, MAX_SUMMARY_CHARS);
 }
 
+async function transcribeAudio(audioPath) {
+    return new Promise((resolve, reject) => {
+        const pythonScript = `
+import mlx_whisper
+import json
+import sys
+
+result = mlx_whisper.transcribe(
+    "${audioPath}",
+    path_or_hf_repo="${WHISPER_MODEL}"
+)
+print(json.dumps({"text": result["text"].strip()}))
+`;
+        const pythonPath = path.join(WHISPER_VENV, 'bin', 'python3');
+
+        exec(`${pythonPath} -c '${pythonScript}'`, { timeout: 60000 }, (error, stdout, stderr) => {
+            if (error) {
+                reject(new Error(`Transcription failed: ${error.message}`));
+                return;
+            }
+            try {
+                const result = JSON.parse(stdout.trim());
+                resolve(result.text);
+            } catch (parseError) {
+                reject(new Error(`Failed to parse transcription result: ${stdout}`));
+            }
+        });
+    });
+}
+
+function handleAudioMessage(socket, logData) {
+    const { audioData } = logData;
+
+    if (!audioData) {
+        console.log('⚠️ No audio data in message');
+        return;
+    }
+
+    const newAudio = Buffer.from(audioData, 'base64');
+    audioBuffer = Buffer.concat([audioBuffer, newAudio]);
+
+    const durationSeconds = audioBuffer.length / (16000 * 4);
+
+    if (isRecordingAudio && !isTranscribing && audioBuffer.length >= 16000) {
+        triggerTranscription();
+    }
+}
+
+async function triggerTranscription() {
+    if (isTranscribing) {
+        pendingTranscription = true;
+        return;
+    }
+
+    isTranscribing = true;
+
+    try {
+        const tempFile = '/tmp/whisper_interim.wav';
+        const audioData = Buffer.from(audioBuffer);
+
+        await new Promise((resolve, reject) => {
+            const ffmpeg = spawn('ffmpeg', [
+                '-y', '-f', 'f32le', '-ar', '16000', '-ac', '1',
+                '-i', 'pipe:0', tempFile
+            ]);
+            ffmpeg.stdin.write(audioData);
+            ffmpeg.stdin.end();
+            ffmpeg.on('close', (code) => {
+                if (code === 0) resolve();
+                else reject(new Error(`ffmpeg exited with code ${code}`));
+            });
+            ffmpeg.on('error', reject);
+        });
+
+        const text = await transcribeAudio(tempFile);
+
+        if (text && text !== lastTranscription && activeSocket && isRecordingAudio) {
+            lastTranscription = text;
+            console.log(`🎤 [INTERIM] ${text}`);
+
+            const transcription = {
+                type: 'transcription',
+                status: 'partial',
+                text: text,
+                timestamp: Date.now()
+            };
+            activeSocket.write(JSON.stringify(transcription) + '\n');
+        }
+    } catch (err) {
+        console.error(`❌ Interim transcription error: ${err.message}`);
+    } finally {
+        isTranscribing = false;
+
+        if (pendingTranscription && isRecordingAudio && audioBuffer.length >= 16000) {
+            pendingTranscription = false;
+            triggerTranscription();
+        }
+    }
+}
+
+async function handleAudioControlMessage(socket, logData) {
+    const { action } = logData;
+
+    if (action === 'start') {
+        console.log('🎤 Audio recording started');
+        audioBuffer = Buffer.alloc(0);
+        lastTranscription = '';
+        isRecordingAudio = true;
+        pendingTranscription = false;
+    } else if (action === 'stop') {
+        console.log('🎤 Audio recording stopped, transcribing...');
+        isRecordingAudio = false;
+        pendingTranscription = false;
+
+        if (audioBuffer.length < 16000) {
+            console.log('⚠️ Audio too short, skipping transcription');
+            return;
+        }
+
+        while (isTranscribing) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
+
+        isTranscribing = true;
+
+        try {
+            const tempFile = '/tmp/whisper_audio.wav';
+            const audioData = audioBuffer;
+
+            await new Promise((resolve, reject) => {
+                const ffmpeg = spawn('ffmpeg', [
+                    '-y', '-f', 'f32le', '-ar', '16000', '-ac', '1',
+                    '-i', 'pipe:0', tempFile
+                ]);
+                ffmpeg.stdin.write(audioData);
+                ffmpeg.stdin.end();
+                ffmpeg.on('close', (code) => {
+                    if (code === 0) resolve();
+                    else reject(new Error(`ffmpeg exited with code ${code}`));
+                });
+                ffmpeg.on('error', reject);
+            });
+
+            console.log('🎤 Transcribing audio...');
+            const text = await transcribeAudio(tempFile);
+
+            if (text) {
+                lastTranscription = text;
+                console.log(`🎤 [FINAL] ${text}`);
+
+                if (activeSocket) {
+                    const transcription = {
+                        type: 'transcription',
+                        status: 'final',
+                        text: text,
+                        timestamp: Date.now()
+                    };
+                    activeSocket.write(JSON.stringify(transcription) + '\n');
+                }
+            }
+        } catch (err) {
+            console.error(`❌ Transcription error: ${err.message}`);
+        } finally {
+            isTranscribing = false;
+            audioBuffer = Buffer.alloc(0);
+        }
+    } else if (action === 'reset') {
+        console.log('🎤 Audio reset');
+        isRecordingAudio = false;
+        stopInterimTranscription();
+        audioBuffer = Buffer.alloc(0);
+        lastTranscription = '';
+    }
+}
+
+function isAudioMessage(logData) {
+    return logData.type === 'audio';
+}
+
+function isAudioControlMessage(logData) {
+    return logData.type === 'audio_control';
+}
+
 const server = net.createServer((socket) => {
     console.log('iOS client connected');
     activeSocket = socket;
@@ -142,13 +331,17 @@ function processBufferedData(socket, buffer) {
     return remainingBuffer;
 }
 
-function handleMessage(socket, logData) {
+async function handleMessage(socket, logData) {
     if (isStartMessage(logData)) {
         handleStartMessage(socket);
     } else if (isPromptMessage(logData)) {
         handlePromptMessage(socket, logData);
     } else if (isSpeakMessage(logData)) {
         handleSpeakMessage(socket, logData);
+    } else if (isAudioMessage(logData)) {
+        handleAudioMessage(socket, logData);
+    } else if (isAudioControlMessage(logData)) {
+        await handleAudioControlMessage(socket, logData);
     } else if (isErrorMessage(logData)) {
         handleErrorMessage(socket, logData);
     } else if (isLogMessage(logData)) {
