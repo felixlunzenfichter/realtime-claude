@@ -260,18 +260,30 @@ let samples = audioData.withUnsafeBytes { buffer -> [Float] in
 
 ## Run
 
-### Option 1: Background Deployment (Preferred)
-```bash
-./scripts/deploy.sh 2>&1
-```
-Run with `run_in_background: true` in Bash tool. This allows you to continue working while the build runs. Check output with `BashOutput` tool.
+### ONLY Safe Deployment Method
 
-### Option 2: Separate Terminal Window
+**ALWAYS use deploy-in-window.sh:**
+
 ```bash
 ./scripts/deploy-in-window.sh
 ```
-This switches to a separate Terminal window for deployment.
 
-**NEVER run deploy.sh directly in foreground** - it blocks and if interrupted kills Claude Code.
+This switches to a separate Terminal window for deployment. This is the ONLY safe way to deploy.
 
-After making any code changes, always deploy to test on device.
+### CRITICAL: Why deploy.sh MUST NEVER Be Run Directly
+
+**NEVER run `deploy.sh` directly in ANY form** - not in foreground, not in background, not with `run_in_background: true`.
+
+**Why this kills the server:**
+- When Claude Code context is interrupted (conversation ends, context limit hit, etc.), any background processes started by the main agent are terminated
+- Running `deploy.sh` in background means the build/deploy process dies when Claude Code stops
+- This kills the running server on the device mid-deployment
+- Result: Broken deployment, orphaned processes, corrupted state
+
+**The ONLY safe method is `deploy-in-window.sh`** because:
+- Launches in a completely separate Terminal window/process
+- Process is independent of Claude Code's lifecycle
+- Server keeps running even if Claude Code conversation ends
+- Build completes successfully regardless of context interruptions
+
+After making any code changes, always deploy to test on device using `deploy-in-window.sh`.
