@@ -1,5 +1,9 @@
 {
   "dependencies": {
-    "chokidar": "^4.0.3"
+    "axios": "^1.13.2",
+    "chokidar": "^4.0.3",
+    "form-data": "^4.0.5",
+    "node-fetch": "^2.7.0",
+    "ws": "^8.18.3"
   }
 }

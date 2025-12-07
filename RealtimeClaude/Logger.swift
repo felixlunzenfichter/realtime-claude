@@ -44,8 +44,7 @@ protocol LoggerProtocol {
     var transcriptionSubject: PassthroughSubject<TranscriptionUpdate, Never> { get }
 
     func sendPromptToMac(_ prompt: String)
-    func sendAudioToMac(_ audioData: Data)
-    func sendAudioControlToMac(_ action: String)
+    func sendAudioToMac(_ audioData: Data, isStart: Bool, isEnd: Bool)
 }
 
 enum LogType: Codable {
@@ -559,32 +558,26 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         promptStatusSubject.send(PromptStatusUpdate(prompt: prompt, status: "sent"))
     }
 
-    func sendAudioToMac(_ audioData: Data) {
-        let audioMessage: [String: Any] = [
+    func sendAudioToMac(_ audioData: Data, isStart: Bool = false, isEnd: Bool = false) {
+        var audioMessage: [String: Any] = [
             "type": "audio",
             "audioData": audioData.base64EncodedString()
         ]
+
+        if isStart {
+            audioMessage["isStart"] = true
+        }
+        if isEnd {
+            audioMessage["isEnd"] = true
+        }
 
         guard let jsonData = try? JSONSerialization.data(withJSONObject: audioMessage) else {
             error("Failed to serialize audio message to JSON")
             return
         }
 
-        sendMessage(jsonData, messageType: "audio")
-    }
-
-    func sendAudioControlToMac(_ action: String) {
-        let controlMessage: [String: Any] = [
-            "type": "audio_control",
-            "action": action
-        ]
-
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: controlMessage) else {
-            error("Failed to serialize audio control message to JSON")
-            return
-        }
-
-        sendMessage(jsonData, messageType: "audio_control", logMessage: "📤 [iOS → macOS] Audio control: \(action)")
+        let flags = isStart ? " (START)" : (isEnd ? " (END)" : "")
+        sendMessage(jsonData, messageType: "audio\(flags)")
     }
 
     private func scheduleReconnect() {

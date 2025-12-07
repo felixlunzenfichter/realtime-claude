@@ -17,17 +17,13 @@ echo "STEP 1: DEPLOY MAC SERVER"
 echo "--------------------------------------------------------------------------------"
 echo ""
 
-if pgrep -f "node scripts/mac-server.js" > /dev/null; then
-    echo "🧹 Stopping Mac server..."
-    pkill -f "node scripts/mac-server.js" 2>/dev/null || true
-    if lsof -ti:8082 > /dev/null 2>&1; then
-        lsof -ti:8082 | xargs kill -9 2>/dev/null || true
-    fi
-    echo "✅ Mac server stopped"
-fi
+echo "🧹 Cleaning up existing Mac server processes..."
+pkill -f "node scripts/mac-server.js" 2>/dev/null || true
+lsof -ti:8082 | xargs kill -9 2>/dev/null || true
+sleep 0.5
+echo "✅ Mac server cleanup complete"
 
 echo "🚀 Starting Mac server..."
-set +m
 (node scripts/mac-server.js 2>&1 | sed "s/^/[SERVER] /") &
 
 for i in {1..100}; do
@@ -192,7 +188,7 @@ check_logs() {
 if check_logs; then
     echo "   ✅ Recent log activity detected (${TIME_DIFF}s ago)"
     echo "   ✅ iPhone is connected and Mac server is running"
-    SERVER_PID=$(pgrep -f "node scripts/mac-server.js")
+    SERVER_PID=$(pgrep -f "node scripts/mac-server.js" || true)
     echo "   ○ Mac server active (PID: $SERVER_PID)"
 else
     echo "   ❌ FATAL: Failed to establish connection or failed to find successful logs"

@@ -30,8 +30,6 @@ let isRecordingAudio = false;
 let pendingTranscription = false;
 let accumulatedRawText = '';
 let transcriptionStartTime = null;
-let lastHaikuCallTime = 0;
-let haikuInProgress = false;
 let lastTranscriptionContent = '';
 
 const MAX_AUDIO_DURATION = 10;
@@ -219,7 +217,24 @@ async function transcribeAudio(audioPath) {
 }
 
 function handleAudioMessage(socket, logData) {
-    const { audioData } = logData;
+    const { audioData, isStart, isEnd } = logData;
+
+    if (isStart) {
+        console.log('🎤 Audio recording started (embedded flag)');
+        audioBuffer = Buffer.alloc(0);
+        lastTranscription = '';
+        isRecordingAudio = true;
+        pendingTranscription = false;
+        accumulatedRawText = '';
+        transcriptionStartTime = Date.now();
+        lastTranscriptionContent = '';
+        return;
+    }
+
+    if (isEnd) {
+        handleAudioEnd();
+        return;
+    }
 
     if (!audioData) {
         console.log('⚠️ No audio data in message');
@@ -297,49 +312,6 @@ async function triggerTranscription() {
             }
 
             addToContext({ type: 'transcription', text: text, interim: true });
-
-            const now = Date.now();
-            const timeSinceLastHaiku = now - lastHaikuCallTime;
-            const shouldCallHaiku = timeSinceLastHaiku >= 5000 && !haikuInProgress;
-
-            if (shouldCallHaiku) {
-                lastHaikuCallTime = now;
-                haikuInProgress = true;
-
-                console.log(`🤖 Triggering Haiku correction (${(timeSinceLastHaiku / 1000).toFixed(1)}s since last)`);
-                console.log(`🤖 SENDING TO HAIKU: "${accumulatedRawText}"`);
-
-                processWithHaiku(accumulatedRawText, 'correct_transcription')
-                    .then(({ corrected }) => {
-                        console.log(`✅ RECEIVED FROM HAIKU: "${corrected}"`);
-
-                        if (corrected !== accumulatedRawText) {
-                            addToContext({ type: 'corrected', raw: accumulatedRawText, corrected: corrected, interim: true });
-                        }
-
-                        console.log(`🎤 [CORRECTED] "${corrected.substring(0, 100)}..."`);
-
-                        if (activeSocket && isRecordingAudio) {
-                            const correctedTranscription = {
-                                type: 'transcription',
-                                status: 'corrected',
-                                transcription: corrected,
-                                timestamp: Date.now()
-                            };
-                            console.log(`📤 SENDING TO iOS: CORRECTED "${corrected}"`);
-                            activeSocket.write(JSON.stringify(correctedTranscription) + '\n');
-                        }
-                    })
-                    .catch(err => {
-                        console.error(`❌ Haiku correction error: ${err.message}`);
-                    })
-                    .finally(() => {
-                        haikuInProgress = false;
-                    });
-            } else {
-                const reason = haikuInProgress ? 'Haiku in progress' : `Only ${(timeSinceLastHaiku / 1000).toFixed(1)}s since last`;
-                console.log(`⏭️  Skipping Haiku: ${reason}`);
-            }
         }
     } catch (err) {
         console.error(`❌ Interim transcription error: ${err.message}`);
@@ -353,123 +325,77 @@ async function triggerTranscription() {
     }
 }
 
-async function handleAudioControlMessage(socket, logData) {
-    const { action } = logData;
+async function handleAudioEnd() {
+    console.log('🎤 Audio recording stopped (embedded flag), waiting for all transcriptions to complete...');
+    isRecordingAudio = false;
+    pendingTranscription = false;
 
-    if (action === 'start') {
-        console.log('🎤 Audio recording started');
+    if (audioBuffer.length < 16000) {
+        console.log('⚠️ Audio too short, skipping transcription');
+        return;
+    }
+
+    while (isTranscribing || pendingTranscription) {
+        console.log(`⏳ Waiting... isTranscribing=${isTranscribing}, pendingTranscription=${pendingTranscription}`);
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    console.log('✅ All pending transcriptions complete');
+    console.log(`📝 Final accumulated raw text: "${accumulatedRawText}"`);
+
+    if (!accumulatedRawText || accumulatedRawText.trim().length === 0) {
+        console.log('⚠️ No accumulated text, skipping final processing');
+        return;
+    }
+
+    try {
+        if (activeSocket) {
+            const rawTranscription = {
+                type: 'transcription',
+                status: 'final_raw',
+                transcription: accumulatedRawText,
+                timestamp: Date.now()
+            };
+            console.log(`📤 SENDING TO iOS: FINAL_RAW "${accumulatedRawText}"`);
+            activeSocket.write(JSON.stringify(rawTranscription) + '\n');
+        }
+
+        addToContext({ type: 'transcription', text: accumulatedRawText, interim: false });
+
+        console.log(`🤖 Running final Haiku correction on complete text...`);
+        console.log(`🤖 SENDING TO HAIKU: "${accumulatedRawText}"`);
+        const { corrected } = await processWithHaiku(accumulatedRawText, 'correct_transcription');
+
+        console.log(`✅ RECEIVED FROM HAIKU: "${corrected}"`);
+
+        if (corrected !== accumulatedRawText) {
+            addToContext({ type: 'corrected', raw: accumulatedRawText, corrected: corrected, interim: false });
+        }
+
+        lastTranscription = corrected;
+        console.log(`🎤 [FINAL] Raw: "${accumulatedRawText}"`);
+        console.log(`🎤 [FINAL] Corrected: "${corrected}"`);
+
+        if (activeSocket) {
+            const transcription = {
+                type: 'transcription',
+                status: 'final',
+                transcription: accumulatedRawText,
+                prompt: corrected,
+                timestamp: Date.now()
+            };
+            console.log(`📤 SENDING TO iOS: FINAL "${accumulatedRawText}" (prompt: "${corrected}")`);
+            activeSocket.write(JSON.stringify(transcription) + '\n');
+        }
+    } catch (err) {
+        console.error(`❌ Final transcription error: ${err.message}`);
+    } finally {
         audioBuffer = Buffer.alloc(0);
-        lastTranscription = '';
-        isRecordingAudio = true;
-        pendingTranscription = false;
-        accumulatedRawText = '';
-        transcriptionStartTime = Date.now();
-        lastHaikuCallTime = 0;
-        haikuInProgress = false;
-        lastTranscriptionContent = '';
-    } else if (action === 'stop') {
-        console.log('🎤 Audio recording stopped, transcribing...');
-        isRecordingAudio = false;
-        pendingTranscription = false;
-
-        if (audioBuffer.length < 16000) {
-            console.log('⚠️ Audio too short, skipping transcription');
-            return;
-        }
-
-        while (isTranscribing) {
-            await new Promise(resolve => setTimeout(resolve, 50));
-        }
-
-        isTranscribing = true;
-
-        try {
-            const tempFile = '/tmp/whisper_audio.wav';
-            const audioData = audioBuffer;
-
-            await new Promise((resolve, reject) => {
-                const ffmpeg = spawn('ffmpeg', [
-                    '-y', '-f', 'f32le', '-ar', '16000', '-ac', '1',
-                    '-i', 'pipe:0', tempFile
-                ]);
-                ffmpeg.stdin.write(audioData);
-                ffmpeg.stdin.end();
-                ffmpeg.on('close', (code) => {
-                    if (code === 0) resolve();
-                    else reject(new Error(`ffmpeg exited with code ${code}`));
-                });
-                ffmpeg.on('error', reject);
-            });
-
-            console.log('🎤 Transcribing audio...');
-            const result = await transcribeAudio(tempFile);
-            const rawText = result.text;
-
-            if (rawText) {
-                if (activeSocket) {
-                    const rawTranscription = {
-                        type: 'transcription',
-                        status: 'final_raw',
-                        transcription: accumulatedRawText,
-                        timestamp: Date.now()
-                    };
-                    console.log(`📤 SENDING TO iOS: FINAL_RAW "${accumulatedRawText}"`);
-                    activeSocket.write(JSON.stringify(rawTranscription) + '\n');
-                }
-
-                addToContext({ type: 'transcription', text: accumulatedRawText, interim: false });
-
-                console.log(`🤖 SENDING TO HAIKU: "${accumulatedRawText}"`);
-                const { corrected } = await processWithHaiku(accumulatedRawText, 'correct_transcription');
-
-                console.log(`✅ RECEIVED FROM HAIKU: "${corrected}"`);
-
-                if (corrected !== accumulatedRawText) {
-                    addToContext({ type: 'corrected', raw: accumulatedRawText, corrected: corrected, interim: false });
-                }
-
-                lastTranscription = corrected;
-                console.log(`🎤 [FINAL] Raw: "${accumulatedRawText}"`);
-                console.log(`🎤 [FINAL] Corrected: "${corrected}"`);
-
-                if (activeSocket) {
-                    const transcription = {
-                        type: 'transcription',
-                        status: 'final',
-                        transcription: accumulatedRawText,
-                        prompt: corrected,
-                        timestamp: Date.now()
-                    };
-                    console.log(`📤 SENDING TO iOS: FINAL "${accumulatedRawText}" (prompt: "${corrected}")`);
-                    activeSocket.write(JSON.stringify(transcription) + '\n');
-                }
-            }
-        } catch (err) {
-            console.error(`❌ Transcription error: ${err.message}`);
-        } finally {
-            isTranscribing = false;
-            audioBuffer = Buffer.alloc(0);
-        }
-    } else if (action === 'reset') {
-        console.log('🎤 Audio reset');
-        isRecordingAudio = false;
-        pendingTranscription = false;
-        audioBuffer = Buffer.alloc(0);
-        lastTranscription = '';
-        accumulatedRawText = '';
-        transcriptionStartTime = null;
-        lastHaikuCallTime = 0;
-        haikuInProgress = false;
-        lastTranscriptionContent = '';
     }
 }
 
 function isAudioMessage(logData) {
     return logData.type === 'audio';
-}
-
-function isAudioControlMessage(logData) {
-    return logData.type === 'audio_control';
 }
 
 const server = net.createServer((socket) => {
@@ -538,9 +464,7 @@ async function handleMessage(socket, logData) {
     } else if (isSpeakMessage(logData)) {
         handleSpeakMessage(socket, logData);
     } else if (isAudioMessage(logData)) {
-        handleAudioMessage(socket, logData);
-    } else if (isAudioControlMessage(logData)) {
-        await handleAudioControlMessage(socket, logData);
+        await handleAudioMessage(socket, logData);
     } else if (isErrorMessage(logData)) {
         handleErrorMessage(socket, logData);
     } else if (isLogMessage(logData)) {

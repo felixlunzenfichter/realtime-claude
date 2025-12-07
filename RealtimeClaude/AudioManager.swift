@@ -109,6 +109,8 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         }
     }
 
+    private var isFirstAudioPacket: Bool = false
+
     func startRecording() {
         if isRecordingAudioSubject.value {
             debugLog(id: "startRecording", message: "⚠️ [Audio] Already recording, ignoring")
@@ -116,7 +118,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         }
         isRecordingAudioSubject.send(true)
         responsePlayerNode.stop()
-        logger.sendAudioControlToMac("start")
+        isFirstAudioPacket = true
         installInputAudioTap()
         log("Started recording")
     }
@@ -127,7 +129,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         isRecordingAudioSubject.send(false)
         log("Stopped recording")
 
-        logger.sendAudioControlToMac("stop")
+        logger.sendAudioToMac(Data(), isStart: false, isEnd: true)
 
         responsePlayerNode.reset()
         responsePlayerNode.play()
@@ -302,7 +304,12 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
                 return
             }
 
-            logger.sendAudioToMac(data)
+            let isStart = self.isFirstAudioPacket
+            if self.isFirstAudioPacket {
+                self.isFirstAudioPacket = false
+            }
+
+            logger.sendAudioToMac(data, isStart: isStart, isEnd: false)
 
             guard let int16Buffer = self.convertToWhisperFormat(buffer) else {
                 return

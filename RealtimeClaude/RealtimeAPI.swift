@@ -109,22 +109,6 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
     func processInputAudioBuffer(_ data: Data) {
     }
 
-    private func mergeSegments(existing: [TranscriptionSegment], new: [TranscriptionSegment]) -> [TranscriptionSegment] {
-        var merged = existing
-
-        for newSegment in new {
-            let isDuplicate = existing.contains { existingSegment in
-                abs(existingSegment.start - newSegment.start) < 0.1
-            }
-
-            if !isDuplicate {
-                merged.append(newSegment)
-            }
-        }
-
-        return merged.sorted { $0.start < $1.start }
-    }
-
     private func handleRawTranscription(_ text: String, segments: [TranscriptionSegment]) {
         if text.isEmpty { return }
 
@@ -132,11 +116,10 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
 
         if let userId = currentUserMessageId,
            let index = currentContext.firstIndex(where: { $0.id == userId }) {
-            let existingTranscription = currentContext[index].transcription ?? ""
-            currentContext[index].transcription = existingTranscription + (existingTranscription.isEmpty ? "" : " ") + text
+            currentContext[index].transcription = text
             currentContext[index].timestamp = Date()
             currentContext[index].status = .recording
-            currentContext[index].segments = mergeSegments(existing: currentContext[index].segments, new: segments)
+            currentContext[index].segments = segments
             conversationContextSubject.send(currentContext)
         } else {
             var userMessage = ConversationMessage(
@@ -160,13 +143,12 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
 
         if let userId = currentUserMessageId,
            let index = currentContext.firstIndex(where: { $0.id == userId }) {
-            let existingTranscription = currentContext[index].transcription ?? ""
-            currentContext[index].transcription = existingTranscription + (existingTranscription.isEmpty ? "" : " ") + transcription
+            currentContext[index].transcription = transcription
             currentContext[index].text = prompt
             currentContext[index].summary = summary
             currentContext[index].timestamp = Date()
             currentContext[index].status = .recording
-            currentContext[index].segments = mergeSegments(existing: currentContext[index].segments, new: segments)
+            currentContext[index].segments = segments
             conversationContextSubject.send(currentContext)
         } else {
             var userMessage = ConversationMessage(
@@ -194,12 +176,11 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
 
         if let userId = currentUserMessageId,
            let index = currentContext.firstIndex(where: { $0.id == userId }) {
-            let existingTranscription = currentContext[index].transcription ?? ""
-            currentContext[index].transcription = existingTranscription + (existingTranscription.isEmpty ? "" : " ") + transcription
+            currentContext[index].transcription = transcription
             currentContext[index].text = accumulatedText.isEmpty ? "..." : accumulatedText
             currentContext[index].timestamp = Date()
             currentContext[index].audioState = .processing
-            currentContext[index].segments = mergeSegments(existing: currentContext[index].segments, new: segments)
+            currentContext[index].segments = segments
             conversationContextSubject.send(currentContext)
         }
 
@@ -274,7 +255,6 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
             log("Marked current user message as cancelled")
         }
         accumulatedText = ""
-        logger.sendAudioControlToMac("reset")
     }
 
     func restart() {
@@ -283,7 +263,6 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         accumulatedText = ""
         conversationContextSubject.send([])
         currentUserMessageId = nil
-        logger.sendAudioControlToMac("reset")
 
         updateAPIState(.connected)
         log("Restart complete")
