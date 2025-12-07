@@ -177,14 +177,55 @@ async function correctAndSummarize(text) {
     return await processWithHaiku(text, 'correct_and_summarize');
 }
 
+function findLongestCommonSubstring(str1, str2) {
+    let longestMatch = '';
+    let matchPosInStr1 = -1;
+    let matchPosInStr2 = -1;
+
+    // FULL BRUTE-FORCE: Find longest common substring anywhere in both strings
+    // No position constraints - check ALL possible substrings
+
+    // Iterate through ALL starting positions in str2
+    for (let startInStr2 = 0; startInStr2 < str2.length; startInStr2++) {
+        // Try all possible lengths from this starting position
+        for (let length = 1; length <= str2.length - startInStr2; length++) {
+            const substring = str2.substring(startInStr2, startInStr2 + length);
+
+            // Search for this substring anywhere in str1
+            const foundIndex = str1.indexOf(substring);
+
+            if (foundIndex !== -1) {
+                // If this match is longer than our current longest, keep it
+                if (substring.length > longestMatch.length) {
+                    longestMatch = substring;
+                    matchPosInStr1 = foundIndex;
+                    matchPosInStr2 = startInStr2;
+                }
+            }
+        }
+    }
+
+    return { longestMatch, matchPosInStr1, matchPosInStr2 };
+}
+
 function smartConcatenate(newText) {
     if (!newText) return null;
 
     newText = newText.trim();
     if (!newText) return null;
 
+    // STEP 1: Remove all "..." from newText
+    newText = newText.replace(/\.\.\./g, '');
+    newText = newText.trim();
+    if (!newText) return null;
+
     if (!accumulatedRawText) {
         console.log(`🔗 Starting new accumulation: "${newText}"`);
+        console.log(`[DEBUG] Mode: REPLACE (starting fresh)`);
+        console.log(`[DEBUG] Longest matching substring: (none - empty accumulation)`);
+        console.log(`[DEBUG] DROPPED: 0 chars`);
+        console.log(`[DEBUG] KEPT: ${newText.length} chars (100%)`);
+        console.log(`[DEBUG] New portion being added: "${newText}"`);
         return newText;
     }
 
@@ -194,35 +235,49 @@ function smartConcatenate(newText) {
     console.log(`   Accumulated: "${accumulated}"`);
     console.log(`   New text: "${newText}"`);
 
-    let bestOverlapLength = 0;
-    let bestOverlapText = '';
+    const startTime = Date.now();
+    const { longestMatch, matchPosInStr1, matchPosInStr2 } = findLongestCommonSubstring(accumulated, newText);
+    const lcsTime = Date.now() - startTime;
+    console.log(`[DEBUG] LCS computation took ${lcsTime}ms`);
 
-    for (let len = newText.length; len > 0; len--) {
-        const prefix = newText.substring(0, len);
+    const matchLength = longestMatch.length;
 
-        if (accumulated.includes(prefix)) {
-            bestOverlapLength = len;
-            bestOverlapText = prefix;
-            break;
-        }
-    }
-
-    if (bestOverlapLength > 0) {
-        const remainder = newText.substring(bestOverlapLength).trim();
-
-        console.log(`✂️  Found overlap (${bestOverlapLength} chars): "${bestOverlapText}"`);
-
-        if (remainder) {
-            console.log(`➕ Appending remainder: "${remainder}"`);
-            return remainder;
-        } else {
-            console.log(`⏭️  Remainder is empty, skipping (complete overlap)`);
-            return null;
-        }
-    } else {
-        console.log(`❌ No overlap found, appending full text with space`);
+    // STEP 2: Apply 5-character threshold
+    if (matchLength < 5) {
+        console.log(`❌ Match too short (${matchLength} chars < 5), appending full text`);
+        console.log(`[DEBUG] Mode: APPEND (match below threshold)`);
+        console.log(`[DEBUG] Longest matching substring: "${longestMatch}" (${matchLength} chars)`);
+        console.log(`[DEBUG] DROPPED: 0 chars (0%)`);
+        console.log(`[DEBUG] KEPT: ${newText.length} chars (100%)`);
+        console.log(`[DEBUG] New portion being added: "${newText}"`);
         return newText;
     }
+
+    // STEP 3: We have a match >= 5 chars, use it to detect overlap
+    const textAfterMatch = newText.substring(matchPosInStr2 + matchLength);
+
+    const droppedChars = matchPosInStr2 + matchLength;
+    const keptChars = textAfterMatch.length;
+    const droppedPercent = ((droppedChars / newText.length) * 100).toFixed(1);
+    const keptPercent = ((keptChars / newText.length) * 100).toFixed(1);
+
+    console.log(`✂️  Found longest common substring (${matchLength} chars): "${longestMatch}"`);
+    console.log(`   Position in accumulated: [${matchPosInStr1}:${matchPosInStr1 + matchLength}]`);
+    console.log(`   Position in newText: [${matchPosInStr2}:${matchPosInStr2 + matchLength}]`);
+    console.log(`[DEBUG] DROPPED: ${droppedChars} chars (${droppedPercent}%) - "${newText.substring(0, droppedChars)}"`);
+    console.log(`[DEBUG] KEPT: ${keptChars} chars (${keptPercent}%)`);
+
+    if (!textAfterMatch) {
+        console.log(`⏭️  No new content after LCS - SKIPPING`);
+        console.log(`[DEBUG] Mode: SKIP (no new content after LCS)`);
+        console.log(`[DEBUG] New portion being added: (none)`);
+        return null;
+    }
+
+    console.log(`➕ Appending text after LCS: "${textAfterMatch}"`);
+    console.log(`[DEBUG] Mode: APPEND`);
+    console.log(`[DEBUG] New portion being added: "${textAfterMatch}"`);
+    return textAfterMatch;
 }
 
 async function transcribeAudio(audioPath) {
