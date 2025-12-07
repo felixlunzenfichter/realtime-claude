@@ -177,35 +177,52 @@ async function correctAndSummarize(text) {
     return await processWithHaiku(text, 'correct_and_summarize');
 }
 
-function smartConcatenate(accumulated, newText) {
-    if (!accumulated) return newText;
+function smartConcatenate(newText) {
     if (!newText) return null;
 
-    // Normalize whitespace for comparison
-    const normalize = (str) => str.replace(/\s+/g, ' ').trim();
+    newText = newText.trim();
+    if (!newText) return null;
 
-    // Find longest suffix of accumulated that matches prefix of newText
-    const maxOverlap = Math.min(accumulated.length, newText.length);
-    for (let overlapLen = maxOverlap; overlapLen > 0; overlapLen--) {
-        const accumulatedSuffix = accumulated.slice(-overlapLen);
-        const newTextPrefix = newText.slice(0, overlapLen);
+    if (!accumulatedRawText) {
+        console.log(`🔗 Starting new accumulation: "${newText}"`);
+        return newText;
+    }
 
-        // Compare normalized versions to handle whitespace differences
-        if (normalize(accumulatedSuffix) === normalize(newTextPrefix)) {
-            const suffix = newText.slice(overlapLen);
-            if (suffix) {
-                console.log(`   🔗 Found ${overlapLen} char overlap, appending: "${suffix}"`);
-                return suffix;
-            } else {
-                console.log(`   ⏭️  Complete overlap, nothing new`);
-                return null;
-            }
+    const accumulated = accumulatedRawText.trim();
+
+    console.log(`🔍 Finding overlap between:`);
+    console.log(`   Accumulated: "${accumulated}"`);
+    console.log(`   New text: "${newText}"`);
+
+    let bestOverlapLength = 0;
+    let bestOverlapText = '';
+
+    for (let len = newText.length; len > 0; len--) {
+        const prefix = newText.substring(0, len);
+
+        if (accumulated.includes(prefix)) {
+            bestOverlapLength = len;
+            bestOverlapText = prefix;
+            break;
         }
     }
 
-    // No overlap - append full text
-    console.log(`   ➕ No overlap found, appending full text`);
-    return newText;
+    if (bestOverlapLength > 0) {
+        const remainder = newText.substring(bestOverlapLength).trim();
+
+        console.log(`✂️  Found overlap (${bestOverlapLength} chars): "${bestOverlapText}"`);
+
+        if (remainder) {
+            console.log(`➕ Appending remainder: "${remainder}"`);
+            return remainder;
+        } else {
+            console.log(`⏭️  Remainder is empty, skipping (complete overlap)`);
+            return null;
+        }
+    } else {
+        console.log(`❌ No overlap found, appending full text with space`);
+        return newText;
+    }
 }
 
 async function transcribeAudio(audioPath) {
@@ -314,10 +331,10 @@ async function triggerTranscription(isFinalChunk = false) {
         try { fs.unlinkSync(tempWavFile); } catch {}
 
         if (text && text !== lastTranscription && activeSocket && (isRecordingAudio || isFinalChunk)) {
-            const textToAppend = smartConcatenate(accumulatedRawText, text);
+            const textToAppend = smartConcatenate(text);
 
             if (textToAppend === null) {
-                console.log(`⏭️  Skipping duplicate/contained content: "${text}"`);
+                console.log(`⏭️  Skipping (no new content to add)`);
                 return;
             }
 
@@ -325,10 +342,8 @@ async function triggerTranscription(isFinalChunk = false) {
             lastTranscriptionContent = text;
 
             accumulatedRawText += (accumulatedRawText ? ' ' : '') + textToAppend;
-            const finalText = textToAppend;
             const chunkLabel = isFinalChunk ? '[FINAL CHUNK]' : '[RAW]';
-            console.log(`🎤 ${chunkLabel} "${text}" → appending "${finalText}" (${audioDuration.toFixed(1)}s audio)`);
-
+            console.log(`🎤 ${chunkLabel} Raw whisper: "${text}"`);
             console.log(`📝 Accumulated raw: "${accumulatedRawText}" (${accumulatedRawText.length} chars)`);
 
             if (activeSocket && (isRecordingAudio || isFinalChunk)) {
