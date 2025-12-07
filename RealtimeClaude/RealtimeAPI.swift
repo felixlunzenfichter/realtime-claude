@@ -67,6 +67,7 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
 
     private var currentUserMessageId: UUID?
     private var transcriptionCancellable: AnyCancellable?
+    private var connectionStatusCancellable: AnyCancellable?
     private var accumulatedText: String = ""
 
     private let sampleRate: Double = 16000
@@ -74,11 +75,11 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
     init() {
         log("RealtimeAPI initialized with Mac-based transcription")
         setupTranscriptionSubscription()
+        setupConnectionStatusMonitoring()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            self.updateAPIState(.connected)
             audioManager.startAudioEngine()
-            log("Audio engine started - ready for recording")
+            log("Audio engine started")
         }
     }
 
@@ -97,6 +98,21 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
                 }
             }
         log("Subscribed to Mac transcription updates")
+    }
+
+    private func setupConnectionStatusMonitoring() {
+        connectionStatusCancellable = logger.macConnectionReadySubject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isConnected in
+                guard let self = self else { return }
+
+                if isConnected && self.apiStateSubject.value != .connected {
+                    self.updateAPIState(.connected)
+                } else if !isConnected && self.apiStateSubject.value == .connected {
+                    self.updateAPIState(.disconnected)
+                }
+            }
+        log("Monitoring Mac server connection status")
     }
 
     func saveAPIKey(_ apiKey: String?) {

@@ -42,6 +42,7 @@ protocol LoggerProtocol {
     var testsPassedSubject: CurrentValueSubject<Int, Never> { get }
     var promptStatusSubject: PassthroughSubject<PromptStatusUpdate, Never> { get }
     var transcriptionSubject: PassthroughSubject<TranscriptionUpdate, Never> { get }
+    var macConnectionReadySubject: CurrentValueSubject<Bool, Never> { get }
 
     func sendPromptToMac(_ prompt: String)
     func sendAudioToMac(_ audioData: Data, isStart: Bool, isEnd: Bool)
@@ -93,6 +94,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     let testsPassedSubject = CurrentValueSubject<Int, Never>(0)
     let transmittedLogIdsSubject = CurrentValueSubject<[String], Never>([])
     let transcriptionSubject = PassthroughSubject<TranscriptionUpdate, Never>()
+    let macConnectionReadySubject = CurrentValueSubject<Bool, Never>(false)
 
     private var connection: NWConnection
     private let macHostname = "Felixs-MacBook-Pro.local"
@@ -100,7 +102,11 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     private let tcpProcessingQueue = DispatchQueue(label: "logger.tcp.processing", qos: .userInitiated)
     private var reconnectAttempts: Int = 0
     private var reconnectTimer: DispatchSourceTimer?
-    private var isConnectionReady: Bool = false
+    private var isConnectionReady: Bool = false {
+        didSet {
+            macConnectionReadySubject.send(isConnectionReady)
+        }
+    }
 
     private let TEST_DEFINITIONS: [Int: String] = [
         1: "Successful handshake",
@@ -213,6 +219,8 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
                     let nsError = sendError as NSError
                     if nsError.code != 89 {
                         log("❌ Failed to send \(messageType): \(sendError)")
+                        self.isConnectionReady = false
+                        self.scheduleReconnect()
                     }
                 }
             })
@@ -258,6 +266,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
             if let receiveError = receiveError {
                 log("Logger receive failed: \(receiveError)")
+                self.isConnectionReady = false
                 self.scheduleReconnect()
                 return
             }

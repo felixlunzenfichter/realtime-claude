@@ -1,7 +1,7 @@
 const net = require('net');
 const fs = require('fs');
 const path = require('path');
-const { exec, spawn, execSync } = require('child_process');
+const { exec, spawn, execSync, spawnSync } = require('child_process');
 const chokidar = require('chokidar');
 const FormData = require('form-data');
 const fetch = require('node-fetch');
@@ -104,40 +104,56 @@ INSTRUCTIONS:
 OUTPUT: Respond with valid JSON only, no markdown, no explanation:
 {"corrected": "the corrected text or original if no correction needed", "summary": "short summary under ${MAX_SUMMARY_CHARS} chars"}`;
 
-            const tempFile = '/tmp/claude-prompt.txt';
-            fs.writeFileSync(tempFile, prompt);
+            const os = require('os');
+            const inputFile = path.join(os.tmpdir(), `claude-input-${Date.now()}-${process.pid}.txt`);
+            const outputFile = path.join(os.tmpdir(), `claude-output-${Date.now()}-${process.pid}.txt`);
 
-            let result = execSync(`cat "${tempFile}" | claude --model haiku --print -`, {
-                encoding: 'utf8',
-                timeout: 30000
-            }).trim();
-
-            result = result.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-
-            let parsed;
             try {
-                parsed = JSON.parse(result);
-            } catch (parseErr) {
-                console.log(`   ⚠️ Invalid JSON: ${result.substring(0, 100)}`);
-                addToContext({ type: 'summary_attempt', result: result, chars: result.length, success: false, error: 'invalid_json' });
-                continue;
+                fs.writeFileSync(inputFile, prompt);
+
+                execSync(`cat "${inputFile}" | claude --model haiku --print - > "${outputFile}" 2>/dev/null`, {
+                    stdio: 'ignore',
+                    shell: '/bin/bash',
+                    timeout: 30000
+                });
+
+                const result = fs.readFileSync(outputFile, 'utf8').trim();
+
+                if (!result) {
+                    throw new Error('claude command returned empty output');
+                }
+
+                const cleanedResult = result.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
+                let parsed;
+                try {
+                    parsed = JSON.parse(cleanedResult);
+                } catch (parseErr) {
+                    console.log(`   ⚠️ Invalid JSON: ${cleanedResult.substring(0, 100)}`);
+                    addToContext({ type: 'summary_attempt', result: cleanedResult, chars: cleanedResult.length, success: false, error: 'invalid_json' });
+                    continue;
+                }
+
+                const summary = parsed.summary || '';
+                const corrected = parsed.corrected || cleanText;
+
+                if (summary.length > MAX_SUMMARY_CHARS) {
+                    console.log(`   ⚠️ Summary too long: ${summary.length} chars`);
+                    addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: false, error: 'too_long' });
+                    continue;
+                }
+
+                console.log(`   ✅ Corrected: "${corrected.substring(0, 50)}..."`);
+                console.log(`   ✅ Summary: "${summary}" (${summary.length} chars)`);
+
+                addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: true });
+
+                return { corrected, summary };
+
+            } finally {
+                try { fs.unlinkSync(inputFile); } catch {}
+                try { fs.unlinkSync(outputFile); } catch {}
             }
-
-            const summary = parsed.summary || '';
-            const corrected = parsed.corrected || cleanText;
-
-            if (summary.length > MAX_SUMMARY_CHARS) {
-                console.log(`   ⚠️ Summary too long: ${summary.length} chars`);
-                addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: false, error: 'too_long' });
-                continue;
-            }
-
-            console.log(`   ✅ Corrected: "${corrected.substring(0, 50)}..."`);
-            console.log(`   ✅ Summary: "${summary}" (${summary.length} chars)`);
-
-            addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: true });
-
-            return { corrected, summary };
 
         } catch (error) {
             console.error(`   ❌ Haiku failed: ${error.message}`);
@@ -216,7 +232,7 @@ async function transcribeAudio(audioPath) {
     }
 }
 
-function handleAudioMessage(socket, logData) {
+async function handleAudioMessage(socket, logData) {
     const { audioData, isStart, isEnd } = logData;
 
     if (isStart) {
@@ -232,6 +248,10 @@ function handleAudioMessage(socket, logData) {
     }
 
     if (isEnd) {
+        if (audioBuffer.length >= 16000) {
+            console.log('🎯 FINAL CHUNK: Audio buffer has untranscribed data, processing before end...');
+            await triggerTranscription(true);
+        }
         handleAudioEnd();
         return;
     }
@@ -249,11 +269,11 @@ function handleAudioMessage(socket, logData) {
     }
 
     if (isRecordingAudio && !isTranscribing && audioBuffer.length >= 16000) {
-        triggerTranscription();
+        triggerTranscription(false);
     }
 }
 
-async function triggerTranscription() {
+async function triggerTranscription(isFinalChunk = false) {
     if (isTranscribing) {
         pendingTranscription = true;
         return;
@@ -262,28 +282,34 @@ async function triggerTranscription() {
     isTranscribing = true;
 
     try {
-        const tempFile = '/tmp/whisper_interim.wav';
+        const os = require('os');
+        const tempWavFile = path.join(os.tmpdir(), `whisper-${Date.now()}-${process.pid}.wav`);
+        const tempRawFile = path.join(os.tmpdir(), `audio-raw-${Date.now()}-${process.pid}.f32le`);
         const audioData = Buffer.from(audioBuffer);
         const audioDuration = audioBuffer.length / (16000 * 4);
 
-        await new Promise((resolve, reject) => {
-            const ffmpeg = spawn('ffmpeg', [
-                '-y', '-f', 'f32le', '-ar', '16000', '-ac', '1',
-                '-i', 'pipe:0', tempFile
-            ]);
-            ffmpeg.stdin.write(audioData);
-            ffmpeg.stdin.end();
-            ffmpeg.on('close', (code) => {
-                if (code === 0) resolve();
-                else reject(new Error(`ffmpeg exited with code ${code}`));
-            });
-            ffmpeg.on('error', reject);
-        });
+        try {
+            fs.writeFileSync(tempRawFile, audioData);
 
-        const result = await transcribeAudio(tempFile);
+            execSync(`ffmpeg -y -f f32le -ar 16000 -ac 1 -i "${tempRawFile}" "${tempWavFile}" 2>/dev/null`, {
+                stdio: 'ignore',
+                shell: '/bin/bash',
+                timeout: 10000
+            });
+
+            if (!fs.existsSync(tempWavFile)) {
+                throw new Error('ffmpeg did not create output file');
+            }
+        } finally {
+            try { fs.unlinkSync(tempRawFile); } catch {}
+        }
+
+        const result = await transcribeAudio(tempWavFile);
         const text = result.text;
 
-        if (text && text !== lastTranscription && activeSocket && isRecordingAudio) {
+        try { fs.unlinkSync(tempWavFile); } catch {}
+
+        if (text && text !== lastTranscription && activeSocket && (isRecordingAudio || isFinalChunk)) {
             const textToAppend = smartConcatenate(accumulatedRawText, text);
 
             if (textToAppend === null) {
@@ -296,22 +322,23 @@ async function triggerTranscription() {
 
             accumulatedRawText += (accumulatedRawText ? ' ' : '') + textToAppend;
             const finalText = textToAppend;
-            console.log(`🎤 [RAW] "${text}" → appending "${finalText}" (${audioDuration.toFixed(1)}s audio)`);
+            const chunkLabel = isFinalChunk ? '[FINAL CHUNK]' : '[RAW]';
+            console.log(`🎤 ${chunkLabel} "${text}" → appending "${finalText}" (${audioDuration.toFixed(1)}s audio)`);
 
             console.log(`📝 Accumulated raw: "${accumulatedRawText}" (${accumulatedRawText.length} chars)`);
 
-            if (activeSocket && isRecordingAudio) {
+            if (activeSocket && (isRecordingAudio || isFinalChunk)) {
                 const rawTranscription = {
                     type: 'transcription',
-                    status: 'raw',
+                    status: isFinalChunk ? 'final_chunk_raw' : 'raw',
                     transcription: accumulatedRawText,
                     timestamp: Date.now()
                 };
-                console.log(`📤 SENDING TO iOS: RAW "${accumulatedRawText}"`);
+                console.log(`📤 SENDING TO iOS: ${isFinalChunk ? 'FINAL_CHUNK_RAW' : 'RAW'} "${accumulatedRawText}"`);
                 activeSocket.write(JSON.stringify(rawTranscription) + '\n');
             }
 
-            addToContext({ type: 'transcription', text: text, interim: true });
+            addToContext({ type: 'transcription', text: text, interim: !isFinalChunk });
         }
     } catch (err) {
         console.error(`❌ Interim transcription error: ${err.message}`);
@@ -320,28 +347,17 @@ async function triggerTranscription() {
 
         if (pendingTranscription && isRecordingAudio && audioBuffer.length >= 16000) {
             pendingTranscription = false;
-            triggerTranscription();
+            triggerTranscription(false);
         }
     }
 }
 
 async function handleAudioEnd() {
-    console.log('🎤 Audio recording stopped (embedded flag), waiting for all transcriptions to complete...');
+    console.log('🎤 Audio recording stopped (embedded flag)');
     isRecordingAudio = false;
     pendingTranscription = false;
 
-    if (audioBuffer.length < 16000) {
-        console.log('⚠️ Audio too short, skipping transcription');
-        return;
-    }
-
-    while (isTranscribing || pendingTranscription) {
-        console.log(`⏳ Waiting... isTranscribing=${isTranscribing}, pendingTranscription=${pendingTranscription}`);
-        await new Promise(resolve => setTimeout(resolve, 100));
-    }
-
-    console.log('✅ All pending transcriptions complete');
-    console.log(`📝 Final accumulated raw text: "${accumulatedRawText}"`);
+    console.log(`📝 Final accumulated raw text (including final chunk): "${accumulatedRawText}"`);
 
     if (!accumulatedRawText || accumulatedRawText.trim().length === 0) {
         console.log('⚠️ No accumulated text, skipping final processing');
@@ -362,7 +378,7 @@ async function handleAudioEnd() {
 
         addToContext({ type: 'transcription', text: accumulatedRawText, interim: false });
 
-        console.log(`🤖 Running final Haiku correction on complete text...`);
+        console.log(`🤖 Running final Haiku correction on COMPLETE text (including final chunk)...`);
         console.log(`🤖 SENDING TO HAIKU: "${accumulatedRawText}"`);
         const { corrected } = await processWithHaiku(accumulatedRawText, 'correct_transcription');
 
@@ -599,46 +615,56 @@ function handlePromptMessage(socket, logData) {
                 console.log(`📝 Proceeding with interrupt anyway...`);
             }
 
-            const escapeCommand = `osascript <<'EOF'
-                tell application "Terminal"
-                    activate
-                end tell
+            const appleScript = `tell application "Terminal"
+    activate
+end tell
 
-                delay 0.2
+delay 0.2
 
-                tell application "System Events"
-                    key code 53
-                end tell
-EOF`;
+tell application "System Events"
+    key code 53
+end tell`;
 
-            exec(escapeCommand, (error, stdout, stderr) => {
-                if (error) {
-                    console.log(`❌ Failed to send ESC: ${error.message}`);
+            const os = require('os');
+            const scriptFile = path.join(os.tmpdir(), `applescript-${Date.now()}-${process.pid}.scpt`);
+            const outputFile = path.join(os.tmpdir(), `applescript-out-${Date.now()}-${process.pid}.txt`);
 
-                    const ackMessage = {
-                        type: 'prompt_ack',
-                        status: 'error',
-                        error: `Failed to send ESC: ${error.message}`,
-                        originalPrompt: prompt,
-                        timestamp: Date.now()
-                    };
+            try {
+                fs.writeFileSync(scriptFile, appleScript);
+                execSync(`osascript "${scriptFile}" > "${outputFile}" 2>&1`, {
+                    stdio: 'ignore',
+                    shell: '/bin/bash',
+                    timeout: 10000
+                });
 
-                    socket.write(JSON.stringify(ackMessage) + '\n');
-                } else {
-                    console.log('✅ ESC key sent to Terminal');
+                console.log('✅ ESC key sent to Terminal');
 
-                    const ackMessage = {
-                        type: 'prompt_ack',
-                        status: 'success',
-                        method: 'interrupt_esc_sent',
-                        originalPrompt: prompt,
-                        timestamp: Date.now()
-                    };
+                const ackMessage = {
+                    type: 'prompt_ack',
+                    status: 'success',
+                    method: 'interrupt_esc_sent',
+                    originalPrompt: prompt,
+                    timestamp: Date.now()
+                };
 
-                    socket.write(JSON.stringify(ackMessage) + '\n');
-                    console.log('✅ Interrupt acknowledged to iOS!');
-                }
-            });
+                socket.write(JSON.stringify(ackMessage) + '\n');
+                console.log('✅ Interrupt acknowledged to iOS!');
+            } catch (error) {
+                console.log(`❌ Failed to send ESC: ${error.message}`);
+
+                const ackMessage = {
+                    type: 'prompt_ack',
+                    status: 'error',
+                    error: `Failed to send ESC: ${error.message}`,
+                    originalPrompt: prompt,
+                    timestamp: Date.now()
+                };
+
+                socket.write(JSON.stringify(ackMessage) + '\n');
+            } finally {
+                try { fs.unlinkSync(scriptFile); } catch {}
+                try { fs.unlinkSync(outputFile); } catch {}
+            }
         });
 
         return;
@@ -1188,52 +1214,87 @@ async function sendAssistantMessageToiOS(text) {
 }
 
 function executeDeployment() {
-    exec('pgrep -f "deploy-in-window.sh"', (error, stdout) => {
-        if (stdout.trim()) {
+    const os = require('os');
+    const outputFile = path.join(os.tmpdir(), `pgrep-out-${Date.now()}-${process.pid}.txt`);
+
+    try {
+        execSync('pgrep -f "deploy-in-window.sh" > "' + outputFile + '" 2>&1', {
+            stdio: 'ignore',
+            shell: '/bin/bash',
+            timeout: 5000
+        });
+
+        const result = fs.readFileSync(outputFile, 'utf8').trim();
+        if (result) {
             console.log('⚠️ Deployment already in progress, skipping duplicate restart');
             return;
         }
+    } catch (error) {
+    } finally {
+        try { fs.unlinkSync(outputFile); } catch {}
+    }
 
-        console.log('🚀 Executing deployment in scripts window...');
+    console.log('🚀 Executing deployment in scripts window...');
 
-        const child = spawn('./scripts/deploy-in-window.sh', [], {
-            detached: true,
-            stdio: 'ignore'
+    const scriptOutputFile = path.join(os.tmpdir(), `deploy-out-${Date.now()}-${process.pid}.txt`);
+
+    try {
+        execSync('./scripts/deploy-in-window.sh > "' + scriptOutputFile + '" 2>&1 &', {
+            stdio: 'ignore',
+            shell: '/bin/bash',
+            timeout: 1000
         });
 
-        child.unref();
         console.log('✅ Deployment process spawned and detached');
-    });
+    } catch (error) {
+        console.error(`❌ Failed to spawn deployment: ${error.message}`);
+    } finally {
+        try { fs.unlinkSync(scriptOutputFile); } catch {}
+    }
 }
 
 function switchToWindow(windowNamePattern, callback) {
     console.log(`🪟 Switching to Terminal window containing: "${windowNamePattern}"`);
 
-    const appleScriptCommand = `osascript <<'EOF'
-        tell application "Terminal"
-            activate
-            repeat with w from 1 to count of windows
-                if name of window w contains "${windowNamePattern}" then
-                    set index of window w to 1
-                    return "success: Switched to window " & w
-                end if
-            end repeat
-            return "error: No window found containing '${windowNamePattern}'"
-        end tell
-EOF`;
+    const appleScript = `tell application "Terminal"
+    activate
+    repeat with w from 1 to count of windows
+        if name of window w contains "${windowNamePattern}" then
+            set index of window w to 1
+            return "success: Switched to window " & w
+        end if
+    end repeat
+    return "error: No window found containing '${windowNamePattern}'"
+end tell`;
 
-    exec(appleScriptCommand, (error, stdout, stderr) => {
-        if (error) {
-            console.log(`   ❌ Failed to switch window: ${error.message}`);
-            callback(false, error.message);
-        } else if (stdout.includes('error:')) {
-            console.log(`   ❌ ${stdout.trim()}`);
-            callback(false, stdout.trim());
+    const os = require('os');
+    const scriptFile = path.join(os.tmpdir(), `applescript-${Date.now()}-${process.pid}.scpt`);
+    const outputFile = path.join(os.tmpdir(), `applescript-out-${Date.now()}-${process.pid}.txt`);
+
+    try {
+        fs.writeFileSync(scriptFile, appleScript);
+        execSync(`osascript "${scriptFile}" > "${outputFile}" 2>&1`, {
+            stdio: 'ignore',
+            shell: '/bin/bash',
+            timeout: 10000
+        });
+
+        const result = fs.readFileSync(outputFile, 'utf8').trim();
+
+        if (result.includes('error:')) {
+            console.log(`   ❌ ${result}`);
+            callback(false, result);
         } else {
-            console.log(`   ✅ ${stdout.trim()}`);
+            console.log(`   ✅ ${result}`);
             callback(true);
         }
-    });
+    } catch (error) {
+        console.log(`   ❌ Failed to switch window: ${error.message}`);
+        callback(false, error.message);
+    } finally {
+        try { fs.unlinkSync(scriptFile); } catch {}
+        try { fs.unlinkSync(outputFile); } catch {}
+    }
 }
 
 function injectIntoTerminal(prompt, callback) {
@@ -1249,51 +1310,62 @@ function injectIntoTerminal(prompt, callback) {
             console.log(`📝 Proceeding with injection anyway...`);
         }
 
-        const appleScriptCommand = `osascript <<'EOF'
-            tell application "Terminal"
-                activate
-            end tell
+        const appleScript = `tell application "Terminal"
+    activate
+end tell
 
-            delay 0.2
+delay 0.2
 
-            tell application "System Events"
-                tell process "Terminal"
-                    set frontmost to true
+tell application "System Events"
+    tell process "Terminal"
+        set frontmost to true
 
-                    try
-                        perform action "AXRaise" of window 1
-                    end try
+        try
+            perform action "AXRaise" of window 1
+        end try
 
-                    keystroke "${escapedPrompt}"
+        keystroke "${escapedPrompt}"
 
-                    delay 1
+        delay 1
 
-                    key code 36
+        key code 36
 
-                    return "success: Typed into Terminal (macOS 26 enhanced method)"
-                end tell
-            end tell
-EOF`;
+        return "success: Typed into Terminal (macOS 26 enhanced method)"
+    end tell
+end tell`;
 
         console.log('🍎 Executing enhanced AppleScript for macOS 26 Tahoe...');
 
-        exec(appleScriptCommand, (error, stdout, stderr) => {
+        const os = require('os');
+        const scriptFile = path.join(os.tmpdir(), `applescript-${Date.now()}-${process.pid}.scpt`);
+        const outputFile = path.join(os.tmpdir(), `applescript-out-${Date.now()}-${process.pid}.txt`);
+
+        try {
+            fs.writeFileSync(scriptFile, appleScript);
+            execSync(`osascript "${scriptFile}" > "${outputFile}" 2>&1`, {
+                stdio: 'ignore',
+                shell: '/bin/bash',
+                timeout: 10000
+            });
+
+            const result = fs.readFileSync(outputFile, 'utf8').trim();
+
             console.log('📝 AppleScript result:');
-            if (error) {
-                console.log(`   Error: ${error.message}`);
-                console.log(`   Note: Ensure Terminal has Accessibility permissions in System Settings`);
-                callback(false, `AppleScript error: ${error.message}`);
-            } else if (stderr) {
-                console.log(`   Stderr: ${stderr}`);
-                callback(false, `AppleScript stderr: ${stderr}`);
-            } else if (stdout.includes('error:')) {
-                console.log(`   Output: ${stdout.trim()}`);
-                callback(false, stdout.trim());
+            if (result.includes('error:')) {
+                console.log(`   Output: ${result}`);
+                callback(false, result);
             } else {
-                console.log(`   Success: ${stdout.trim()}`);
+                console.log(`   Success: ${result}`);
                 callback(true);
             }
-        });
+        } catch (error) {
+            console.log(`   Error: ${error.message}`);
+            console.log(`   Note: Ensure Terminal has Accessibility permissions in System Settings`);
+            callback(false, `AppleScript error: ${error.message}`);
+        } finally {
+            try { fs.unlinkSync(scriptFile); } catch {}
+            try { fs.unlinkSync(outputFile); } catch {}
+        }
     });
 }
 

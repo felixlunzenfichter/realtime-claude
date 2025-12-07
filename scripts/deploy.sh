@@ -2,6 +2,14 @@
 
 set -euo pipefail
 
+# Clear previous log and redirect all output to /tmp/deploy.log
+> /tmp/deploy.log
+exec > >(tee -a /tmp/deploy.log) 2>&1
+
+# Log deployment start time
+echo "=== Deployment started at $(date '+%Y-%m-%d %H:%M:%S') ==="
+echo ""
+
 DEVICE_TYPE=${1:-iphone}
 
 trap 'echo ""; echo "💥 FATAL: Deployment failed at line $LINENO"; echo "Command: $BASH_COMMAND"; echo "Exit code: $?"; echo ""; exit 1' ERR
@@ -24,7 +32,13 @@ sleep 0.5
 echo "✅ Mac server cleanup complete"
 
 echo "🚀 Starting Mac server..."
-(node scripts/mac-server.js 2>&1 | sed "s/^/[SERVER] /") &
+# Start server with explicitly closed FDs (0,1,2 redirected, 3-9 closed)
+exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-
+node scripts/mac-server.js > /tmp/mac-server-output.log 2>&1 &
+SERVER_PID=$!
+
+# Now start the tail|sed pipe (server already has clean FDs)
+tail -f /tmp/mac-server-output.log | sed -l "s/^/[SERVER] /" &
 
 for i in {1..100}; do
     if pgrep -f "node scripts/mac-server.js" > /dev/null; then
