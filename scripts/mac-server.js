@@ -3,6 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const { exec, spawn, execSync } = require('child_process');
 const chokidar = require('chokidar');
+const FormData = require('form-data');
+const fetch = require('node-fetch');
 
 process.on('uncaughtException', (error) => {
     console.error(`⚠️ Uncaught exception (continuing): ${error.stack || error}`);
@@ -15,8 +17,7 @@ process.on('unhandledRejection', (reason, promise) => {
 const logsDir = path.join('private', 'logs');
 const lastAssistantMessageFile = path.join('private', 'last-assistant-message.txt');
 const CLAUDE_WINDOW_PATTERN = 'claude --dangerously-skip-permissions';
-const WHISPER_MODEL = '/Users/felixlunzenfichter/.cache/huggingface/hub/whisper-large-v3-mlx-direct';
-const WHISPER_VENV = '/Users/felixlunzenfichter/Documents/realtime-claude/whisper-venv-312';
+const WHISPER_SERVER_URL = 'http://localhost:5050';
 let currentSessionFile = null;
 let currentSessionNumber = 0;
 let activeSocket = null;
@@ -27,6 +28,11 @@ let isTranscribing = false;
 let lastTranscription = '';
 let isRecordingAudio = false;
 let pendingTranscription = false;
+let accumulatedRawText = '';
+let transcriptionStartTime = null;
+let lastHaikuCallTime = 0;
+let haikuInProgress = false;
+let lastTranscriptionContent = '';
 
 const MAX_AUDIO_DURATION = 10;
 const MAX_AUDIO_BYTES = MAX_AUDIO_DURATION * 16000 * 4;
@@ -157,23 +163,59 @@ async function correctAndSummarize(text) {
     return await processWithHaiku(text, 'correct_and_summarize');
 }
 
-async function transcribeAudio(audioPath) {
-    return new Promise((resolve, reject) => {
-        const pythonScript = `
-import mlx_whisper
-result = mlx_whisper.transcribe("${audioPath}", path_or_hf_repo="${WHISPER_MODEL}")
-print(result["text"].strip())
-`;
-        const pythonPath = path.join(WHISPER_VENV, 'bin', 'python3');
+function smartConcatenate(accumulated, newText) {
+    if (!accumulated) return newText;
+    if (!newText) return null;
 
-        exec(`${pythonPath} -c '${pythonScript}'`, { timeout: 60000 }, (error, stdout, stderr) => {
-            if (error) {
-                reject(new Error(`Transcription failed: ${error.message}`));
-                return;
+    // Find longest suffix of accumulated that matches prefix of newText
+    const maxOverlap = Math.min(accumulated.length, newText.length);
+    for (let overlapLen = maxOverlap; overlapLen > 0; overlapLen--) {
+        const accumulatedSuffix = accumulated.slice(-overlapLen);
+        const newTextPrefix = newText.slice(0, overlapLen);
+
+        if (accumulatedSuffix === newTextPrefix) {
+            const suffix = newText.slice(overlapLen);
+            if (suffix) {
+                console.log(`   🔗 Found ${overlapLen} char overlap, appending: "${suffix}"`);
+                return suffix;
+            } else {
+                console.log(`   ⏭️  Complete overlap, nothing new`);
+                return null;
             }
-            resolve({ text: stdout.trim() });
+        }
+    }
+
+    // No overlap - append full text
+    console.log(`   ➕ No overlap found, appending full text`);
+    return newText;
+}
+
+async function transcribeAudio(audioPath) {
+    try {
+        const startTime = Date.now();
+
+        const formData = new FormData();
+        formData.append('audio', fs.createReadStream(audioPath));
+
+        const response = await fetch(`${WHISPER_SERVER_URL}/transcribe`, {
+            method: 'POST',
+            body: formData,
+            headers: formData.getHeaders()
         });
-    });
+
+        if (!response.ok) {
+            throw new Error(`Whisper server returned ${response.status}: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+        const elapsedMs = Date.now() - startTime;
+
+        console.log(`⚡ Lightning Whisper: ${result.elapsed_ms}ms server + ${elapsedMs - result.elapsed_ms}ms network = ${elapsedMs}ms total`);
+
+        return { text: result.text };
+    } catch (error) {
+        throw new Error(`Transcription failed: ${error.message}`);
+    }
 }
 
 function handleAudioMessage(socket, logData) {
@@ -194,39 +236,6 @@ function handleAudioMessage(socket, logData) {
     if (isRecordingAudio && !isTranscribing && audioBuffer.length >= 16000) {
         triggerTranscription();
     }
-}
-
-function isHallucination(text) {
-    if (!text || text.length < 10) return true;
-
-    const words = text.toLowerCase().split(/\s+/);
-    if (words.length < 3) return false;
-
-    const wordCounts = {};
-    for (const word of words) {
-        if (word.length > 2) {
-            wordCounts[word] = (wordCounts[word] || 0) + 1;
-        }
-    }
-
-    for (const [word, count] of Object.entries(wordCounts)) {
-        if (count > 3 && count / words.length > 0.3) {
-            console.log(`⚠️ Hallucination detected: "${word}" repeated ${count}x`);
-            return true;
-        }
-    }
-
-    const phrases = ['thank you', 'thanks for', 'please subscribe', 'like and subscribe'];
-    for (const phrase of phrases) {
-        const regex = new RegExp(phrase, 'gi');
-        const matches = text.match(regex);
-        if (matches && matches.length > 2) {
-            console.log(`⚠️ Hallucination detected: "${phrase}" repeated ${matches.length}x`);
-            return true;
-        }
-    }
-
-    return false;
 }
 
 async function triggerTranscription() {
@@ -257,39 +266,79 @@ async function triggerTranscription() {
         });
 
         const result = await transcribeAudio(tempFile);
-        const rawText = result.text;
+        const text = result.text;
 
-        if (rawText && rawText !== lastTranscription && activeSocket && isRecordingAudio && !isHallucination(rawText)) {
-            lastTranscription = rawText;
-            console.log(`🎤 [RAW] "${rawText}" (${audioDuration.toFixed(1)}s audio)`);
+        if (text && text !== lastTranscription && activeSocket && isRecordingAudio) {
+            const textToAppend = smartConcatenate(accumulatedRawText, text);
 
-            const rawTranscription = {
-                type: 'transcription',
-                status: 'raw',
-                transcription: rawText,
-                timestamp: Date.now()
-            };
-            activeSocket.write(JSON.stringify(rawTranscription) + '\n');
-
-            addToContext({ type: 'transcription', text: rawText, interim: true });
-
-            const { corrected } = await processWithHaiku(rawText, 'correct_transcription');
-
-            if (corrected !== rawText) {
-                addToContext({ type: 'corrected', raw: rawText, corrected: corrected, interim: true });
+            if (textToAppend === null) {
+                console.log(`⏭️  Skipping duplicate/contained content: "${text}"`);
+                return;
             }
 
-            console.log(`🎤 [CORRECTED] "${corrected}"`);
+            lastTranscription = text;
+            lastTranscriptionContent = text;
+
+            accumulatedRawText += (accumulatedRawText ? ' ' : '') + textToAppend;
+            const finalText = textToAppend;
+            console.log(`🎤 [RAW] "${text}" → appending "${finalText}" (${audioDuration.toFixed(1)}s audio)`);
+
+            console.log(`📝 Accumulated raw: "${accumulatedRawText}" (${accumulatedRawText.length} chars)`);
 
             if (activeSocket && isRecordingAudio) {
-                const correctedTranscription = {
+                const rawTranscription = {
                     type: 'transcription',
-                    status: 'partial',
-                    transcription: rawText,
-                    prompt: corrected,
+                    status: 'raw',
+                    transcription: accumulatedRawText,
                     timestamp: Date.now()
                 };
-                activeSocket.write(JSON.stringify(correctedTranscription) + '\n');
+                console.log(`📤 SENDING TO iOS: RAW "${accumulatedRawText}"`);
+                activeSocket.write(JSON.stringify(rawTranscription) + '\n');
+            }
+
+            addToContext({ type: 'transcription', text: text, interim: true });
+
+            const now = Date.now();
+            const timeSinceLastHaiku = now - lastHaikuCallTime;
+            const shouldCallHaiku = timeSinceLastHaiku >= 5000 && !haikuInProgress;
+
+            if (shouldCallHaiku) {
+                lastHaikuCallTime = now;
+                haikuInProgress = true;
+
+                console.log(`🤖 Triggering Haiku correction (${(timeSinceLastHaiku / 1000).toFixed(1)}s since last)`);
+                console.log(`🤖 SENDING TO HAIKU: "${accumulatedRawText}"`);
+
+                processWithHaiku(accumulatedRawText, 'correct_transcription')
+                    .then(({ corrected }) => {
+                        console.log(`✅ RECEIVED FROM HAIKU: "${corrected}"`);
+
+                        if (corrected !== accumulatedRawText) {
+                            addToContext({ type: 'corrected', raw: accumulatedRawText, corrected: corrected, interim: true });
+                        }
+
+                        console.log(`🎤 [CORRECTED] "${corrected.substring(0, 100)}..."`);
+
+                        if (activeSocket && isRecordingAudio) {
+                            const correctedTranscription = {
+                                type: 'transcription',
+                                status: 'corrected',
+                                transcription: corrected,
+                                timestamp: Date.now()
+                            };
+                            console.log(`📤 SENDING TO iOS: CORRECTED "${corrected}"`);
+                            activeSocket.write(JSON.stringify(correctedTranscription) + '\n');
+                        }
+                    })
+                    .catch(err => {
+                        console.error(`❌ Haiku correction error: ${err.message}`);
+                    })
+                    .finally(() => {
+                        haikuInProgress = false;
+                    });
+            } else {
+                const reason = haikuInProgress ? 'Haiku in progress' : `Only ${(timeSinceLastHaiku / 1000).toFixed(1)}s since last`;
+                console.log(`⏭️  Skipping Haiku: ${reason}`);
             }
         }
     } catch (err) {
@@ -313,6 +362,11 @@ async function handleAudioControlMessage(socket, logData) {
         lastTranscription = '';
         isRecordingAudio = true;
         pendingTranscription = false;
+        accumulatedRawText = '';
+        transcriptionStartTime = Date.now();
+        lastHaikuCallTime = 0;
+        haikuInProgress = false;
+        lastTranscriptionContent = '';
     } else if (action === 'stop') {
         console.log('🎤 Audio recording stopped, transcribing...');
         isRecordingAudio = false;
@@ -356,32 +410,37 @@ async function handleAudioControlMessage(socket, logData) {
                     const rawTranscription = {
                         type: 'transcription',
                         status: 'final_raw',
-                        transcription: rawText,
+                        transcription: accumulatedRawText,
                         timestamp: Date.now()
                     };
+                    console.log(`📤 SENDING TO iOS: FINAL_RAW "${accumulatedRawText}"`);
                     activeSocket.write(JSON.stringify(rawTranscription) + '\n');
                 }
 
-                addToContext({ type: 'transcription', text: rawText, interim: false });
+                addToContext({ type: 'transcription', text: accumulatedRawText, interim: false });
 
-                const { corrected } = await processWithHaiku(rawText, 'correct_transcription');
+                console.log(`🤖 SENDING TO HAIKU: "${accumulatedRawText}"`);
+                const { corrected } = await processWithHaiku(accumulatedRawText, 'correct_transcription');
 
-                if (corrected !== rawText) {
-                    addToContext({ type: 'corrected', raw: rawText, corrected: corrected, interim: false });
+                console.log(`✅ RECEIVED FROM HAIKU: "${corrected}"`);
+
+                if (corrected !== accumulatedRawText) {
+                    addToContext({ type: 'corrected', raw: accumulatedRawText, corrected: corrected, interim: false });
                 }
 
                 lastTranscription = corrected;
-                console.log(`🎤 [FINAL] Raw: "${rawText}"`);
+                console.log(`🎤 [FINAL] Raw: "${accumulatedRawText}"`);
                 console.log(`🎤 [FINAL] Corrected: "${corrected}"`);
 
                 if (activeSocket) {
                     const transcription = {
                         type: 'transcription',
                         status: 'final',
-                        transcription: rawText,
+                        transcription: accumulatedRawText,
                         prompt: corrected,
                         timestamp: Date.now()
                     };
+                    console.log(`📤 SENDING TO iOS: FINAL "${accumulatedRawText}" (prompt: "${corrected}")`);
                     activeSocket.write(JSON.stringify(transcription) + '\n');
                 }
             }
@@ -397,6 +456,11 @@ async function handleAudioControlMessage(socket, logData) {
         pendingTranscription = false;
         audioBuffer = Buffer.alloc(0);
         lastTranscription = '';
+        accumulatedRawText = '';
+        transcriptionStartTime = null;
+        lastHaikuCallTime = 0;
+        haikuInProgress = false;
+        lastTranscriptionContent = '';
     }
 }
 

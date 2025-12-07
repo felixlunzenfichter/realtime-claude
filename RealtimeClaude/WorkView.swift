@@ -39,8 +39,6 @@ enum RecordingStatus {
     case disconnected
     case connected
     case isRecording
-    case speechDetected
-    case speechStopped
     case restarting
 
     var color: Color {
@@ -48,8 +46,6 @@ enum RecordingStatus {
         case .disconnected: return .red
         case .connected: return .blue
         case .isRecording: return .green
-        case .speechDetected: return .yellow
-        case .speechStopped: return .orange
         case .restarting: return .gray
         }
     }
@@ -59,8 +55,6 @@ enum RecordingStatus {
         case .disconnected: return "Disconnected"
         case .connected: return "Connected"
         case .isRecording: return "Recording"
-        case .speechDetected: return "Voice Activity Detected"
-        case .speechStopped: return "Voice Activity Stopped"
         case .restarting: return "Restarting..."
         }
     }
@@ -219,22 +213,28 @@ struct WorkView: View {
                                             .padding(.vertical, 2)
                                         } else {
                                             VStack(alignment: .leading, spacing: 4) {
+                                                if message.role == "user" && !message.segments.isEmpty {
+                                                    VoiceActivityGraph(segments: message.segments)
+                                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                                }
+
                                                 if message.role == "user" {
-                                                    if let transcription = message.transcription {
-                                                        Text("Transcription: \(transcription)")
-                                                            .font(.caption)
-                                                            .foregroundColor(.gray)
-                                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                                    }
+                                                    Text("Transcription: \(message.transcription ?? "")")
+                                                        .font(.caption)
+                                                        .foregroundColor(.gray)
+                                                        .lineLimit(nil)
+                                                        .frame(maxWidth: .infinity, alignment: .leading)
 
                                                     Text(message.text.isEmpty ? "" : "Prompt: \(message.text)")
                                                         .font(.body)
                                                         .foregroundColor(message.status.color)
+                                                        .lineLimit(nil)
                                                         .frame(maxWidth: .infinity, alignment: .leading)
                                                 } else {
                                                     Text("Assistant: \(message.text)")
                                                         .font(.body)
                                                         .foregroundColor(message.status.color)
+                                                        .lineLimit(nil)
                                                         .frame(maxWidth: .infinity, alignment: .leading)
                                                 }
 
@@ -242,6 +242,7 @@ struct WorkView: View {
                                                     Text("Summary: \(summary)")
                                                         .font(.caption)
                                                         .foregroundColor(.purple)
+                                                        .lineLimit(nil)
                                                         .frame(maxWidth: .infinity, alignment: .leading)
                                                 }
                                             }
@@ -449,10 +450,6 @@ class WorkViewModel {
                     self.currentRecordingStatus = .disconnected
                 case .connected:
                     self.currentRecordingStatus = self.isRecordingAudio ? .isRecording : .connected
-                case .speechDetected:
-                    self.currentRecordingStatus = .speechDetected
-                case .speechStopped:
-                    self.currentRecordingStatus = .speechStopped
                 case .restarting:
                     self.currentRecordingStatus = .restarting
                 }

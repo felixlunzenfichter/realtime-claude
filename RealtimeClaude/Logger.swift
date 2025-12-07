@@ -18,12 +18,20 @@ struct PromptStatusUpdate {
     let status: String
 }
 
+struct TranscriptionSegment: Sendable {
+    let start: Double
+    let end: Double
+    let text: String
+    let noSpeechProb: Double
+}
+
 struct TranscriptionUpdate {
     let transcription: String
     let prompt: String?
     let summary: String?
     let isFinal: Bool
     let isRaw: Bool
+    let segments: [TranscriptionSegment]
 }
 
 protocol LoggerProtocol {
@@ -97,11 +105,9 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
     private let TEST_DEFINITIONS: [Int: String] = [
         1: "Successful handshake",
-        2: "Voice activity detection started",
-        3: "Voice activity detection stopped",
-        4: "Prompt successfully injected into terminal",
-        5: "Started playing response",
-        6: "Stopped playing response"
+        2: "Prompt successfully injected into terminal",
+        3: "Started playing response",
+        4: "Stopped playing response"
     ]
 
     private var dataBuffer = Data()
@@ -479,13 +485,38 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         let prompt = jsonData["prompt"] as? String
         let summary = jsonData["summary"] as? String
 
+        var segments: [TranscriptionSegment] = []
+        if let segmentsData = jsonData["segments"] as? [[String: Any]] {
+            segments = segmentsData.compactMap { segmentDict in
+                guard let start = segmentDict["start"] as? Double,
+                      let end = segmentDict["end"] as? Double,
+                      let text = segmentDict["text"] as? String,
+                      let noSpeechProb = segmentDict["no_speech_prob"] as? Double else {
+                    return nil
+                }
+                return TranscriptionSegment(start: start, end: end, text: text, noSpeechProb: noSpeechProb)
+            }
+        }
+
         if transcription.isEmpty {
             error("transcription was empty in transcription message")
             return
         }
 
-        if isRaw {
-            debugLog(id: "transcription", message: "🎤 [RAW] \(transcription)")
+        if status == "raw" {
+            log("📥 [RAW] \(transcription)")
+        } else if status == "corrected" {
+            log("📥 [CORRECTED] \(prompt ?? transcription)")
+        } else if status == "final_raw" {
+            log("📥 [FINAL_RAW] Raw: \(transcription) | Prompt: \(prompt ?? "none")")
+            if let summary = summary {
+                log("   Summary: \(summary)")
+            }
+        } else if status == "final" {
+            log("📥 [FINAL] Raw: \(transcription) | Prompt: \(prompt ?? "none")")
+            if let summary = summary {
+                log("   Summary: \(summary)")
+            }
         } else {
             debugLog(id: "transcription", message: "🎤 [\(status)] \(prompt ?? transcription)")
         }
@@ -495,7 +526,8 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             prompt: prompt,
             summary: summary,
             isFinal: isFinal,
-            isRaw: isRaw
+            isRaw: isRaw,
+            segments: segments
         ))
     }
 

@@ -5,8 +5,6 @@ import Combine
 enum APIState {
     case disconnected
     case connected
-    case speechDetected
-    case speechStopped
     case restarting
 }
 
@@ -20,7 +18,7 @@ enum MessageStatus: Sendable {
 
 struct ConversationMessage: Identifiable, Sendable {
     let id = UUID()
-    let timestamp: Date
+    var timestamp: Date
     var transcription: String?
     var text: String
     let role: String
@@ -28,8 +26,9 @@ struct ConversationMessage: Identifiable, Sendable {
     var audioState: MessageAudioState?
     var audioData: Data?
     var status: MessageStatus = .notSent
+    var segments: [TranscriptionSegment] = []
 
-    init(transcription: String? = nil, text: String, role: String, summary: String? = nil, audioState: MessageAudioState? = nil, audioData: Data? = nil, status: MessageStatus = .notSent) {
+    init(transcription: String? = nil, text: String, role: String, summary: String? = nil, audioState: MessageAudioState? = nil, audioData: Data? = nil, status: MessageStatus = .notSent, segments: [TranscriptionSegment] = []) {
         self.timestamp = Date()
         self.transcription = transcription
         self.text = text
@@ -38,6 +37,7 @@ struct ConversationMessage: Identifiable, Sendable {
         self.audioState = audioState
         self.audioData = audioData
         self.status = status
+        self.segments = segments
     }
 }
 
@@ -55,6 +55,7 @@ protocol RealtimeAPIProtocol: Sendable {
     func restart()
     func addAssistantMessage(_ text: String, summary: String)
     func addInterruptMessage(_ text: String) -> UUID
+    func updateAPIState(_ newState: APIState)
 }
 
 nonisolated(unsafe) let realtimeAPI: RealtimeAPIProtocol = RealtimeAPI()
@@ -88,11 +89,11 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
                 guard let self = self else { return }
 
                 if update.isRaw {
-                    self.handleRawTranscription(update.transcription)
+                    self.handleRawTranscription(update.transcription, segments: update.segments)
                 } else if update.isFinal {
-                    self.handleFinalTranscription(transcription: update.transcription, prompt: update.prompt ?? update.transcription, summary: update.summary)
+                    self.handleFinalTranscription(transcription: update.transcription, prompt: update.prompt ?? update.transcription, summary: update.summary, segments: update.segments)
                 } else {
-                    self.handleInterimTranscription(transcription: update.transcription, prompt: update.prompt ?? update.transcription, summary: update.summary)
+                    self.handleInterimTranscription(transcription: update.transcription, prompt: update.prompt ?? update.transcription, summary: update.summary, segments: update.segments)
                 }
             }
         log("Subscribed to Mac transcription updates")
@@ -108,22 +109,42 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
     func processInputAudioBuffer(_ data: Data) {
     }
 
-    private func handleRawTranscription(_ text: String) {
+    private func mergeSegments(existing: [TranscriptionSegment], new: [TranscriptionSegment]) -> [TranscriptionSegment] {
+        var merged = existing
+
+        for newSegment in new {
+            let isDuplicate = existing.contains { existingSegment in
+                abs(existingSegment.start - newSegment.start) < 0.1
+            }
+
+            if !isDuplicate {
+                merged.append(newSegment)
+            }
+        }
+
+        return merged.sorted { $0.start < $1.start }
+    }
+
+    private func handleRawTranscription(_ text: String, segments: [TranscriptionSegment]) {
         if text.isEmpty { return }
 
         var currentContext = conversationContextSubject.value
 
         if let userId = currentUserMessageId,
            let index = currentContext.firstIndex(where: { $0.id == userId }) {
-            currentContext[index].transcription = text
+            let existingTranscription = currentContext[index].transcription ?? ""
+            currentContext[index].transcription = existingTranscription + (existingTranscription.isEmpty ? "" : " ") + text
+            currentContext[index].timestamp = Date()
             currentContext[index].status = .recording
+            currentContext[index].segments = mergeSegments(existing: currentContext[index].segments, new: segments)
             conversationContextSubject.send(currentContext)
         } else {
             var userMessage = ConversationMessage(
                 transcription: text,
                 text: "",
                 role: "user",
-                audioState: .processing
+                audioState: .processing,
+                segments: segments
             )
             userMessage.status = .recording
             currentUserMessageId = userMessage.id
@@ -132,17 +153,20 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         }
     }
 
-    private func handleInterimTranscription(transcription: String, prompt: String, summary: String?) {
+    private func handleInterimTranscription(transcription: String, prompt: String, summary: String?, segments: [TranscriptionSegment]) {
         if prompt.isEmpty { return }
 
         var currentContext = conversationContextSubject.value
 
         if let userId = currentUserMessageId,
            let index = currentContext.firstIndex(where: { $0.id == userId }) {
-            currentContext[index].transcription = transcription
+            let existingTranscription = currentContext[index].transcription ?? ""
+            currentContext[index].transcription = existingTranscription + (existingTranscription.isEmpty ? "" : " ") + transcription
             currentContext[index].text = prompt
             currentContext[index].summary = summary
+            currentContext[index].timestamp = Date()
             currentContext[index].status = .recording
+            currentContext[index].segments = mergeSegments(existing: currentContext[index].segments, new: segments)
             conversationContextSubject.send(currentContext)
         } else {
             var userMessage = ConversationMessage(
@@ -150,7 +174,8 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
                 text: prompt,
                 role: "user",
                 summary: summary,
-                audioState: .processing
+                audioState: .processing,
+                segments: segments
             )
             userMessage.status = .recording
             currentUserMessageId = userMessage.id
@@ -159,7 +184,7 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         }
     }
 
-    private func handleFinalTranscription(transcription: String, prompt: String, summary: String?) {
+    private func handleFinalTranscription(transcription: String, prompt: String, summary: String?, segments: [TranscriptionSegment]) {
         if !prompt.isEmpty {
             accumulatedText = prompt
             log("Final transcription: \(accumulatedText)")
@@ -169,9 +194,12 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
 
         if let userId = currentUserMessageId,
            let index = currentContext.firstIndex(where: { $0.id == userId }) {
-            currentContext[index].transcription = transcription
+            let existingTranscription = currentContext[index].transcription ?? ""
+            currentContext[index].transcription = existingTranscription + (existingTranscription.isEmpty ? "" : " ") + transcription
             currentContext[index].text = accumulatedText.isEmpty ? "..." : accumulatedText
+            currentContext[index].timestamp = Date()
             currentContext[index].audioState = .processing
+            currentContext[index].segments = mergeSegments(existing: currentContext[index].segments, new: segments)
             conversationContextSubject.send(currentContext)
         }
 
@@ -367,13 +395,11 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         conversationContextSubject.send(currentContext)
     }
 
-    private func updateAPIState(_ newState: APIState) {
+    func updateAPIState(_ newState: APIState) {
         let emoji: String
         switch newState {
         case .disconnected: emoji = "🔴"
         case .connected: emoji = "🟢"
-        case .speechDetected: emoji = "🎤"
-        case .speechStopped: emoji = "⏸️"
         case .restarting: emoji = "🔄"
         }
         log("\(emoji) State: \(newState)")
