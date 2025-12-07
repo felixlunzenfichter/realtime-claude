@@ -287,3 +287,50 @@ This switches to a separate Terminal window for deployment. This is the ONLY saf
 - Build completes successfully regardless of context interruptions
 
 After making any code changes, always deploy to test on device using `deploy-in-window.sh`.
+
+## Debugging and Server Logs
+
+### Log Location
+
+The Mac server outputs all activity to `/tmp/mac-server-output.log`
+
+### Reading Transcription Data
+
+To monitor real-time transcription:
+
+```bash
+tail -f /tmp/mac-server-output.log
+```
+
+### Key Log Markers
+
+The log file contains detailed markers for debugging the transcription pipeline:
+
+- `🎤 [RAW] Raw whisper:` - Raw output directly from WhisperKit before any processing
+- `📝 Accumulated raw:` - Full accumulated transcription text in the buffer
+- `[DEBUG] Mode:` - Current processing mode (APPEND/REPLACE/SKIP)
+- `[DEBUG] Longest matching substring:` - Shows overlap detection between consecutive outputs
+- `📤 SENDING TO iOS:` - Final text being transmitted to the iOS app
+- `🎤 [FINAL] Corrected:` - Text after Haiku-based cleanup/correction
+
+### Common Debugging Scenarios
+
+**Check what Whisper is actually outputting:**
+```bash
+grep "🎤 \[RAW\] Raw whisper:" /tmp/mac-server-output.log | tail -20
+```
+
+**See what's being sent to the app:**
+```bash
+grep "📤 SENDING TO iOS:" /tmp/mac-server-output.log | tail -20
+```
+
+**Monitor overlap detection:**
+```bash
+grep "Longest matching substring" /tmp/mac-server-output.log | tail -20
+```
+
+**Watch the full pipeline in real-time:**
+```bash
+tail -f /tmp/mac-server-output.log | grep -E "(🎤|📝|📤|DEBUG)"
+```
