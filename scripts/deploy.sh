@@ -28,6 +28,7 @@ echo ""
 echo "🧹 Cleaning up existing Mac server processes..."
 pkill -f "node scripts/mac-server.js" 2>/dev/null || true
 lsof -ti:8082 | xargs kill -9 2>/dev/null || true
+pkill -f "tail -f /tmp/mac-server-output.log" 2>/dev/null || true
 sleep 0.5
 echo "✅ Mac server cleanup complete"
 

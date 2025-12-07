@@ -181,13 +181,17 @@ function smartConcatenate(accumulated, newText) {
     if (!accumulated) return newText;
     if (!newText) return null;
 
+    // Normalize whitespace for comparison
+    const normalize = (str) => str.replace(/\s+/g, ' ').trim();
+
     // Find longest suffix of accumulated that matches prefix of newText
     const maxOverlap = Math.min(accumulated.length, newText.length);
     for (let overlapLen = maxOverlap; overlapLen > 0; overlapLen--) {
         const accumulatedSuffix = accumulated.slice(-overlapLen);
         const newTextPrefix = newText.slice(0, overlapLen);
 
-        if (accumulatedSuffix === newTextPrefix) {
+        // Compare normalized versions to handle whitespace differences
+        if (normalize(accumulatedSuffix) === normalize(newTextPrefix)) {
             const suffix = newText.slice(overlapLen);
             if (suffix) {
                 console.log(`   🔗 Found ${overlapLen} char overlap, appending: "${suffix}"`);
