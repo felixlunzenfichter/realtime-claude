@@ -8,14 +8,6 @@ enum APIState {
     case restarting
 }
 
-enum MessageStatus: Sendable {
-    case recording
-    case notSent
-    case sent
-    case injected
-    case failed
-}
-
 struct ConversationMessage: Identifiable, Sendable {
     let id = UUID()
     var timestamp: Date
@@ -23,19 +15,16 @@ struct ConversationMessage: Identifiable, Sendable {
     var prompt: String
     let role: String
     var summary: String?
-    var audioState: MessageAudioState?
     var audioData: Data?
-    var status: MessageStatus = .notSent
+    var isPlaying: Bool = false
 
-    init(transcription: String? = nil, prompt: String, role: String, summary: String? = nil, audioState: MessageAudioState? = nil, audioData: Data? = nil, status: MessageStatus = .notSent) {
+    init(transcription: String? = nil, prompt: String, role: String, summary: String? = nil, audioData: Data? = nil) {
         self.timestamp = Date()
         self.transcription = transcription
         self.prompt = prompt
         self.role = role
         self.summary = summary
-        self.audioState = audioState
         self.audioData = audioData
-        self.status = status
     }
 }
 
@@ -67,6 +56,7 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
 
     private var transcriptionCancellable: AnyCancellable?
     private var connectionStatusCancellable: AnyCancellable?
+    private var audioPlaybackCancellable: AnyCancellable?
     private var accumulatedText: String = ""
 
     private let sampleRate: Double = 16000
@@ -78,6 +68,7 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         log("RealtimeAPI initialized with Mac-based transcription")
         setupTranscriptionSubscription()
         setupConnectionStatusMonitoring()
+        setupAudioPlaybackTracking()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             audioManager.startAudioEngine()
@@ -121,6 +112,28 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         log("Monitoring Mac server connection status")
     }
 
+    private func setupAudioPlaybackTracking() {
+        audioPlaybackCancellable = audioManager.currentPlayingMessageIdSubject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] playingMessageId in
+                guard let self = self else { return }
+
+                var currentContext = self.conversationContextSubject.value
+
+                for index in currentContext.indices {
+                    if let playingMessageId = playingMessageId, currentContext[index].id == playingMessageId {
+                        currentContext[index].isPlaying = true
+                        log("Message \(playingMessageId) is now playing")
+                    } else {
+                        currentContext[index].isPlaying = false
+                    }
+                }
+
+                self.conversationContextSubject.send(currentContext)
+            }
+        log("Audio playback tracking initialized")
+    }
+
     func saveAPIKey(_ apiKey: String?) {
         if let apiKey = apiKey {
             saveToKeychain(key: "OPENAI_API_KEY", value: apiKey)
@@ -140,16 +153,13 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
            let index = currentContext.firstIndex(where: { $0.id == messageId }) {
             currentContext[index].transcription = text
             currentContext[index].timestamp = Date()
-            currentContext[index].status = .recording
             conversationContextSubject.send(currentContext)
         } else {
-            var userMessage = ConversationMessage(
+            let userMessage = ConversationMessage(
                 transcription: text,
                 prompt: "",
-                role: "user",
-                audioState: .processing
+                role: "user"
             )
-            userMessage.status = .recording
             currentRecordingMessageId = userMessage.id
             currentContext.insert(userMessage, at: 0)
             conversationContextSubject.send(currentContext)
@@ -180,8 +190,6 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
 
                 if status == "final_prompt" {
                     debugLog(id: "promptFlow", message: "Handling final_prompt: updating prompt only, keeping currentRecordingMessageId for final_summary")
-                    currentContext[index].audioState = .processing
-                    currentContext[index].status = .notSent
                     conversationContextSubject.send(currentContext)
                     return
                 }
@@ -189,12 +197,10 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
                 if status == "final_summary" || (status == "final" && summary != nil) {
                     debugLog(id: "promptFlow", message: "Handling final_summary: updating summary and marking as complete")
                     currentContext[index].summary = summary
-                    currentContext[index].audioState = .doneProcessing
-                    currentContext[index].status = .injected
                     conversationContextSubject.send(currentContext)
 
                     if let summary = summary, !summary.isEmpty {
-                        log("Received final message with summary, marking as injected")
+                        log("Received final message with summary")
 
                         if audioManager.getIsPlaybackEnabled() {
                             speakWithTTS(text: summary, messageId: targetMessageId)
@@ -209,17 +215,13 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
                 }
 
                 currentContext[index].summary = summary
-                currentContext[index].audioState = .processing
-                currentContext[index].status = .notSent
 
                 debugLog(id: "promptFlow", message: "After update: prompt='\(currentContext[index].prompt)', summary='\(currentContext[index].summary ?? "nil")', publishing to conversationContextSubject")
 
                 conversationContextSubject.send(currentContext)
 
                 if let summary = summary, !summary.isEmpty {
-                    log("Received final message with summary, marking as injected")
-                    currentContext[index].audioState = .doneProcessing
-                    currentContext[index].status = .injected
+                    log("Received final message with summary")
                     conversationContextSubject.send(currentContext)
 
                     if audioManager.getIsPlaybackEnabled() {
@@ -259,8 +261,6 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         if let messageId = currentRecordingMessageId,
            let index = currentContext.firstIndex(where: { $0.id == messageId }) {
             currentContext[index].prompt = accumulatedText
-            currentContext[index].audioState = .queued
-            currentContext[index].status = .sent
             conversationContextSubject.send(currentContext)
 
             pendingInjectionMessageId = messageId
@@ -276,14 +276,9 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
     }
 
     func stopCurrentRecording() {
-        var currentContext = conversationContextSubject.value
-
-        if let messageId = currentRecordingMessageId,
-           let index = currentContext.firstIndex(where: { $0.id == messageId }) {
-            currentContext[index].status = .sent
-            conversationContextSubject.send(currentContext)
-            debugLog(id: "promptFlow", message: "Stopped recording session - status set to .sent, keeping currentRecordingMessageId until final transcription arrives")
-            log("Stopped current recording session - transitioned message to .sent status")
+        if currentRecordingMessageId != nil {
+            debugLog(id: "promptFlow", message: "Stopped recording session, keeping currentRecordingMessageId until final transcription arrives")
+            log("Stopped current recording session")
         } else {
             log("No recording message found to stop")
         }
@@ -308,8 +303,6 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         debugLog(id: "promptFlow", message: "FOUND message at index \(index), before: prompt='\(currentContext[index].prompt)', summary='\(currentContext[index].summary ?? "nil")'")
 
         currentContext[index].summary = summary
-        currentContext[index].audioState = .doneProcessing
-        currentContext[index].status = .injected
 
         debugLog(id: "promptFlow", message: "After update: prompt='\(currentContext[index].prompt)', summary='\(currentContext[index].summary ?? "nil")', publishing to conversationContextSubject")
 
@@ -335,7 +328,6 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
             var currentContext = conversationContextSubject.value
             if let index = currentContext.firstIndex(where: { $0.id == messageId }) {
                 currentContext[index].prompt = "[cancelled]"
-                currentContext[index].status = .failed
                 conversationContextSubject.send(currentContext)
             }
             currentRecordingMessageId = nil
@@ -358,13 +350,11 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
     }
 
     func createRecordingMessage() -> UUID {
-        var userMessage = ConversationMessage(
+        let userMessage = ConversationMessage(
             transcription: "",
             prompt: "",
-            role: "user",
-            audioState: .processing
+            role: "user"
         )
-        userMessage.status = .recording
         currentRecordingMessageId = userMessage.id
 
         var currentContext = conversationContextSubject.value
@@ -379,8 +369,7 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         let message = ConversationMessage(
             prompt: text,
             role: "assistant",
-            summary: summary,
-            audioState: .queued
+            summary: summary
         )
 
         var currentContext = conversationContextSubject.value
@@ -395,12 +384,10 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
     }
 
     func addInterruptMessage(_ text: String) -> UUID {
-        var message = ConversationMessage(
+        let message = ConversationMessage(
             prompt: text,
-            role: "user",
-            audioState: nil
+            role: "user"
         )
-        message.status = .sent
 
         var currentContext = conversationContextSubject.value
         currentContext.insert(message, at: 0)
@@ -415,8 +402,6 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
             error("No API key for TTS")
             return
         }
-
-        updateMessageAudioState(messageId: messageId, newState: .processing)
 
         let url = URL(string: "https://api.openai.com/v1/audio/speech")!
         var request = URLRequest(url: url)
@@ -466,19 +451,8 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
             }
 
             let audioBase64 = audioData.base64EncodedString()
-            audioManager.scheduleOutputAudioBuffer(audioBase64, resetCount: true, onBufferPlayed: nil)
-
-            DispatchQueue.main.async {
-                self.updateMessageAudioState(messageId: messageId, newState: .doneProcessing)
-            }
+            audioManager.scheduleOutputAudioBuffer(audioBase64, resetCount: true, messageId: messageId, onBufferPlayed: nil)
         }.resume()
-    }
-
-    private func updateMessageAudioState(messageId: UUID, newState: MessageAudioState) {
-        var currentContext = conversationContextSubject.value
-        guard let index = currentContext.firstIndex(where: { $0.id == messageId }) else { return }
-        currentContext[index].audioState = newState
-        conversationContextSubject.send(currentContext)
     }
 
     func updateAPIState(_ newState: APIState) {

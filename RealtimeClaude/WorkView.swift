@@ -165,7 +165,7 @@ struct WorkView: View {
                                                 if message.role == "user" {
                                                     Text("Transcription: \(message.transcription ?? "")")
                                                         .font(.caption)
-                                                        .foregroundColor(.white)
+                                                        .foregroundColor(.gray)
                                                         .lineLimit(nil)
                                                         .frame(maxWidth: .infinity, alignment: .leading)
                                                         .onAppear {

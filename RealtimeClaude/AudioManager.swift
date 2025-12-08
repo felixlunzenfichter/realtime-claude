@@ -7,6 +7,7 @@ protocol AudioManagerProtocol: Sendable {
     var isPlayingAudioSubject: CurrentValueSubject<Bool, Never> { get }
     var audioInputSourceSubject: CurrentValueSubject<String, Never> { get }
     var isPlaybackEnabledSubject: CurrentValueSubject<Bool, Never> { get }
+    var currentPlayingMessageIdSubject: CurrentValueSubject<UUID?, Never> { get }
 
     func startAudioEngine()
     func stopAudioEngine()
@@ -15,7 +16,7 @@ protocol AudioManagerProtocol: Sendable {
     func getIsPlaybackEnabled() -> Bool
     func enablePlayback()
     func disablePlayback()
-    func scheduleOutputAudioBuffer(_ audioBase64: String, resetCount: Bool, onBufferPlayed: ((Int) -> Void)?)
+    func scheduleOutputAudioBuffer(_ audioBase64: String, resetCount: Bool, messageId: UUID, onBufferPlayed: ((Int) -> Void)?)
     func reset()
 }
 
@@ -26,6 +27,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     let isPlayingAudioSubject = CurrentValueSubject<Bool, Never>(false)
     let audioInputSourceSubject = CurrentValueSubject<String, Never>("Unknown")
     let isPlaybackEnabledSubject = CurrentValueSubject<Bool, Never>(true)
+    let currentPlayingMessageIdSubject = CurrentValueSubject<UUID?, Never>(nil)
 
     private let audioEngine: AVAudioEngine
     private let responsePlayerNode: AVAudioPlayerNode
@@ -152,6 +154,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         isPlaybackEnabled = false
         isPlaybackEnabledSubject.send(false)
         responsePlayerNode.stop()
+        currentPlayingMessageIdSubject.send(nil)
         log("Playback disabled")
     }
 
@@ -170,11 +173,12 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         buffersPlayedCount = 0
 
         isPlayingAudioSubject.send(false)
+        currentPlayingMessageIdSubject.send(nil)
 
         log("Audio manager reset complete")
     }
 
-    func scheduleOutputAudioBuffer(_ audioBase64: String, resetCount: Bool, onBufferPlayed: ((Int) -> Void)?) {
+    func scheduleOutputAudioBuffer(_ audioBase64: String, resetCount: Bool, messageId: UUID, onBufferPlayed: ((Int) -> Void)?) {
         if !isPlaybackEnabled {
             debugLog(id: "scheduleAudio", message: "⛔ [Audio] Playback disabled, skipping audio")
             return
@@ -211,10 +215,12 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
                         debugLog(id: "audioPlayback", message: "🎵 [Audio] Already playing")
                     } else {
                         self.isPlayingAudioSubject.send(true)
-                        log("Started playing response")
+                        self.currentPlayingMessageIdSubject.send(messageId)
+                        log("Started playing response for message: \(messageId)")
                     }
                 } else if self.scheduledBufferCount == 0 {
                     self.isPlayingAudioSubject.send(false)
+                    self.currentPlayingMessageIdSubject.send(nil)
                     log("Stopped playing response")
                 }
             }
@@ -223,7 +229,10 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         scheduledBufferCount += 1
 
         if scheduledBufferCount == 1 && isPlaybackEnabled && !isRecordingAudioSubject.value && !isPlayingAudioSubject.value {
+            currentPlayingMessageIdSubject.send(messageId)
+            isPlayingAudioSubject.send(true)
             responsePlayerNode.play()
+            log("Started playback for message: \(messageId)")
         }
     }
 
