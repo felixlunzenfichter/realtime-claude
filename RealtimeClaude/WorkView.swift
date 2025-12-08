@@ -60,51 +60,6 @@ enum RecordingStatus {
     }
 }
 
-extension MessageStatus {
-    var color: Color {
-        switch self {
-        case .recording: return .white
-        case .notSent: return .white
-        case .sent: return .orange
-        case .injected: return .green
-        case .failed: return .red
-        }
-    }
-
-    var statusText: String {
-        switch self {
-        case .recording: return "Recording..."
-        case .notSent: return ""
-        case .sent: return "Sending..."
-        case .injected: return ""
-        case .failed: return "Failed"
-        }
-    }
-}
-
-enum MessageAudioState: Sendable {
-    case queued
-    case processing
-    case doneProcessing
-
-    var color: Color {
-        switch self {
-        case .queued: return .gray
-        case .processing: return .purple
-        case .doneProcessing: return .green
-        }
-    }
-
-    var statusText: String {
-        switch self {
-        case .queued: return "Queued"
-        case .processing: return "Processing"
-        case .doneProcessing: return "Done Processing"
-        }
-    }
-}
-
-
 struct ToggleBar: View {
     struct ToggleItem {
         let color: Color
@@ -193,18 +148,12 @@ struct WorkView: View {
                                         if message.prompt == INTERRUPT_MESSAGE {
                                             HStack {
                                                 HStack(spacing: 6) {
-                                                    if message.status == .sent {
-                                                        ProgressView()
-                                                            .scaleEffect(0.5)
-                                                            .frame(width: 10, height: 10)
-                                                    } else {
-                                                        Image(systemName: message.status == .injected ? "stop.circle.fill" : "hand.raised.circle.fill")
-                                                            .font(.system(size: 10))
-                                                            .foregroundColor(message.status == .injected ? .red : message.status.color)
-                                                    }
-                                                    Text(message.status == .sent ? "Request interrupt sent" : "Request interrupted")
+                                                    Image(systemName: "stop.circle.fill")
                                                         .font(.system(size: 10))
-                                                        .foregroundColor(message.status == .injected ? .red : message.status.color)
+                                                        .foregroundColor(.red)
+                                                    Text("Request interrupted")
+                                                        .font(.system(size: 10))
+                                                        .foregroundColor(.red)
                                                 }
 
                                                 Spacer()
@@ -216,7 +165,7 @@ struct WorkView: View {
                                                 if message.role == "user" {
                                                     Text("Transcription: \(message.transcription ?? "")")
                                                         .font(.caption)
-                                                        .foregroundColor(.gray)
+                                                        .foregroundColor(.white)
                                                         .lineLimit(nil)
                                                         .frame(maxWidth: .infinity, alignment: .leading)
                                                         .onAppear {
@@ -225,13 +174,13 @@ struct WorkView: View {
 
                                                     Text(message.prompt.isEmpty ? "" : "Prompt: \(message.prompt)")
                                                         .font(.body)
-                                                        .foregroundColor(message.status.color)
+                                                        .foregroundColor(.white)
                                                         .lineLimit(nil)
                                                         .frame(maxWidth: .infinity, alignment: .leading)
                                                 } else {
                                                     Text("Assistant: \(message.prompt)")
                                                         .font(.body)
-                                                        .foregroundColor(message.status.color)
+                                                        .foregroundColor(.white)
                                                         .lineLimit(nil)
                                                         .frame(maxWidth: .infinity, alignment: .leading)
                                                         .onAppear {
@@ -239,19 +188,17 @@ struct WorkView: View {
                                                         }
                                                 }
 
-                                                if let summary = message.summary {
+                                                if let summary = message.summary, !summary.isEmpty {
                                                     Text("Summary: \(summary)")
                                                         .font(.caption)
-                                                        .foregroundColor(.purple)
+                                                        .foregroundColor(
+                                                            message.audioData == nil ? .gray :
+                                                            message.isPlaying ? .blue : .purple
+                                                        )
                                                         .lineLimit(nil)
                                                         .frame(maxWidth: .infinity, alignment: .leading)
                                                         .onAppear {
                                                             debugLog(id: "promptFlow", message: "UI - Summary view appeared: messageId=\(message.id.uuidString), summary='\(summary)'")
-                                                        }
-                                                } else {
-                                                    Text("")
-                                                        .onAppear {
-                                                            debugLog(id: "promptFlow", message: "UI - No summary for message: messageId=\(message.id.uuidString), prompt='\(message.prompt)'")
                                                         }
                                                 }
                                             }
@@ -261,17 +208,8 @@ struct WorkView: View {
                                     }
                                     .background(
                                         RoundedRectangle(cornerRadius: 8)
-                                            .fill(message.prompt == INTERRUPT_MESSAGE && message.status == .injected ? Color.red.opacity(0.1) : message.status.color.opacity(0.1))
+                                            .fill(message.prompt == INTERRUPT_MESSAGE ? Color.red.opacity(0.1) : Color.purple.opacity(0.1))
                                     )
-
-                                    if message.prompt != INTERRUPT_MESSAGE {
-                                        VStack {
-                                            Spacer()
-                                        }
-                                        .frame(height: 10)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .glassEffect(.clear.tint(message.audioState?.color ?? message.status.color), in: .capsule)
-                                    }
                                 }
                                 .onTapGesture {
                                     viewModel.copyMessageToClipboard(message)
@@ -505,7 +443,7 @@ class WorkViewModel {
             .sink { [weak self] conversationContext in
                 debugLog(id: "promptFlow", message: "WorkViewModel received conversation update, total messages: \(conversationContext.count)")
                 for (index, msg) in conversationContext.enumerated() {
-                    debugLog(id: "promptFlow", message: "Message \(index): ID=\(msg.id.uuidString), role=\(msg.role), prompt='\(msg.prompt)', summary='\(msg.summary ?? "nil")', status=\(msg.status)")
+                    debugLog(id: "promptFlow", message: "Message \(index): ID=\(msg.id.uuidString), role=\(msg.role), prompt='\(msg.prompt)', summary='\(msg.summary ?? "nil")', isPlaying=\(msg.isPlaying)")
                 }
                 self?.allMessages = Array(conversationContext.sorted { $0.timestamp > $1.timestamp })
                 debugLog(id: "promptFlow", message: "allMessages updated, count: \(self?.allMessages.count ?? 0)")
@@ -606,7 +544,7 @@ class WorkViewModel {
 
         log("Replaying audio (\(audioData.count) bytes)")
         let audioBase64 = audioData.base64EncodedString()
-        audioManager.scheduleOutputAudioBuffer(audioBase64, resetCount: true, onBufferPlayed: nil)
+        audioManager.scheduleOutputAudioBuffer(audioBase64, resetCount: true, messageId: message.id, onBufferPlayed: nil)
     }
 
 
@@ -616,14 +554,8 @@ class WorkViewModel {
     }
 
     func deleteMessage(_ id: UUID) {
-        guard let message = allMessages.first(where: { $0.id == id }) else { return }
-
-        if message.status != .injected {
-            realtimeAPI.clearAccumulatedPrompts()
-            log("🗑️ Deleted current message and cleared accumulated prompts")
-        } else {
-            log("🗑️ Deleted message (view only)")
-        }
+        guard allMessages.first(where: { $0.id == id }) != nil else { return }
+        log("🗑️ Deleted message (view only)")
     }
 
     func stopClaudeCode() {
