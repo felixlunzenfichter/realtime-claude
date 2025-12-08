@@ -44,6 +44,8 @@ protocol RealtimeAPIProtocol: Sendable {
     func addInterruptMessage(_ text: String) -> UUID
     func updateAPIState(_ newState: APIState)
     func createRecordingMessage() -> UUID
+    func connect()
+    func disconnect()
 }
 
 nonisolated(unsafe) let realtimeAPI: RealtimeAPIProtocol = RealtimeAPI()
@@ -66,7 +68,6 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
     init() {
         log("RealtimeAPI initialized with Mac-based transcription")
         setupTranscriptionSubscription()
-        setupConnectionStatusMonitoring()
         setupAudioPlaybackTracking()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -94,21 +95,6 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
                 }
             }
         log("Subscribed to Mac transcription updates")
-    }
-
-    private func setupConnectionStatusMonitoring() {
-        connectionStatusCancellable = logger.macConnectionReadySubject
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] isConnected in
-                guard let self = self else { return }
-
-                if isConnected && self.apiStateSubject.value != .connected {
-                    self.updateAPIState(.connected)
-                } else if !isConnected && self.apiStateSubject.value == .connected {
-                    self.updateAPIState(.disconnected)
-                }
-            }
-        log("Monitoring Mac server connection status")
     }
 
     private func setupAudioPlaybackTracking() {
@@ -460,6 +446,18 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         }
         log("\(emoji) State: \(newState)")
         apiStateSubject.send(newState)
+    }
+
+    func connect() {
+        guard apiStateSubject.value != .connected else { return }
+        debugLog(id: "connect", message: "🟢 State: connected")
+        updateAPIState(.connected)
+    }
+
+    func disconnect() {
+        guard apiStateSubject.value != .disconnected else { return }
+        debugLog(id: "disconnect", message: "🔴 State: disconnected")
+        updateAPIState(.disconnected)
     }
 
     private func updateLoadingStatus(_ status: String?) {

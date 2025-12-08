@@ -104,6 +104,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     private let tcpProcessingQueue = DispatchQueue(label: "logger.tcp.processing", qos: .userInitiated)
     private var reconnectAttempts: Int = 0
     private var reconnectTimer: DispatchSourceTimer?
+    private var ackTimeoutTimer: DispatchSourceTimer?
     private var isConnectionReady: Bool = false {
         didSet {
             macConnectionReadySubject.send(isConnectionReady)
@@ -224,6 +225,8 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
                         self.isConnectionReady = false
                         self.scheduleReconnect()
                     }
+                } else {
+                    self.startAckTimeoutTimer()
                 }
             })
         }
@@ -357,6 +360,9 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             error("logId was nil in ACK message")
             return
         }
+
+        cancelAckTimeoutTimer()
+        realtimeAPI.connect()
 
         debugLog(id: "ackReceived", message: "✅ [TCP] ACK received for log: \(logId)")
 
@@ -644,6 +650,27 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     private func cancelReconnectTimer() {
         reconnectTimer?.cancel()
         reconnectTimer = nil
+    }
+
+    private func startAckTimeoutTimer() {
+        cancelAckTimeoutTimer()
+
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .userInitiated))
+        timer.schedule(deadline: .now() + 5.0)
+        timer.setEventHandler { [weak self] in
+            self?.handleAckTimeout()
+        }
+        timer.resume()
+        ackTimeoutTimer = timer
+    }
+
+    private func cancelAckTimeoutTimer() {
+        ackTimeoutTimer?.cancel()
+        ackTimeoutTimer = nil
+    }
+
+    private func handleAckTimeout() {
+        realtimeAPI.disconnect()
     }
 }
 
