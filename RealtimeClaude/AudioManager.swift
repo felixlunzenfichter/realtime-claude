@@ -329,7 +329,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
             guard let int16Data = self.bufferToData(int16Buffer) else {
                 return
             }
-            realtimeAPI.processInputAudioBuffer(int16Data)
         }
 
         log("Audio tap installed - streaming to Mac with VAD")
