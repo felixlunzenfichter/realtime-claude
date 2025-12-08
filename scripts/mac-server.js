@@ -429,14 +429,14 @@ async function triggerTranscription(isFinalChunk = false) {
             if (activeSocket && (isRecordingAudio || isFinalChunk)) {
                 const rawTranscription = {
                     type: 'transcription',
-                    status: isFinalChunk ? 'final_chunk_raw' : 'raw',
+                    status: isFinalChunk ? 'final_chunk' : 'transcription',
                     transcription: concatenatedText,
                     timestamp: Date.now()
                 };
                 if (currentMessageId) {
                     rawTranscription.messageId = currentMessageId;
                 }
-                console.log(`📤 SENDING TO iOS: ${isFinalChunk ? 'FINAL_CHUNK_RAW' : 'RAW'} "${concatenatedText}"${currentMessageId ? ` (messageId: ${currentMessageId})` : ''}`);
+                console.log(`📤 SENDING TO iOS: ${isFinalChunk ? 'FINAL_CHUNK' : 'TRANSCRIPTION'} "${concatenatedText}"${currentMessageId ? ` (messageId: ${currentMessageId})` : ''}`);
                 activeSocket.write(JSON.stringify(rawTranscription) + '\n');
             }
 
@@ -472,14 +472,14 @@ async function handleAudioEnd() {
         if (activeSocket) {
             const rawTranscription = {
                 type: 'transcription',
-                status: 'final_raw',
+                status: 'transcription',
                 transcription: concatenatedText,
                 timestamp: Date.now()
             };
             if (currentMessageId) {
                 rawTranscription.messageId = currentMessageId;
             }
-            console.log(`📤 SENDING TO iOS: FINAL_RAW "${concatenatedText}"${currentMessageId ? ` (messageId: ${currentMessageId})` : ''}`);
+            console.log(`📤 SENDING TO iOS: TRANSCRIPTION "${concatenatedText}"${currentMessageId ? ` (messageId: ${currentMessageId})` : ''}`);
             activeSocket.write(JSON.stringify(rawTranscription) + '\n');
         }
 
@@ -501,7 +501,7 @@ async function handleAudioEnd() {
         if (activeSocket) {
             const promptMessage = {
                 type: 'transcription',
-                status: 'final_prompt',
+                status: 'prompt',
                 transcription: concatenatedText,
                 prompt: corrected,
                 summary: null,
@@ -510,7 +510,7 @@ async function handleAudioEnd() {
             if (currentMessageId) {
                 promptMessage.messageId = currentMessageId;
             }
-            console.log(`📤 SENDING TO iOS: FINAL_PROMPT "${corrected}"${currentMessageId ? ` (messageId: ${currentMessageId})` : ''}`);
+            console.log(`📤 SENDING TO iOS: PROMPT "${corrected}"${currentMessageId ? ` (messageId: ${currentMessageId})` : ''}`);
             activeSocket.write(JSON.stringify(promptMessage) + '\n');
         }
 
@@ -529,7 +529,7 @@ async function handleAudioEnd() {
             if (activeSocket) {
                 const summaryMessage = {
                     type: 'transcription',
-                    status: 'final_summary',
+                    status: 'summary',
                     transcription: concatenatedText,
                     prompt: corrected,
                     summary: summary,
@@ -538,7 +538,7 @@ async function handleAudioEnd() {
                 if (currentMessageId) {
                     summaryMessage.messageId = currentMessageId;
                 }
-                console.log(`📤 SENDING TO iOS: FINAL_SUMMARY "${summary}"${currentMessageId ? ` (messageId: ${currentMessageId})` : ''}`);
+                console.log(`📤 SENDING TO iOS: SUMMARY "${summary}"${currentMessageId ? ` (messageId: ${currentMessageId})` : ''}`);
                 activeSocket.write(JSON.stringify(summaryMessage) + '\n');
             }
         })();

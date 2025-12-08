@@ -489,9 +489,9 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     private func handleTranscriptionMessage(_ jsonData: [String: Any]) {
         debugLog(id: "promptFlow", message: "handleTranscriptionMessage() called, JSON keys: \(jsonData.keys.joined(separator: ", "))")
 
-        let status = jsonData["status"] as? String ?? "partial"
-        let isFinal = status == "final" || status == "final_raw" || status == "final_chunk_raw" || status == "final_prompt" || status == "final_summary"
-        let isRaw = status == "raw" || status == "final_raw" || status == "final_chunk_raw"
+        let status = jsonData["status"] as? String ?? "transcription"
+        let isFinal = status == "prompt" || status == "summary"
+        let isRaw = status == "transcription" || status == "final_chunk"
 
         let transcription = jsonData["transcription"] as? String ?? ""
         let prompt = jsonData["prompt"] as? String
@@ -525,27 +525,17 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             return
         }
 
-        if status == "raw" {
-            log("📥 [RAW] \(transcription)")
-        } else if status == "corrected" {
-            log("📥 [CORRECTED] \(prompt ?? transcription)")
-        } else if status == "final_raw" {
-            log("📥 [FINAL_RAW] Raw: \(transcription) | Prompt: \(prompt ?? "none")")
+        if status == "transcription" {
+            log("📥 [TRANSCRIPTION] \(transcription)")
+        } else if status == "prompt" {
+            log("📥 [PROMPT] Raw: \(transcription) | Prompt: \(prompt ?? "none")")
+        } else if status == "summary" {
+            log("📥 [SUMMARY] Raw: \(transcription) | Prompt: \(prompt ?? "none")")
             if let summary = summary {
                 log("   Summary: \(summary)")
             }
-        } else if status == "final_prompt" {
-            log("📥 [FINAL_PROMPT] Raw: \(transcription) | Prompt: \(prompt ?? "none")")
-        } else if status == "final_summary" {
-            log("📥 [FINAL_SUMMARY] Raw: \(transcription) | Prompt: \(prompt ?? "none")")
-            if let summary = summary {
-                log("   Summary: \(summary)")
-            }
-        } else if status == "final" {
-            log("📥 [FINAL] Raw: \(transcription) | Prompt: \(prompt ?? "none")")
-            if let summary = summary {
-                log("   Summary: \(summary)")
-            }
+        } else if status == "final_chunk" {
+            log("📥 [FINAL_CHUNK] \(transcription)")
         } else {
             debugLog(id: "transcription", message: "🎤 [\(status)] \(prompt ?? transcription)")
         }

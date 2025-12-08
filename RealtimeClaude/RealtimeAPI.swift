@@ -83,7 +83,7 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
 
                 debugLog(id: "promptFlow", message: "Received TranscriptionUpdate: status='\(update.status)', transcription='\(update.transcription)', prompt='\(update.prompt ?? "nil")', summary='\(update.summary ?? "nil")', isFinal=\(update.isFinal), isRaw=\(update.isRaw), messageId=\(update.messageId?.uuidString ?? "nil")")
 
-                if update.isRaw || update.status == "final_chunk_raw" {
+                if update.isRaw || update.status == "final_chunk" {
                     debugLog(id: "promptFlow", message: "Calling updateTranscription() for raw update (status: \(update.status))")
                     self.updateTranscription(update.transcription, messageId: update.messageId)
                 } else if update.isFinal {
@@ -184,14 +184,14 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
                 currentContext[index].prompt = accumulatedText.isEmpty ? "..." : accumulatedText
                 currentContext[index].timestamp = Date()
 
-                if status == "final_prompt" {
-                    debugLog(id: "promptFlow", message: "Handling final_prompt: updating prompt only, keeping currentRecordingMessageId for final_summary")
+                if status == "prompt" {
+                    debugLog(id: "promptFlow", message: "Handling prompt: updating prompt only, keeping currentRecordingMessageId for summary")
                     conversationContextSubject.send(currentContext)
                     return
                 }
 
-                if status == "final_summary" || (status == "final" && summary != nil) {
-                    debugLog(id: "promptFlow", message: "Handling final_summary: updating summary and marking as complete")
+                if status == "summary" {
+                    debugLog(id: "promptFlow", message: "Handling summary: updating summary and marking as complete")
                     currentContext[index].summary = summary
                     conversationContextSubject.send(currentContext)
 
