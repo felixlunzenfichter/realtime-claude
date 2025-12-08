@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.12
 from flask import Flask, request, jsonify
 from lightning_whisper_mlx import LightningWhisperMLX
 import tempfile
@@ -33,7 +33,7 @@ def transcribe():
         elapsed_ms = int((time.time() - start) * 1000)
 
         return jsonify({
-            "text": result['text'].strip(),
+            "text": result.get("text", "").strip(),
             "elapsed_ms": elapsed_ms
         })
     finally:
