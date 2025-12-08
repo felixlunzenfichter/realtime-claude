@@ -495,7 +495,6 @@ async function handleAudioEnd() {
             addToContext({ type: 'corrected', raw: concatenatedText, corrected: corrected, interim: false });
         }
 
-        lastTranscription = corrected;
         console.log(`🎤 [FINAL] Raw: "${concatenatedText}"`);
         console.log(`🎤 [FINAL] Corrected: "${corrected}"`);
 

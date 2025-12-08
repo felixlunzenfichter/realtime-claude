@@ -37,7 +37,6 @@ protocol RealtimeAPIProtocol: Sendable {
     func acknowledgeSuccessfulPromptInjection(summary: String)
     func acknowledgeSuccessfulInterruptExecution()
     func clearAccumulatedPrompts()
-    func processInputAudioBuffer(_ data: Data)
     func finalizeMessage()
     func stopCurrentRecording()
     func restart()
@@ -139,9 +138,6 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
             saveToKeychain(key: "OPENAI_API_KEY", value: apiKey)
             log("Saved API key to Keychain")
         }
-    }
-
-    func processInputAudioBuffer(_ data: Data) {
     }
 
     private func updateTranscription(_ text: String, messageId: UUID?) {
