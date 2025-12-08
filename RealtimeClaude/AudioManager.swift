@@ -10,7 +10,7 @@ protocol AudioManagerProtocol: Sendable {
 
     func startAudioEngine()
     func stopAudioEngine()
-    func startRecording()
+    func startRecording(messageId: UUID)
     func stopRecording()
     func getIsPlaybackEnabled() -> Bool
     func enablePlayback()
@@ -36,6 +36,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     private var isPlaybackEnabled: Bool = true
     private var scheduledBufferCount: Int = 0
     private var buffersPlayedCount: Int = 0
+    private var currentMessageId: UUID?
 
     init() {
         // Configure audio session ONCE at init - never touch it again
@@ -111,16 +112,17 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
 
     private var isFirstAudioPacket: Bool = false
 
-    func startRecording() {
+    func startRecording(messageId: UUID) {
         if isRecordingAudioSubject.value {
             debugLog(id: "startRecording", message: "⚠️ [Audio] Already recording, ignoring")
             return
         }
+        currentMessageId = messageId
         isRecordingAudioSubject.send(true)
         responsePlayerNode.stop()
         isFirstAudioPacket = true
         installInputAudioTap()
-        log("Started recording")
+        log("Started recording with message ID: \(messageId)")
     }
 
     func stopRecording() {
@@ -129,7 +131,8 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         isRecordingAudioSubject.send(false)
         log("Stopped recording")
 
-        logger.sendAudioToMac(Data(), isStart: false, isEnd: true)
+        logger.sendAudioToMac(Data(), isStart: false, isEnd: true, messageId: currentMessageId)
+        currentMessageId = nil
 
         responsePlayerNode.reset()
         responsePlayerNode.play()
@@ -309,7 +312,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
                 self.isFirstAudioPacket = false
             }
 
-            logger.sendAudioToMac(data, isStart: isStart, isEnd: false)
+            logger.sendAudioToMac(data, isStart: isStart, isEnd: false, messageId: self.currentMessageId)
 
             guard let int16Buffer = self.convertToWhisperFormat(buffer) else {
                 return

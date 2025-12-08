@@ -22,17 +22,14 @@ let currentSessionFile = null;
 let currentSessionNumber = 0;
 let activeSocket = null;
 let lastSentAssistantMessage = null;
-let lastSentAssistantTimestamp = null;
 let audioBuffer = Buffer.alloc(0);
 let isTranscribing = false;
-let lastTranscription = '';
 let isRecordingAudio = false;
 let pendingTranscription = false;
 let transcriptionHistory = [];
 let allTranscriptions = [];
-let transcriptionStartTime = null;
-let lastTranscriptionContent = '';
 let transcriptionCounter = 0;
+let currentMessageId = null;
 
 const MAX_AUDIO_DURATION = 10;
 const MAX_AUDIO_BYTES = MAX_AUDIO_DURATION * 16000 * 4;
@@ -94,7 +91,52 @@ async function processWithHaiku(text, task, fullTranscriptions = null) {
                 ? `\n\nFULL TRANSCRIPTION HISTORY (all raw outputs from Whisper, no deduplication):\n${fullTranscriptions.map((t, i) => `[${i + 1}] (${t.startTime}s-${t.endTime}s) ${t.text}`).join('\n')}`
                 : '';
 
-            const prompt = `You are a transcription processor for a voice-controlled coding assistant.
+            let prompt;
+            if (task === 'correct_transcription') {
+                prompt = `You are a transcription processor for a voice-controlled coding assistant.
+
+CONTEXT (last ${haikuContext.length} events):
+${context}${fullTranscriptionsText}
+
+TASK: Correct transcription errors
+INPUT (deduplicated version): "${cleanText}"
+
+INSTRUCTIONS:
+Fix any speech-to-text errors based on context. Common issues: misheard technical terms, homophones, incomplete words.
+${fullTranscriptions ? '\nNOTE: You have both the full transcription history (all raw Whisper outputs) and the deduplicated version. Use the full history for context/safety if needed.' : ''}
+
+OUTPUT: Respond with valid JSON only, no markdown, no explanation:
+{"corrected": "the corrected text or original if no correction needed"}`;
+            } else if (task === 'create_summary') {
+                prompt = `You are a transcription processor for a voice-controlled coding assistant.
+
+CONTEXT (last ${haikuContext.length} events):
+${context}
+
+TASK: Create summary
+INPUT: "${cleanText}"
+
+INSTRUCTIONS:
+Create a brief summary (under ${MAX_SUMMARY_CHARS} characters) describing what this prompt is asking for.
+
+OUTPUT: Respond with valid JSON only, no markdown, no explanation:
+{"summary": "short summary under ${MAX_SUMMARY_CHARS} chars"}`;
+            } else if (task === 'summarize') {
+                prompt = `You are a transcription processor for a voice-controlled coding assistant.
+
+CONTEXT (last ${haikuContext.length} events):
+${context}
+
+TASK: Create summary
+INPUT: "${cleanText}"
+
+INSTRUCTIONS:
+Create a summary under ${MAX_SUMMARY_CHARS} characters for UI display.
+
+OUTPUT: Respond with valid JSON only, no markdown, no explanation:
+{"summary": "short summary under ${MAX_SUMMARY_CHARS} chars"}`;
+            } else {
+                prompt = `You are a transcription processor for a voice-controlled coding assistant.
 
 CONTEXT (last ${haikuContext.length} events):
 ${context}${fullTranscriptionsText}
@@ -110,6 +152,7 @@ ${fullTranscriptions ? '\nNOTE: You have both the full transcription history (al
 
 OUTPUT: Respond with valid JSON only, no markdown, no explanation:
 {"corrected": "the corrected text or original if no correction needed", "summary": "short summary under ${MAX_SUMMARY_CHARS} chars"}`;
+            }
 
             const os = require('os');
             const inputFile = path.join(os.tmpdir(), `claude-input-${Date.now()}-${process.pid}.txt`);
@@ -144,18 +187,29 @@ OUTPUT: Respond with valid JSON only, no markdown, no explanation:
                 const summary = parsed.summary || '';
                 const corrected = parsed.corrected || cleanText;
 
-                if (summary.length > MAX_SUMMARY_CHARS) {
-                    console.log(`   ⚠️ Summary too long: ${summary.length} chars`);
-                    addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: false, error: 'too_long' });
-                    continue;
+                if (task === 'correct_transcription') {
+                    console.log(`   ✅ Corrected: "${corrected.substring(0, 50)}..."`);
+                    return { corrected };
+                } else if (task === 'create_summary') {
+                    if (summary.length > MAX_SUMMARY_CHARS) {
+                        console.log(`   ⚠️ Summary too long: ${summary.length} chars`);
+                        addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: false, error: 'too_long' });
+                        continue;
+                    }
+                    console.log(`   ✅ Summary: "${summary}" (${summary.length} chars)`);
+                    addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: true });
+                    return { summary };
+                } else {
+                    if (summary.length > MAX_SUMMARY_CHARS) {
+                        console.log(`   ⚠️ Summary too long: ${summary.length} chars`);
+                        addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: false, error: 'too_long' });
+                        continue;
+                    }
+                    console.log(`   ✅ Corrected: "${corrected.substring(0, 50)}..."`);
+                    console.log(`   ✅ Summary: "${summary}" (${summary.length} chars)`);
+                    addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: true });
+                    return { corrected, summary };
                 }
-
-                console.log(`   ✅ Corrected: "${corrected.substring(0, 50)}..."`);
-                console.log(`   ✅ Summary: "${summary}" (${summary.length} chars)`);
-
-                addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: true });
-
-                return { corrected, summary };
 
             } finally {
                 try { fs.unlinkSync(inputFile); } catch {}
@@ -169,10 +223,16 @@ OUTPUT: Respond with valid JSON only, no markdown, no explanation:
     }
 
     console.log(`   ⚠️ Max attempts reached, using fallback`);
-    return {
-        corrected: cleanText,
-        summary: cleanText.substring(0, MAX_SUMMARY_CHARS)
-    };
+    if (task === 'correct_transcription') {
+        return { corrected: cleanText };
+    } else if (task === 'create_summary') {
+        return { summary: cleanText.substring(0, MAX_SUMMARY_CHARS) };
+    } else {
+        return {
+            corrected: cleanText,
+            summary: cleanText.substring(0, MAX_SUMMARY_CHARS)
+        };
+    }
 }
 
 async function summarizeWithClaude(text) {
@@ -265,27 +325,26 @@ async function transcribeAudio(audioPath) {
 }
 
 async function handleAudioMessage(socket, logData) {
-    const { audioData, isStart, isEnd } = logData;
+    const { audioData, isStart, isEnd, messageId } = logData;
 
     if (isStart) {
         console.log('🎤 Audio recording started (embedded flag)');
+        currentMessageId = messageId || null;
+        if (currentMessageId) {
+            console.log(`📋 Message ID: ${currentMessageId}`);
+        }
         audioBuffer = Buffer.alloc(0);
-        lastTranscription = '';
         isRecordingAudio = true;
         pendingTranscription = false;
         transcriptionHistory = [];
         allTranscriptions = [];
-        transcriptionStartTime = Date.now();
-        lastTranscriptionContent = '';
         transcriptionCounter = 0;
         return;
     }
 
     if (isEnd) {
-        if (audioBuffer.length >= 16000) {
-            console.log('🎯 FINAL CHUNK: Audio buffer has untranscribed data, processing before end...');
-            await triggerTranscription(true);
-        }
+        console.log('🎯 FINAL CHUNK: Processing final transcription unconditionally...');
+        await triggerTranscription(true);
         handleAudioEnd();
         return;
     }
@@ -367,9 +426,6 @@ async function triggerTranscription(isFinalChunk = false) {
                 return;
             }
 
-            lastTranscription = text;
-            lastTranscriptionContent = text;
-
             if (activeSocket && (isRecordingAudio || isFinalChunk)) {
                 const rawTranscription = {
                     type: 'transcription',
@@ -377,7 +433,10 @@ async function triggerTranscription(isFinalChunk = false) {
                     transcription: concatenatedText,
                     timestamp: Date.now()
                 };
-                console.log(`📤 SENDING TO iOS: ${isFinalChunk ? 'FINAL_CHUNK_RAW' : 'RAW'} "${concatenatedText}"`);
+                if (currentMessageId) {
+                    rawTranscription.messageId = currentMessageId;
+                }
+                console.log(`📤 SENDING TO iOS: ${isFinalChunk ? 'FINAL_CHUNK_RAW' : 'RAW'} "${concatenatedText}"${currentMessageId ? ` (messageId: ${currentMessageId})` : ''}`);
                 activeSocket.write(JSON.stringify(rawTranscription) + '\n');
             }
 
@@ -405,6 +464,7 @@ async function handleAudioEnd() {
 
     if (!concatenatedText || concatenatedText.trim().length === 0) {
         console.log('⚠️ No concatenated text, skipping final processing');
+        currentMessageId = null;
         return;
     }
 
@@ -416,13 +476,16 @@ async function handleAudioEnd() {
                 transcription: concatenatedText,
                 timestamp: Date.now()
             };
-            console.log(`📤 SENDING TO iOS: FINAL_RAW "${concatenatedText}"`);
+            if (currentMessageId) {
+                rawTranscription.messageId = currentMessageId;
+            }
+            console.log(`📤 SENDING TO iOS: FINAL_RAW "${concatenatedText}"${currentMessageId ? ` (messageId: ${currentMessageId})` : ''}`);
             activeSocket.write(JSON.stringify(rawTranscription) + '\n');
         }
 
         addToContext({ type: 'transcription', text: concatenatedText, interim: false });
 
-        console.log(`🤖 Running final Haiku correction on COMPLETE text (including final chunk)...`);
+        console.log(`🤖 STAGE 1: Running Haiku correction on COMPLETE text (including final chunk)...`);
         console.log(`🤖 SENDING TO HAIKU: "${concatenatedText}"`);
         const { corrected } = await processWithHaiku(concatenatedText, 'correct_transcription', allTranscriptions);
 
@@ -437,20 +500,65 @@ async function handleAudioEnd() {
         console.log(`🎤 [FINAL] Corrected: "${corrected}"`);
 
         if (activeSocket) {
-            const transcription = {
+            const promptMessage = {
                 type: 'transcription',
-                status: 'final',
+                status: 'final_prompt',
                 transcription: concatenatedText,
                 prompt: corrected,
+                summary: null,
                 timestamp: Date.now()
             };
-            console.log(`📤 SENDING TO iOS: FINAL "${concatenatedText}" (prompt: "${corrected}")`);
-            activeSocket.write(JSON.stringify(transcription) + '\n');
+            if (currentMessageId) {
+                promptMessage.messageId = currentMessageId;
+            }
+            console.log(`📤 SENDING TO iOS: FINAL_PROMPT "${corrected}"${currentMessageId ? ` (messageId: ${currentMessageId})` : ''}`);
+            activeSocket.write(JSON.stringify(promptMessage) + '\n');
         }
+
+        console.log(`🤖 STAGE 2: Creating summary (in parallel with injection)...`);
+        const summaryPromise = (async () => {
+            let summary;
+            try {
+                const summaryResult = await processWithHaiku(corrected, 'create_summary');
+                summary = summaryResult.summary;
+                console.log(`✅ Summary created: "${summary}"`);
+            } catch (err) {
+                console.error(`❌ Summary creation failed: ${err.message}`);
+                summary = corrected.substring(0, MAX_SUMMARY_CHARS);
+            }
+
+            if (activeSocket) {
+                const summaryMessage = {
+                    type: 'transcription',
+                    status: 'final_summary',
+                    transcription: concatenatedText,
+                    prompt: corrected,
+                    summary: summary,
+                    timestamp: Date.now()
+                };
+                if (currentMessageId) {
+                    summaryMessage.messageId = currentMessageId;
+                }
+                console.log(`📤 SENDING TO iOS: FINAL_SUMMARY "${summary}"${currentMessageId ? ` (messageId: ${currentMessageId})` : ''}`);
+                activeSocket.write(JSON.stringify(summaryMessage) + '\n');
+            }
+        })();
+
+        console.log(`💉 Injecting corrected prompt into terminal: "${corrected}"`);
+        injectIntoTerminal(corrected, async (success, error) => {
+            if (success) {
+                console.log('✅ Prompt injection successful');
+            } else {
+                console.error(`❌ Prompt injection failed: ${error}`);
+            }
+
+            await summaryPromise;
+        });
     } catch (err) {
         console.error(`❌ Final transcription error: ${err.message}`);
     } finally {
         audioBuffer = Buffer.alloc(0);
+        currentMessageId = null;
     }
 }
 
@@ -1183,7 +1291,6 @@ function checkForInjectedPrompts(filePath) {
 
                 // Save IMMEDIATELY to prevent duplicate sends (before async summarization)
                 lastSentAssistantMessage = latestAssistant.text;
-                lastSentAssistantTimestamp = latestAssistant.timestamp;
                 saveLastAssistantMessage(latestAssistant.text);
 
                 // Summarize and send to iOS

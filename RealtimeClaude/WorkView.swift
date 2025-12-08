@@ -190,7 +190,7 @@ struct WorkView: View {
                             ForEach(viewModel.allMessages) { message in
                                 VStack(spacing: 0) {
                                     ZStack(alignment: .bottomTrailing) {
-                                        if message.text == INTERRUPT_MESSAGE {
+                                        if message.prompt == INTERRUPT_MESSAGE {
                                             HStack {
                                                 HStack(spacing: 6) {
                                                     if message.status == .sent {
@@ -213,29 +213,30 @@ struct WorkView: View {
                                             .padding(.vertical, 2)
                                         } else {
                                             VStack(alignment: .leading, spacing: 4) {
-                                                if message.role == "user" && !message.segments.isEmpty {
-                                                    VoiceActivityGraph(segments: message.segments)
-                                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                                }
-
                                                 if message.role == "user" {
                                                     Text("Transcription: \(message.transcription ?? "")")
                                                         .font(.caption)
                                                         .foregroundColor(.gray)
                                                         .lineLimit(nil)
                                                         .frame(maxWidth: .infinity, alignment: .leading)
+                                                        .onAppear {
+                                                            debugLog(id: "messageDisplay", message: "Displaying user message - ID: \(message.id), Transcription: \(message.transcription ?? "nil"), Prompt: \(message.prompt), Summary: \(message.summary ?? "nil")")
+                                                        }
 
-                                                    Text(message.text.isEmpty ? "" : "Prompt: \(message.text)")
+                                                    Text(message.prompt.isEmpty ? "" : "Prompt: \(message.prompt)")
                                                         .font(.body)
                                                         .foregroundColor(message.status.color)
                                                         .lineLimit(nil)
                                                         .frame(maxWidth: .infinity, alignment: .leading)
                                                 } else {
-                                                    Text("Assistant: \(message.text)")
+                                                    Text("Assistant: \(message.prompt)")
                                                         .font(.body)
                                                         .foregroundColor(message.status.color)
                                                         .lineLimit(nil)
                                                         .frame(maxWidth: .infinity, alignment: .leading)
+                                                        .onAppear {
+                                                            debugLog(id: "messageDisplay", message: "Displaying assistant message - ID: \(message.id), Prompt: \(message.prompt), Summary: \(message.summary ?? "nil")")
+                                                        }
                                                 }
 
                                                 if let summary = message.summary {
@@ -244,6 +245,14 @@ struct WorkView: View {
                                                         .foregroundColor(.purple)
                                                         .lineLimit(nil)
                                                         .frame(maxWidth: .infinity, alignment: .leading)
+                                                        .onAppear {
+                                                            debugLog(id: "promptFlow", message: "UI - Summary view appeared: messageId=\(message.id.uuidString), summary='\(summary)'")
+                                                        }
+                                                } else {
+                                                    Text("")
+                                                        .onAppear {
+                                                            debugLog(id: "promptFlow", message: "UI - No summary for message: messageId=\(message.id.uuidString), prompt='\(message.prompt)'")
+                                                        }
                                                 }
                                             }
                                             .padding(.horizontal, 12)
@@ -252,10 +261,10 @@ struct WorkView: View {
                                     }
                                     .background(
                                         RoundedRectangle(cornerRadius: 8)
-                                            .fill(message.text == INTERRUPT_MESSAGE && message.status == .injected ? Color.red.opacity(0.1) : message.status.color.opacity(0.1))
+                                            .fill(message.prompt == INTERRUPT_MESSAGE && message.status == .injected ? Color.red.opacity(0.1) : message.status.color.opacity(0.1))
                                     )
 
-                                    if message.text != INTERRUPT_MESSAGE {
+                                    if message.prompt != INTERRUPT_MESSAGE {
                                         VStack {
                                             Spacer()
                                         }
@@ -276,7 +285,7 @@ struct WorkView: View {
                                 .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
                                 .swipeActions(edge: .leading, allowsFullSwipe: true) {
                                     Button {
-                                        viewModel.sendMessage(message.text)
+                                        viewModel.sendMessage(message.prompt)
                                     } label: {
                                         Label("Send", systemImage: "paperplane.fill")
                                     }
@@ -494,7 +503,12 @@ class WorkViewModel {
         realtimeAPI.conversationContextSubject
             .receive(on: DispatchQueue.main)
             .sink { [weak self] conversationContext in
-                self?.allMessages = conversationContext.sorted { $0.timestamp > $1.timestamp }
+                debugLog(id: "promptFlow", message: "WorkViewModel received conversation update, total messages: \(conversationContext.count)")
+                for (index, msg) in conversationContext.enumerated() {
+                    debugLog(id: "promptFlow", message: "Message \(index): ID=\(msg.id.uuidString), role=\(msg.role), prompt='\(msg.prompt)', summary='\(msg.summary ?? "nil")', status=\(msg.status)")
+                }
+                self?.allMessages = Array(conversationContext.sorted { $0.timestamp > $1.timestamp })
+                debugLog(id: "promptFlow", message: "allMessages updated, count: \(self?.allMessages.count ?? 0)")
             }
             .store(in: &cancellables)
 
@@ -527,12 +541,14 @@ class WorkViewModel {
                     debugLog(id: "deviceTilt", message: "📱 [Motion] Tilted down: \(Int(pitchDegrees))° (enabling mic)")
                     log("Device tilted down > 45 degrees - enabling microphone")
                     self.turningOnRecording = true
-                    audioManager.startRecording()
+                    let messageId = realtimeAPI.createRecordingMessage()
+                    audioManager.startRecording(messageId: messageId)
                 } else if pitchDegrees > -45 && self.turningOnRecording {
                     debugLog(id: "deviceTilt", message: "📱 [Motion] Tilted back: \(Int(pitchDegrees))° (disabling mic)")
                     log("Device tilted back - disabling microphone")
                     self.turningOnRecording = false
                     audioManager.stopRecording()
+                    realtimeAPI.stopCurrentRecording()
                 } else if pitchDegrees < -45 && self.turningOnRecording {
                     debugLog(id: "deviceTilt", message: "📱 [Motion] Still tilted: \(Int(pitchDegrees))° (mic enabled)")
                 } else {
@@ -547,10 +563,12 @@ class WorkViewModel {
     func handleMicrophoneToggle() {
         if isMicrophoneEnabled {
             log("Microphone override ON - enabling microphone manually")
-            audioManager.startRecording()
+            let messageId = realtimeAPI.createRecordingMessage()
+            audioManager.startRecording(messageId: messageId)
         } else {
             log("Microphone override OFF - disabling microphone, tilt detection active")
             audioManager.stopRecording()
+            realtimeAPI.stopCurrentRecording()
         }
     }
 
@@ -574,10 +592,10 @@ class WorkViewModel {
 
 
     func copyMessageToClipboard(_ message: ConversationMessage) {
-        guard message.text != INTERRUPT_MESSAGE else { return }
+        guard message.prompt != INTERRUPT_MESSAGE else { return }
 
-        UIPasteboard.general.string = message.text
-        log("Copied message to clipboard: \(message.text.prefix(50))...")
+        UIPasteboard.general.string = message.prompt
+        log("Copied message to clipboard: \(message.prompt.prefix(50))...")
     }
 
     func replayAudioForMessage(_ message: ConversationMessage) {

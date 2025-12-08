@@ -31,7 +31,9 @@ struct TranscriptionUpdate {
     let summary: String?
     let isFinal: Bool
     let isRaw: Bool
+    let status: String
     let segments: [TranscriptionSegment]
+    let messageId: UUID?
 }
 
 protocol LoggerProtocol {
@@ -45,7 +47,7 @@ protocol LoggerProtocol {
     var macConnectionReadySubject: CurrentValueSubject<Bool, Never> { get }
 
     func sendPromptToMac(_ prompt: String)
-    func sendAudioToMac(_ audioData: Data, isStart: Bool, isEnd: Bool)
+    func sendAudioToMac(_ audioData: Data, isStart: Bool, isEnd: Bool, messageId: UUID?)
 }
 
 enum LogType: Codable {
@@ -485,13 +487,25 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     }
 
     private func handleTranscriptionMessage(_ jsonData: [String: Any]) {
+        debugLog(id: "promptFlow", message: "handleTranscriptionMessage() called, JSON keys: \(jsonData.keys.joined(separator: ", "))")
+
         let status = jsonData["status"] as? String ?? "partial"
-        let isFinal = status == "final" || status == "final_raw"
-        let isRaw = status == "raw" || status == "final_raw"
+        let isFinal = status == "final" || status == "final_raw" || status == "final_chunk_raw" || status == "final_prompt" || status == "final_summary"
+        let isRaw = status == "raw" || status == "final_raw" || status == "final_chunk_raw"
 
         let transcription = jsonData["transcription"] as? String ?? ""
         let prompt = jsonData["prompt"] as? String
         let summary = jsonData["summary"] as? String
+
+        debugLog(id: "promptFlow", message: "Parsed: status='\(status)', transcription='\(transcription)', prompt='\(prompt ?? "nil")', summary='\(summary ?? "nil")', isFinal=\(isFinal), isRaw=\(isRaw)")
+
+        var messageId: UUID? = nil
+        if let messageIdString = jsonData["messageId"] as? String {
+            messageId = UUID(uuidString: messageIdString)
+            debugLog(id: "promptFlow", message: "messageId = \(messageIdString)")
+        } else {
+            debugLog(id: "promptFlow", message: "messageId = nil")
+        }
 
         var segments: [TranscriptionSegment] = []
         if let segmentsData = jsonData["segments"] as? [[String: Any]] {
@@ -507,7 +521,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         }
 
         if transcription.isEmpty {
-            error("transcription was empty in transcription message")
+            error("Transcription is EMPTY in transcription message, aborting")
             return
         }
 
@@ -520,6 +534,13 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             if let summary = summary {
                 log("   Summary: \(summary)")
             }
+        } else if status == "final_prompt" {
+            log("📥 [FINAL_PROMPT] Raw: \(transcription) | Prompt: \(prompt ?? "none")")
+        } else if status == "final_summary" {
+            log("📥 [FINAL_SUMMARY] Raw: \(transcription) | Prompt: \(prompt ?? "none")")
+            if let summary = summary {
+                log("   Summary: \(summary)")
+            }
         } else if status == "final" {
             log("📥 [FINAL] Raw: \(transcription) | Prompt: \(prompt ?? "none")")
             if let summary = summary {
@@ -529,14 +550,20 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             debugLog(id: "transcription", message: "🎤 [\(status)] \(prompt ?? transcription)")
         }
 
+        debugLog(id: "promptFlow", message: "Sending to transcriptionSubject: status='\(status)', transcription='\(transcription)', prompt='\(prompt ?? "nil")', summary='\(summary ?? "nil")', isFinal=\(isFinal), isRaw=\(isRaw), messageId=\(messageId?.uuidString ?? "nil")")
+
         transcriptionSubject.send(TranscriptionUpdate(
             transcription: transcription,
             prompt: prompt,
             summary: summary,
             isFinal: isFinal,
             isRaw: isRaw,
-            segments: segments
+            status: status,
+            segments: segments,
+            messageId: messageId
         ))
+
+        debugLog(id: "promptFlow", message: "TranscriptionUpdate sent to transcriptionSubject")
     }
 
     private func sendStartMessage() {
@@ -567,7 +594,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         promptStatusSubject.send(PromptStatusUpdate(prompt: prompt, status: "sent"))
     }
 
-    func sendAudioToMac(_ audioData: Data, isStart: Bool = false, isEnd: Bool = false) {
+    func sendAudioToMac(_ audioData: Data, isStart: Bool = false, isEnd: Bool = false, messageId: UUID? = nil) {
         var audioMessage: [String: Any] = [
             "type": "audio",
             "audioData": audioData.base64EncodedString()
@@ -578,6 +605,9 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         }
         if isEnd {
             audioMessage["isEnd"] = true
+        }
+        if let messageId = messageId {
+            audioMessage["messageId"] = messageId.uuidString
         }
 
         guard let jsonData = try? JSONSerialization.data(withJSONObject: audioMessage) else {
