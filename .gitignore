@@ -6,3 +6,8 @@ RealtimeClaude.xcodeproj/xcuserdata
 
 # macOS files
 .DS_Store
+
+# Model files and virtual environments
+mlx_models/
+.claude/
+whisper-venv-312/
