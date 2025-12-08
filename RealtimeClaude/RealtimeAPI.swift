@@ -432,8 +432,7 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
                 self.conversationContextSubject.send(currentContext)
             }
 
-            let audioBase64 = audioData.base64EncodedString()
-            audioManager.scheduleOutputAudioBuffer(audioBase64, resetCount: true, messageId: messageId, onBufferPlayed: nil)
+            audioManager.play(audio: audioData, id: messageId)
         }.resume()
     }
 

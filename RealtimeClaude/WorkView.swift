@@ -543,8 +543,7 @@ class WorkViewModel {
         }
 
         log("Replaying audio (\(audioData.count) bytes)")
-        let audioBase64 = audioData.base64EncodedString()
-        audioManager.scheduleOutputAudioBuffer(audioBase64, resetCount: true, messageId: message.id, onBufferPlayed: nil)
+        audioManager.play(audio: audioData, id: message.id)
     }
 
 

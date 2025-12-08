@@ -16,7 +16,7 @@ protocol AudioManagerProtocol: Sendable {
     func getIsPlaybackEnabled() -> Bool
     func enablePlayback()
     func disablePlayback()
-    func scheduleOutputAudioBuffer(_ audioBase64: String, resetCount: Bool, messageId: UUID, onBufferPlayed: ((Int) -> Void)?)
+    func play(audio: Data, id: UUID)
     func reset()
 }
 
@@ -39,6 +39,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     private var scheduledBufferCount: Int = 0
     private var buffersPlayedCount: Int = 0
     private var currentMessageId: UUID?
+    private var playQueue: [(id: UUID, audio: Data)] = []
 
     init() {
         // Configure audio session ONCE at init - never touch it again
@@ -178,19 +179,35 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         log("Audio manager reset complete")
     }
 
-    func scheduleOutputAudioBuffer(_ audioBase64: String, resetCount: Bool, messageId: UUID, onBufferPlayed: ((Int) -> Void)?) {
+    func play(audio: Data, id: UUID) {
         if !isPlaybackEnabled {
-            debugLog(id: "scheduleAudio", message: "⛔ [Audio] Playback disabled, skipping audio")
+            log("Playback disabled, skipping audio")
             return
         }
 
-        guard let audioData = Data(base64Encoded: audioBase64) else {
-            error("Failed to decode response audio data")
+        playQueue.append((id: id, audio: audio))
+        log("Added audio to queue for message: \(id), queue size: \(playQueue.count)")
+
+        if currentPlayingMessageIdSubject.value == nil {
+            playNext()
+        }
+    }
+
+    private func playNext() {
+        guard !playQueue.isEmpty else {
+            log("Play queue empty")
             return
         }
 
-        guard let buffer = createPCMBuffer(from: audioData, format: TTS_OUTPUT_FORMAT) else {
-            error("Failed to create PCM buffer from response audio")
+        let item = playQueue.removeFirst()
+        log("Playing next audio for message: \(item.id)")
+
+        currentPlayingMessageIdSubject.send(item.id)
+        isPlayingAudioSubject.send(true)
+
+        guard let buffer = createPCMBuffer(from: item.audio, format: TTS_OUTPUT_FORMAT) else {
+            error("Failed to create PCM buffer from audio data")
+            playbackFinished()
             return
         }
 
@@ -201,39 +218,21 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
             }
 
             DispatchQueue.main.async {
-                if resetCount {
-                    self.buffersPlayedCount = 0
-                }
-
-                self.scheduledBufferCount -= 1
-                self.buffersPlayedCount += 1
-
-                onBufferPlayed?(self.buffersPlayedCount)
-
-                if self.scheduledBufferCount > 0 {
-                    if self.isPlayingAudioSubject.value {
-                        debugLog(id: "audioPlayback", message: "🎵 [Audio] Already playing")
-                    } else {
-                        self.isPlayingAudioSubject.send(true)
-                        self.currentPlayingMessageIdSubject.send(messageId)
-                        log("Started playing response for message: \(messageId)")
-                    }
-                } else if self.scheduledBufferCount == 0 {
-                    self.isPlayingAudioSubject.send(false)
-                    self.currentPlayingMessageIdSubject.send(nil)
-                    log("Stopped playing response")
-                }
+                self.playbackFinished()
             }
         }
 
-        scheduledBufferCount += 1
-
-        if scheduledBufferCount == 1 && isPlaybackEnabled && !isRecordingAudioSubject.value && !isPlayingAudioSubject.value {
-            currentPlayingMessageIdSubject.send(messageId)
-            isPlayingAudioSubject.send(true)
+        if !responsePlayerNode.isPlaying {
             responsePlayerNode.play()
-            log("Started playback for message: \(messageId)")
+            log("Started player node for message: \(item.id)")
         }
+    }
+
+    private func playbackFinished() {
+        log("Playback finished")
+        currentPlayingMessageIdSubject.send(nil)
+        isPlayingAudioSubject.send(false)
+        playNext()
     }
 
     func createPCMBuffer(from data: Data, format: AVAudioFormat) -> AVAudioPCMBuffer? {
