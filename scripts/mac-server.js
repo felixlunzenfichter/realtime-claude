@@ -28,9 +28,11 @@ let isTranscribing = false;
 let lastTranscription = '';
 let isRecordingAudio = false;
 let pendingTranscription = false;
-let accumulatedRawText = '';
+let transcriptionHistory = [];
+let allTranscriptions = [];
 let transcriptionStartTime = null;
 let lastTranscriptionContent = '';
+let transcriptionCounter = 0;
 
 const MAX_AUDIO_DURATION = 10;
 const MAX_AUDIO_BYTES = MAX_AUDIO_DURATION * 16000 * 4;
@@ -73,7 +75,7 @@ function formatContextForHaiku() {
     }).join('\n');
 }
 
-async function processWithHaiku(text, task) {
+async function processWithHaiku(text, task, fullTranscriptions = null) {
     const cleanText = text.replace(/[\n\r]+/g, ' ').replace(/\s+/g, ' ').trim();
     const context = formatContextForHaiku();
 
@@ -88,18 +90,23 @@ async function processWithHaiku(text, task) {
             const retryNote = attempt > 1 ? ` (attempt ${attempt}/${MAX_ATTEMPTS})` : '';
             console.log(`   Processing${retryNote}...`);
 
+            const fullTranscriptionsText = fullTranscriptions
+                ? `\n\nFULL TRANSCRIPTION HISTORY (all raw outputs from Whisper, no deduplication):\n${fullTranscriptions.map((t, i) => `[${i + 1}] (${t.startTime}s-${t.endTime}s) ${t.text}`).join('\n')}`
+                : '';
+
             const prompt = `You are a transcription processor for a voice-controlled coding assistant.
 
 CONTEXT (last ${haikuContext.length} events):
-${context}
+${context}${fullTranscriptionsText}
 
 TASK: ${task}
-INPUT: "${cleanText}"
+INPUT (deduplicated version): "${cleanText}"
 
 INSTRUCTIONS:
 1. If task is "correct_transcription": Fix any speech-to-text errors based on context. Common issues: misheard technical terms, homophones, incomplete words.
 2. If task is "summarize": Create a summary under ${MAX_SUMMARY_CHARS} characters for UI display.
 3. If task is "correct_and_summarize": Do both.
+${fullTranscriptions ? '\nNOTE: You have both the full transcription history (all raw Whisper outputs) and the deduplicated version. Use the full history for context/safety if needed.' : ''}
 
 OUTPUT: Respond with valid JSON only, no markdown, no explanation:
 {"corrected": "the corrected text or original if no correction needed", "summary": "short summary under ${MAX_SUMMARY_CHARS} chars"}`;
@@ -177,107 +184,53 @@ async function correctAndSummarize(text) {
     return await processWithHaiku(text, 'correct_and_summarize');
 }
 
-function findLongestCommonSubstring(str1, str2) {
-    let longestMatch = '';
-    let matchPosInStr1 = -1;
-    let matchPosInStr2 = -1;
+function deduplicateTranscription(newText) {
+    if (!newText || newText.trim().length === 0) {
+        return getConcatenatedText();
+    }
 
-    // FULL BRUTE-FORCE: Find longest common substring anywhere in both strings
-    // No position constraints - check ALL possible substrings
+    // First transcription - add without dedup
+    if (transcriptionHistory.length === 0) {
+        console.log(`🔍 First transcription - adding all text: "${newText}"`);
+        transcriptionHistory.push({ text: newText, timestamp: Date.now() });
+        return newText;
+    }
 
-    // Iterate through ALL starting positions in str2
-    for (let startInStr2 = 0; startInStr2 < str2.length; startInStr2++) {
-        // Try all possible lengths from this starting position
-        for (let length = 1; length <= str2.length - startInStr2; length++) {
-            const substring = str2.substring(startInStr2, startInStr2 + length);
+    // Build set of all words from last 10 transcriptions
+    const last10 = transcriptionHistory.slice(-10);
+    const wordsSeen = new Set();
+    for (const entry of last10) {
+        for (const word of entry.text.split(/\s+/)) {
+            wordsSeen.add(word.toLowerCase());
+        }
+    }
+    console.log(`🔍 Deduplicating "${newText}" against ${wordsSeen.size} words from last ${last10.length} transcriptions`);
 
-            // Search for this substring anywhere in str1
-            const foundIndex = str1.indexOf(substring);
-
-            if (foundIndex !== -1) {
-                // If this match is longer than our current longest, keep it
-                if (substring.length > longestMatch.length) {
-                    longestMatch = substring;
-                    matchPosInStr1 = foundIndex;
-                    matchPosInStr2 = startInStr2;
-                }
-            }
+    // Keep only words not seen before
+    const newWords = [];
+    for (const word of newText.split(/\s+/)) {
+        if (!wordsSeen.has(word.toLowerCase())) {
+            newWords.push(word);
+            console.log(`   ✅ KEEP new word: "${word}"`);
+        } else {
+            console.log(`   ⏭️  SKIP duplicate: "${word}" - checked against: [${Array.from(wordsSeen).join(', ')}]`);
         }
     }
 
-    return { longestMatch, matchPosInStr1, matchPosInStr2 };
+    const uniqueText = newWords.join(' ').trim();
+
+    if (uniqueText.length > 0) {
+        transcriptionHistory.push({ text: uniqueText, timestamp: Date.now() });
+        console.log(`📝 Added to history: "${uniqueText}"`);
+    } else {
+        console.log(`⏭️  No unique words to add`);
+    }
+
+    return getConcatenatedText();
 }
 
-function smartConcatenate(newText) {
-    if (!newText) return null;
-
-    newText = newText.trim();
-    if (!newText) return null;
-
-    // STEP 1: Remove all "..." from newText
-    newText = newText.replace(/\.\.\./g, '');
-    newText = newText.trim();
-    if (!newText) return null;
-
-    if (!accumulatedRawText) {
-        console.log(`🔗 Starting new accumulation: "${newText}"`);
-        console.log(`[DEBUG] Mode: REPLACE (starting fresh)`);
-        console.log(`[DEBUG] Longest matching substring: (none - empty accumulation)`);
-        console.log(`[DEBUG] DROPPED: 0 chars`);
-        console.log(`[DEBUG] KEPT: ${newText.length} chars (100%)`);
-        console.log(`[DEBUG] New portion being added: "${newText}"`);
-        return newText;
-    }
-
-    const accumulated = accumulatedRawText.trim();
-
-    console.log(`🔍 Finding overlap between:`);
-    console.log(`   Accumulated: "${accumulated}"`);
-    console.log(`   New text: "${newText}"`);
-
-    const startTime = Date.now();
-    const { longestMatch, matchPosInStr1, matchPosInStr2 } = findLongestCommonSubstring(accumulated, newText);
-    const lcsTime = Date.now() - startTime;
-    console.log(`[DEBUG] LCS computation took ${lcsTime}ms`);
-
-    const matchLength = longestMatch.length;
-
-    // STEP 2: Apply 5-character threshold
-    if (matchLength < 5) {
-        console.log(`❌ Match too short (${matchLength} chars < 5), appending full text`);
-        console.log(`[DEBUG] Mode: APPEND (match below threshold)`);
-        console.log(`[DEBUG] Longest matching substring: "${longestMatch}" (${matchLength} chars)`);
-        console.log(`[DEBUG] DROPPED: 0 chars (0%)`);
-        console.log(`[DEBUG] KEPT: ${newText.length} chars (100%)`);
-        console.log(`[DEBUG] New portion being added: "${newText}"`);
-        return newText;
-    }
-
-    // STEP 3: We have a match >= 5 chars, use it to detect overlap
-    const textAfterMatch = newText.substring(matchPosInStr2 + matchLength);
-
-    const droppedChars = matchPosInStr2 + matchLength;
-    const keptChars = textAfterMatch.length;
-    const droppedPercent = ((droppedChars / newText.length) * 100).toFixed(1);
-    const keptPercent = ((keptChars / newText.length) * 100).toFixed(1);
-
-    console.log(`✂️  Found longest common substring (${matchLength} chars): "${longestMatch}"`);
-    console.log(`   Position in accumulated: [${matchPosInStr1}:${matchPosInStr1 + matchLength}]`);
-    console.log(`   Position in newText: [${matchPosInStr2}:${matchPosInStr2 + matchLength}]`);
-    console.log(`[DEBUG] DROPPED: ${droppedChars} chars (${droppedPercent}%) - "${newText.substring(0, droppedChars)}"`);
-    console.log(`[DEBUG] KEPT: ${keptChars} chars (${keptPercent}%)`);
-
-    if (!textAfterMatch) {
-        console.log(`⏭️  No new content after LCS - SKIPPING`);
-        console.log(`[DEBUG] Mode: SKIP (no new content after LCS)`);
-        console.log(`[DEBUG] New portion being added: (none)`);
-        return null;
-    }
-
-    console.log(`➕ Appending text after LCS: "${textAfterMatch}"`);
-    console.log(`[DEBUG] Mode: APPEND`);
-    console.log(`[DEBUG] New portion being added: "${textAfterMatch}"`);
-    return textAfterMatch;
+function getConcatenatedText() {
+    return transcriptionHistory.map(entry => entry.text).join(' ').trim();
 }
 
 async function transcribeAudio(audioPath) {
@@ -302,7 +255,10 @@ async function transcribeAudio(audioPath) {
 
         console.log(`⚡ Lightning Whisper: ${result.elapsed_ms}ms server + ${elapsedMs - result.elapsed_ms}ms network = ${elapsedMs}ms total`);
 
-        return { text: result.text };
+        return {
+            text: result.text,
+            segments: result.segments || []
+        };
     } catch (error) {
         throw new Error(`Transcription failed: ${error.message}`);
     }
@@ -317,9 +273,11 @@ async function handleAudioMessage(socket, logData) {
         lastTranscription = '';
         isRecordingAudio = true;
         pendingTranscription = false;
-        accumulatedRawText = '';
+        transcriptionHistory = [];
+        allTranscriptions = [];
         transcriptionStartTime = Date.now();
         lastTranscriptionContent = '';
+        transcriptionCounter = 0;
         return;
     }
 
@@ -382,33 +340,44 @@ async function triggerTranscription(isFinalChunk = false) {
 
         const result = await transcribeAudio(tempWavFile);
         const text = result.text;
+        const segments = result.segments || [];
 
         try { fs.unlinkSync(tempWavFile); } catch {}
 
-        if (text && text !== lastTranscription && activeSocket && (isRecordingAudio || isFinalChunk)) {
-            const textToAppend = smartConcatenate(text);
+        if (text && activeSocket && (isRecordingAudio || isFinalChunk)) {
+            const chunkLabel = isFinalChunk ? '[FINAL CHUNK]' : '[RAW]';
+            console.log(`🎤 ${chunkLabel} Raw whisper: "${text}"`);
 
-            if (textToAppend === null) {
-                console.log(`⏭️  Skipping (no new content to add)`);
+            const startTime = transcriptionCounter * 2;
+            const endTime = startTime + 2;
+
+            allTranscriptions.push({
+                text: text,
+                startTime: startTime,
+                endTime: endTime,
+                timestamp: Date.now()
+            });
+
+            transcriptionCounter++;
+
+            const concatenatedText = deduplicateTranscription(text);
+
+            if (!concatenatedText || concatenatedText.trim().length === 0) {
+                console.log(`⏭️  Skipping (no unique words added)`);
                 return;
             }
 
             lastTranscription = text;
             lastTranscriptionContent = text;
 
-            accumulatedRawText += (accumulatedRawText ? ' ' : '') + textToAppend;
-            const chunkLabel = isFinalChunk ? '[FINAL CHUNK]' : '[RAW]';
-            console.log(`🎤 ${chunkLabel} Raw whisper: "${text}"`);
-            console.log(`📝 Accumulated raw: "${accumulatedRawText}" (${accumulatedRawText.length} chars)`);
-
             if (activeSocket && (isRecordingAudio || isFinalChunk)) {
                 const rawTranscription = {
                     type: 'transcription',
                     status: isFinalChunk ? 'final_chunk_raw' : 'raw',
-                    transcription: accumulatedRawText,
+                    transcription: concatenatedText,
                     timestamp: Date.now()
                 };
-                console.log(`📤 SENDING TO iOS: ${isFinalChunk ? 'FINAL_CHUNK_RAW' : 'RAW'} "${accumulatedRawText}"`);
+                console.log(`📤 SENDING TO iOS: ${isFinalChunk ? 'FINAL_CHUNK_RAW' : 'RAW'} "${concatenatedText}"`);
                 activeSocket.write(JSON.stringify(rawTranscription) + '\n');
             }
 
@@ -431,10 +400,11 @@ async function handleAudioEnd() {
     isRecordingAudio = false;
     pendingTranscription = false;
 
-    console.log(`📝 Final accumulated raw text (including final chunk): "${accumulatedRawText}"`);
+    const concatenatedText = getConcatenatedText();
+    console.log(`📝 Final concatenated text (${transcriptionHistory.length} entries): "${concatenatedText}"`);
 
-    if (!accumulatedRawText || accumulatedRawText.trim().length === 0) {
-        console.log('⚠️ No accumulated text, skipping final processing');
+    if (!concatenatedText || concatenatedText.trim().length === 0) {
+        console.log('⚠️ No concatenated text, skipping final processing');
         return;
     }
 
@@ -443,38 +413,38 @@ async function handleAudioEnd() {
             const rawTranscription = {
                 type: 'transcription',
                 status: 'final_raw',
-                transcription: accumulatedRawText,
+                transcription: concatenatedText,
                 timestamp: Date.now()
             };
-            console.log(`📤 SENDING TO iOS: FINAL_RAW "${accumulatedRawText}"`);
+            console.log(`📤 SENDING TO iOS: FINAL_RAW "${concatenatedText}"`);
             activeSocket.write(JSON.stringify(rawTranscription) + '\n');
         }
 
-        addToContext({ type: 'transcription', text: accumulatedRawText, interim: false });
+        addToContext({ type: 'transcription', text: concatenatedText, interim: false });
 
         console.log(`🤖 Running final Haiku correction on COMPLETE text (including final chunk)...`);
-        console.log(`🤖 SENDING TO HAIKU: "${accumulatedRawText}"`);
-        const { corrected } = await processWithHaiku(accumulatedRawText, 'correct_transcription');
+        console.log(`🤖 SENDING TO HAIKU: "${concatenatedText}"`);
+        const { corrected } = await processWithHaiku(concatenatedText, 'correct_transcription', allTranscriptions);
 
         console.log(`✅ RECEIVED FROM HAIKU: "${corrected}"`);
 
-        if (corrected !== accumulatedRawText) {
-            addToContext({ type: 'corrected', raw: accumulatedRawText, corrected: corrected, interim: false });
+        if (corrected !== concatenatedText) {
+            addToContext({ type: 'corrected', raw: concatenatedText, corrected: corrected, interim: false });
         }
 
         lastTranscription = corrected;
-        console.log(`🎤 [FINAL] Raw: "${accumulatedRawText}"`);
+        console.log(`🎤 [FINAL] Raw: "${concatenatedText}"`);
         console.log(`🎤 [FINAL] Corrected: "${corrected}"`);
 
         if (activeSocket) {
             const transcription = {
                 type: 'transcription',
                 status: 'final',
-                transcription: accumulatedRawText,
+                transcription: concatenatedText,
                 prompt: corrected,
                 timestamp: Date.now()
             };
-            console.log(`📤 SENDING TO iOS: FINAL "${accumulatedRawText}" (prompt: "${corrected}")`);
+            console.log(`📤 SENDING TO iOS: FINAL "${concatenatedText}" (prompt: "${corrected}")`);
             activeSocket.write(JSON.stringify(transcription) + '\n');
         }
     } catch (err) {
