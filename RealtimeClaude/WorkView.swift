@@ -553,8 +553,8 @@ class WorkViewModel {
     }
 
     func deleteMessage(_ id: UUID) {
-        guard allMessages.first(where: { $0.id == id }) != nil else { return }
-        log("🗑️ Deleted message (view only)")
+        realtimeAPI.deleteMessage(id: id)
+        log("🗑️ Deleted message: \(id)")
     }
 
     func stopClaudeCode() {

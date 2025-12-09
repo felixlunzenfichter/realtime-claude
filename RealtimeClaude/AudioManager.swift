@@ -40,6 +40,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     private var buffersPlayedCount: Int = 0
     private var currentMessageId: UUID?
     private var playQueue: [(id: UUID, audio: Data)] = []
+    private let queueLock = DispatchQueue(label: "com.realtimeclaude.audioqueue", attributes: .concurrent)
 
     init() {
         // Configure audio session ONCE at init - never touch it again
@@ -139,6 +140,12 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
 
         responsePlayerNode.reset()
         responsePlayerNode.play()
+
+        queueLock.sync(flags: .barrier) {
+            playQueue.removeAll()
+        }
+
+        playNext()
     }
 
     func getIsPlaybackEnabled() -> Bool {
@@ -180,26 +187,39 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     }
 
     func play(audio: Data, id: UUID) {
-        if !isPlaybackEnabled {
+        guard isPlaybackEnabled else {
             log("Playback disabled, skipping audio")
             return
         }
 
-        playQueue.append((id: id, audio: audio))
-        log("Added audio to queue for message: \(id), queue size: \(playQueue.count)")
+        let queueSize = queueLock.sync(flags: .barrier) {
+            playQueue.append((id: id, audio: audio))
+            return playQueue.count
+        }
+        let shouldStartPlaying = currentPlayingMessageIdSubject.value == nil && !isRecordingAudioSubject.value
 
-        if currentPlayingMessageIdSubject.value == nil {
+        log("Added audio to queue for message: \(id), queue size: \(queueSize)")
+
+        if shouldStartPlaying {
             playNext()
         }
     }
 
     private func playNext() {
-        guard !playQueue.isEmpty else {
+        guard !isRecordingAudioSubject.value else { return }
+
+        let item = queueLock.sync(flags: .barrier) { () -> (id: UUID, audio: Data)? in
+            guard !playQueue.isEmpty else {
+                return nil
+            }
+            return playQueue.removeFirst()
+        }
+
+        guard let item = item else {
             log("Play queue empty")
             return
         }
 
-        let item = playQueue.removeFirst()
         log("Playing next audio for message: \(item.id)")
 
         currentPlayingMessageIdSubject.send(item.id)
@@ -220,11 +240,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
             DispatchQueue.main.async {
                 self.playbackFinished()
             }
-        }
-
-        if !responsePlayerNode.isPlaying {
-            responsePlayerNode.play()
-            log("Started player node for message: \(item.id)")
         }
     }
 

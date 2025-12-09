@@ -46,6 +46,7 @@ protocol RealtimeAPIProtocol: Sendable {
     func createRecordingMessage() -> UUID
     func connect()
     func disconnect()
+    func deleteMessage(id: UUID)
 }
 
 nonisolated(unsafe) let realtimeAPI: RealtimeAPIProtocol = RealtimeAPI()
@@ -457,6 +458,12 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         guard apiStateSubject.value != .disconnected else { return }
         debugLog(id: "disconnect", message: "🔴 State: disconnected")
         updateAPIState(.disconnected)
+    }
+
+    func deleteMessage(id: UUID) {
+        var context = conversationContextSubject.value
+        context.removeAll { $0.id == id }
+        conversationContextSubject.send(context)
     }
 
     private func updateLoadingStatus(_ status: String?) {
