@@ -9,8 +9,6 @@ protocol AudioManagerProtocol: Sendable {
     var isPlaybackEnabledSubject: CurrentValueSubject<Bool, Never> { get }
     var currentPlayingMessageIdSubject: CurrentValueSubject<UUID?, Never> { get }
 
-    func startAudioEngine()
-    func stopAudioEngine()
     func startRecording(messageId: UUID)
     func stopRecording()
     func getIsPlaybackEnabled() -> Bool
@@ -64,6 +62,13 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
 
         requestMicrophonePermission()
         updateAudioInputSource()
+
+        do {
+            try audioEngine.start()
+            log("Audio engine started successfully in init")
+        } catch {
+            log("Failed to start audio engine in init: \(error.localizedDescription)")
+        }
     }
 
     deinit {
@@ -93,25 +98,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         let inputSource = session.currentRoute.inputs.first?.portName ?? "Unknown"
         audioInputSourceSubject.send(inputSource)
         log("Audio input source: \(inputSource)")
-    }
-
-    func startAudioEngine() {
-        DispatchQueue.main.async {
-            do {
-
-                try self.audioEngine.start()
-                self.updateAudioInputSource()
-                log("Audio engine started successfully with speaker output")
-            } catch let startError {
-                error("Failed to start audio engine: \(startError.localizedDescription)")
-            }
-        }
-    }
-
-    func stopAudioEngine() {
-        DispatchQueue.main.async {
-            self.audioEngine.stop()
-        }
     }
 
     private var isFirstAudioPacket: Bool = false

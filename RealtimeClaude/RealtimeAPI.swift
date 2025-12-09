@@ -67,11 +67,6 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         log("RealtimeAPI initialized with Mac-based transcription")
         setupTranscriptionSubscription()
         setupAudioPlaybackTracking()
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            audioManager.startAudioEngine()
-            log("Audio engine started")
-        }
     }
 
     private func setupTranscriptionSubscription() {
