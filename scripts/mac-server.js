@@ -107,7 +107,7 @@ ${fullTranscriptions ? '\nNOTE: You have both the full transcription history (al
 
 OUTPUT: Respond with valid JSON only, no markdown, no explanation:
 {"corrected": "the corrected text or original if no correction needed"}`;
-            } else if (task === 'create_summary') {
+            } else {
                 prompt = `You are a transcription processor for a voice-controlled coding assistant.
 
 CONTEXT (last ${haikuContext.length} events):
@@ -121,37 +121,6 @@ Create a brief summary (under ${MAX_SUMMARY_CHARS} characters) describing what t
 
 OUTPUT: Respond with valid JSON only, no markdown, no explanation:
 {"summary": "short summary under ${MAX_SUMMARY_CHARS} chars"}`;
-            } else if (task === 'summarize') {
-                prompt = `You are a transcription processor for a voice-controlled coding assistant.
-
-CONTEXT (last ${haikuContext.length} events):
-${context}
-
-TASK: Create summary
-INPUT: "${cleanText}"
-
-INSTRUCTIONS:
-Create a summary under ${MAX_SUMMARY_CHARS} characters for UI display.
-
-OUTPUT: Respond with valid JSON only, no markdown, no explanation:
-{"summary": "short summary under ${MAX_SUMMARY_CHARS} chars"}`;
-            } else {
-                prompt = `You are a transcription processor for a voice-controlled coding assistant.
-
-CONTEXT (last ${haikuContext.length} events):
-${context}${fullTranscriptionsText}
-
-TASK: ${task}
-INPUT (deduplicated version): "${cleanText}"
-
-INSTRUCTIONS:
-1. If task is "correct_transcription": Fix any speech-to-text errors based on context. Common issues: misheard technical terms, homophones, incomplete words.
-2. If task is "summarize": Create a summary under ${MAX_SUMMARY_CHARS} characters for UI display.
-3. If task is "correct_and_summarize": Do both.
-${fullTranscriptions ? '\nNOTE: You have both the full transcription history (all raw Whisper outputs) and the deduplicated version. Use the full history for context/safety if needed.' : ''}
-
-OUTPUT: Respond with valid JSON only, no markdown, no explanation:
-{"corrected": "the corrected text or original if no correction needed", "summary": "short summary under ${MAX_SUMMARY_CHARS} chars"}`;
             }
 
             const os = require('os');
@@ -190,7 +159,7 @@ OUTPUT: Respond with valid JSON only, no markdown, no explanation:
                 if (task === 'correct_transcription') {
                     console.log(`   ✅ Corrected: "${corrected.substring(0, 50)}..."`);
                     return { corrected };
-                } else if (task === 'create_summary') {
+                } else {
                     if (summary.length > MAX_SUMMARY_CHARS) {
                         console.log(`   ⚠️ Summary too long: ${summary.length} chars`);
                         addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: false, error: 'too_long' });
@@ -199,16 +168,6 @@ OUTPUT: Respond with valid JSON only, no markdown, no explanation:
                     console.log(`   ✅ Summary: "${summary}" (${summary.length} chars)`);
                     addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: true });
                     return { summary };
-                } else {
-                    if (summary.length > MAX_SUMMARY_CHARS) {
-                        console.log(`   ⚠️ Summary too long: ${summary.length} chars`);
-                        addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: false, error: 'too_long' });
-                        continue;
-                    }
-                    console.log(`   ✅ Corrected: "${corrected.substring(0, 50)}..."`);
-                    console.log(`   ✅ Summary: "${summary}" (${summary.length} chars)`);
-                    addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: true });
-                    return { corrected, summary };
                 }
 
             } finally {
@@ -225,23 +184,14 @@ OUTPUT: Respond with valid JSON only, no markdown, no explanation:
     console.log(`   ⚠️ Max attempts reached, using fallback`);
     if (task === 'correct_transcription') {
         return { corrected: cleanText };
-    } else if (task === 'create_summary') {
-        return { summary: cleanText.substring(0, MAX_SUMMARY_CHARS) };
     } else {
-        return {
-            corrected: cleanText,
-            summary: cleanText.substring(0, MAX_SUMMARY_CHARS)
-        };
+        return { summary: cleanText.substring(0, MAX_SUMMARY_CHARS) };
     }
 }
 
 async function summarizeWithClaude(text) {
-    const result = await processWithHaiku(text, 'summarize');
+    const result = await processWithHaiku(text, 'create_summary');
     return result.summary;
-}
-
-async function correctAndSummarize(text) {
-    return await processWithHaiku(text, 'correct_and_summarize');
 }
 
 function deduplicateTranscription(newText) {
