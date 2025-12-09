@@ -22,14 +22,6 @@ let currentSessionFile = null;
 let currentSessionNumber = 0;
 let activeSocket = null;
 let lastSentAssistantMessage = null;
-let audioBuffer = Buffer.alloc(0);
-let isTranscribing = false;
-let isRecordingAudio = false;
-let pendingTranscription = false;
-let transcriptionHistory = [];
-let allTranscriptions = [];
-let transcriptionCounter = 0;
-let activeMessageId = null;
 
 const MAX_AUDIO_DURATION = 10;
 const MAX_AUDIO_BYTES = MAX_AUDIO_DURATION * 16000 * 4;
@@ -38,6 +30,38 @@ const MAX_SUMMARY_CHARS = 100;
 const MAX_CONTEXT_EVENTS = 20;
 
 let haikuContext = [];
+
+const messageStates = new Map();
+
+function getMessageState(messageId) {
+    if (!messageId) {
+        console.log('⚠️ No messageId provided, using fallback ID');
+        messageId = 'fallback';
+    }
+
+    if (!messageStates.has(messageId)) {
+        console.log(`📋 Creating new message state for ID: ${messageId}`);
+        messageStates.set(messageId, {
+            messageId: messageId,
+            audioBuffer: Buffer.alloc(0),
+            isTranscribing: false,
+            isRecordingAudio: false,
+            pendingTranscription: false,
+            transcriptionHistory: [],
+            allTranscriptions: [],
+            transcriptionCounter: 0
+        });
+    }
+
+    return messageStates.get(messageId);
+}
+
+function cleanupMessageState(messageId) {
+    if (messageId && messageStates.has(messageId)) {
+        console.log(`🧹 Cleaning up message state for ID: ${messageId}`);
+        messageStates.delete(messageId);
+    }
+}
 
 function addToContext(event) {
     haikuContext.push({
@@ -194,20 +218,18 @@ async function summarizeWithClaude(text) {
     return result.summary;
 }
 
-function deduplicateTranscription(newText) {
+function deduplicateTranscription(newText, messageState) {
     if (!newText || newText.trim().length === 0) {
-        return getConcatenatedText();
+        return getConcatenatedText(messageState);
     }
 
-    // First transcription - add without dedup
-    if (transcriptionHistory.length === 0) {
+    if (messageState.transcriptionHistory.length === 0) {
         console.log(`🔍 First transcription - adding all text: "${newText}"`);
-        transcriptionHistory.push({ text: newText, timestamp: Date.now() });
+        messageState.transcriptionHistory.push({ text: newText, timestamp: Date.now() });
         return newText;
     }
 
-    // Build set of all words from last 10 transcriptions
-    const last10 = transcriptionHistory.slice(-10);
+    const last10 = messageState.transcriptionHistory.slice(-10);
     const wordsSeen = new Set();
     for (const entry of last10) {
         for (const word of entry.text.split(/\s+/)) {
@@ -216,7 +238,6 @@ function deduplicateTranscription(newText) {
     }
     console.log(`🔍 Deduplicating "${newText}" against ${wordsSeen.size} words from last ${last10.length} transcriptions`);
 
-    // Keep only words not seen before
     const newWords = [];
     for (const word of newText.split(/\s+/)) {
         if (!wordsSeen.has(word.toLowerCase())) {
@@ -230,17 +251,17 @@ function deduplicateTranscription(newText) {
     const uniqueText = newWords.join(' ').trim();
 
     if (uniqueText.length > 0) {
-        transcriptionHistory.push({ text: uniqueText, timestamp: Date.now() });
+        messageState.transcriptionHistory.push({ text: uniqueText, timestamp: Date.now() });
         console.log(`📝 Added to history: "${uniqueText}"`);
     } else {
         console.log(`⏭️  No unique words to add`);
     }
 
-    return getConcatenatedText();
+    return getConcatenatedText(messageState);
 }
 
-function getConcatenatedText() {
-    return transcriptionHistory.map(entry => entry.text).join(' ').trim();
+function getConcatenatedText(messageState) {
+    return messageState.transcriptionHistory.map(entry => entry.text).join(' ').trim();
 }
 
 async function transcribeAudio(audioPath) {
@@ -279,23 +300,23 @@ async function handleAudioMessage(socket, logData) {
 
     if (isStart) {
         console.log('🎤 Audio recording started (embedded flag)');
-        activeMessageId = messageId || null;
-        if (activeMessageId) {
-            console.log(`📋 Message ID: ${activeMessageId}`);
-        }
-        audioBuffer = Buffer.alloc(0);
-        isRecordingAudio = true;
-        pendingTranscription = false;
-        transcriptionHistory = [];
-        allTranscriptions = [];
-        transcriptionCounter = 0;
+        const msgId = messageId || 'fallback';
+        console.log(`📋 Message ID: ${msgId}`);
+
+        const messageState = getMessageState(msgId);
+        messageState.audioBuffer = Buffer.alloc(0);
+        messageState.isRecordingAudio = true;
+        messageState.pendingTranscription = false;
+        messageState.transcriptionHistory = [];
+        messageState.allTranscriptions = [];
+        messageState.transcriptionCounter = 0;
         return;
     }
 
     if (isEnd) {
         console.log('🎯 FINAL CHUNK: Processing final transcription unconditionally...');
-        await triggerTranscription(true, activeMessageId);
-        handleAudioEnd(activeMessageId);
+        await triggerTranscription(true, messageId);
+        await handleAudioEnd(messageId);
         return;
     }
 
@@ -304,32 +325,45 @@ async function handleAudioMessage(socket, logData) {
         return;
     }
 
-    const newAudio = Buffer.from(audioData, 'base64');
-    audioBuffer = Buffer.concat([audioBuffer, newAudio]);
+    const msgId = messageId || 'fallback';
+    const messageState = getMessageState(msgId);
 
-    if (audioBuffer.length > MAX_AUDIO_BYTES) {
-        audioBuffer = audioBuffer.slice(-MAX_AUDIO_BYTES);
+    const newAudio = Buffer.from(audioData, 'base64');
+    messageState.audioBuffer = Buffer.concat([messageState.audioBuffer, newAudio]);
+
+    if (messageState.audioBuffer.length > MAX_AUDIO_BYTES) {
+        messageState.audioBuffer = messageState.audioBuffer.slice(-MAX_AUDIO_BYTES);
     }
 
-    if (isRecordingAudio && !isTranscribing && audioBuffer.length >= 16000) {
-        triggerTranscription(false, activeMessageId);
+    if (messageState.isRecordingAudio && !messageState.isTranscribing && messageState.audioBuffer.length >= 16000) {
+        triggerTranscription(false, msgId);
     }
 }
 
 async function triggerTranscription(isFinalChunk = false, messageId = null) {
-    if (isTranscribing) {
-        pendingTranscription = true;
-        return;
+    const msgId = messageId || 'fallback';
+    const messageState = getMessageState(msgId);
+
+    if (messageState.isTranscribing) {
+        console.log('⏳ Transcription already in progress, waiting for completion...');
+        return new Promise((resolve) => {
+            const checkInterval = setInterval(() => {
+                if (!messageState.isTranscribing) {
+                    clearInterval(checkInterval);
+                    resolve();
+                }
+            }, 50);
+        });
     }
 
-    isTranscribing = true;
+    messageState.isTranscribing = true;
 
     try {
         const os = require('os');
         const tempWavFile = path.join(os.tmpdir(), `whisper-${Date.now()}-${process.pid}.wav`);
         const tempRawFile = path.join(os.tmpdir(), `audio-raw-${Date.now()}-${process.pid}.f32le`);
-        const audioData = Buffer.from(audioBuffer);
-        const audioDuration = audioBuffer.length / (16000 * 4);
+        const audioData = Buffer.from(messageState.audioBuffer);
+        const audioDuration = messageState.audioBuffer.length / (16000 * 4);
 
         try {
             fs.writeFileSync(tempRawFile, audioData);
@@ -353,30 +387,30 @@ async function triggerTranscription(isFinalChunk = false, messageId = null) {
 
         try { fs.unlinkSync(tempWavFile); } catch {}
 
-        if (text && activeSocket && (isRecordingAudio || isFinalChunk)) {
+        if (text && activeSocket && (messageState.isRecordingAudio || isFinalChunk)) {
             const chunkLabel = isFinalChunk ? '[FINAL CHUNK]' : '[RAW]';
             console.log(`🎤 ${chunkLabel} Raw whisper: "${text}"`);
 
-            const startTime = transcriptionCounter * 2;
+            const startTime = messageState.transcriptionCounter * 2;
             const endTime = startTime + 2;
 
-            allTranscriptions.push({
+            messageState.allTranscriptions.push({
                 text: text,
                 startTime: startTime,
                 endTime: endTime,
                 timestamp: Date.now()
             });
 
-            transcriptionCounter++;
+            messageState.transcriptionCounter++;
 
-            const concatenatedText = deduplicateTranscription(text);
+            const concatenatedText = deduplicateTranscription(text, messageState);
 
             if (!concatenatedText || concatenatedText.trim().length === 0) {
                 console.log(`⏭️  Skipping (no unique words added)`);
                 return;
             }
 
-            if (activeSocket && (isRecordingAudio || isFinalChunk)) {
+            if (activeSocket && (messageState.isRecordingAudio || isFinalChunk)) {
                 const rawTranscription = {
                     type: 'transcription',
                     status: isFinalChunk ? 'final_chunk' : 'transcription',
@@ -395,26 +429,30 @@ async function triggerTranscription(isFinalChunk = false, messageId = null) {
     } catch (err) {
         console.error(`❌ Interim transcription error: ${err.message}`);
     } finally {
-        isTranscribing = false;
+        messageState.isTranscribing = false;
 
-        if (pendingTranscription && isRecordingAudio && audioBuffer.length >= 16000) {
-            pendingTranscription = false;
-            triggerTranscription(false, messageId);
+        if (messageState.pendingTranscription && messageState.isRecordingAudio && messageState.audioBuffer.length >= 16000) {
+            messageState.pendingTranscription = false;
+            triggerTranscription(false, msgId);
         }
     }
 }
 
 async function handleAudioEnd(messageId = null) {
     console.log('🎤 Audio recording stopped (embedded flag)');
-    isRecordingAudio = false;
-    pendingTranscription = false;
 
-    const concatenatedText = getConcatenatedText();
-    console.log(`📝 Final concatenated text (${transcriptionHistory.length} entries): "${concatenatedText}"`);
+    const msgId = messageId || 'fallback';
+    const messageState = getMessageState(msgId);
+
+    messageState.isRecordingAudio = false;
+    messageState.pendingTranscription = false;
+
+    const concatenatedText = getConcatenatedText(messageState);
+    console.log(`📝 Final concatenated text (${messageState.transcriptionHistory.length} entries): "${concatenatedText}"`);
 
     if (!concatenatedText || concatenatedText.trim().length === 0) {
         console.log('⚠️ No concatenated text, skipping final processing');
-        activeMessageId = null;
+        cleanupMessageState(msgId);
         return;
     }
 
@@ -437,7 +475,7 @@ async function handleAudioEnd(messageId = null) {
 
         console.log(`🤖 STAGE 1: Running Haiku correction on COMPLETE text (including final chunk)...`);
         console.log(`🤖 SENDING TO HAIKU: "${concatenatedText}"`);
-        const { corrected } = await processWithHaiku(concatenatedText, 'correct_transcription', allTranscriptions);
+        const { corrected } = await processWithHaiku(concatenatedText, 'correct_transcription', messageState.allTranscriptions);
 
         console.log(`✅ RECEIVED FROM HAIKU: "${corrected}"`);
 
@@ -506,8 +544,7 @@ async function handleAudioEnd(messageId = null) {
     } catch (err) {
         console.error(`❌ Final transcription error: ${err.message}`);
     } finally {
-        audioBuffer = Buffer.alloc(0);
-        activeMessageId = null;
+        cleanupMessageState(msgId);
     }
 }
 
