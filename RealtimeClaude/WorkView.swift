@@ -549,7 +549,8 @@ class WorkViewModel {
 
     func sendMessage(_ content: String) {
         log("📤 Manually sending message: \(content)")
-        logger.sendPromptToMac(content)
+        let messageId = realtimeAPI.createRecordingMessage()
+        logger.sendPromptToMac(content, messageId: messageId)
     }
 
     func deleteMessage(_ id: UUID) {
@@ -559,8 +560,8 @@ class WorkViewModel {
 
     func stopClaudeCode() {
         log("🛑 Adding stop signal to conversation")
-        _ = realtimeAPI.addInterruptMessage(INTERRUPT_MESSAGE)
-        logger.sendPromptToMac(INTERRUPT_MESSAGE)
+        let messageId = realtimeAPI.addInterruptMessage(INTERRUPT_MESSAGE)
+        logger.sendPromptToMac(INTERRUPT_MESSAGE, messageId: messageId)
     }
 
     deinit {

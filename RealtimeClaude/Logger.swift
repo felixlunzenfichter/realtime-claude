@@ -46,7 +46,7 @@ protocol LoggerProtocol {
     var transcriptionSubject: PassthroughSubject<TranscriptionUpdate, Never> { get }
     var macConnectionReadySubject: CurrentValueSubject<Bool, Never> { get }
 
-    func sendPromptToMac(_ prompt: String)
+    func sendPromptToMac(_ prompt: String, messageId: UUID)
     func sendAudioToMac(_ audioData: Data, isStart: Bool, isEnd: Bool, messageId: UUID?)
 }
 
@@ -466,7 +466,12 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             if originalPrompt == "[Request interrupted by user]" {
                 realtimeAPI.acknowledgeSuccessfulInterruptExecution()
             } else {
-                realtimeAPI.acknowledgeSuccessfulPromptInjection(summary: summary)
+                guard let messageIdString = jsonData["messageId"] as? String,
+                      let messageId = UUID(uuidString: messageIdString) else {
+                    error("Missing or invalid messageId in prompt ACK message")
+                    return
+                }
+                realtimeAPI.acknowledgeSuccessfulPromptInjection(summary: summary, messageId: messageId)
             }
         } else {
             let errorMessage = jsonData["error"] as? String ?? "Unknown error"
@@ -573,10 +578,11 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         sendMessage(jsonData, messageType: "start", logMessage: "📤 [iOS → macOS] Sending start message")
     }
 
-    func sendPromptToMac(_ prompt: String) {
+    func sendPromptToMac(_ prompt: String, messageId: UUID) {
         let promptMessage: [String: Any] = [
             "type": "prompt",
             "prompt": prompt,
+            "messageId": messageId.uuidString,
             "timestamp": Date().timeIntervalSince1970
         ]
 
@@ -585,7 +591,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             return
         }
 
-        sendMessage(jsonData, messageType: "prompt", logMessage: "📤 [iOS → macOS] Sending prompt: \(prompt)")
+        sendMessage(jsonData, messageType: "prompt", logMessage: "📤 [iOS → macOS] Sending prompt: \(prompt) (messageId: \(messageId.uuidString))")
 
         promptStatusSubject.send(PromptStatusUpdate(prompt: prompt, status: "sent"))
     }

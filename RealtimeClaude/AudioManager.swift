@@ -224,9 +224,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         currentPlayingMessageIdSubject.send(item.id)
         isPlayingAudioSubject.send(true)
 
-        if !responsePlayerNode.isPlaying {
-            responsePlayerNode.play()
-        }
 
         guard let buffer = createPCMBuffer(from: item.audio, format: TTS_OUTPUT_FORMAT) else {
             error("Failed to create PCM buffer from audio data")
@@ -244,6 +241,10 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
                 self.playbackFinished()
             }
         }
+                if !responsePlayerNode.isPlaying {
+            responsePlayerNode.play()
+        }
+
     }
 
     private func playbackFinished() {

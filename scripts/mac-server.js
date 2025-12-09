@@ -29,7 +29,7 @@ let pendingTranscription = false;
 let transcriptionHistory = [];
 let allTranscriptions = [];
 let transcriptionCounter = 0;
-let currentMessageId = null;
+let activeMessageId = null;
 
 const MAX_AUDIO_DURATION = 10;
 const MAX_AUDIO_BYTES = MAX_AUDIO_DURATION * 16000 * 4;
@@ -279,9 +279,9 @@ async function handleAudioMessage(socket, logData) {
 
     if (isStart) {
         console.log('🎤 Audio recording started (embedded flag)');
-        currentMessageId = messageId || null;
-        if (currentMessageId) {
-            console.log(`📋 Message ID: ${currentMessageId}`);
+        activeMessageId = messageId || null;
+        if (activeMessageId) {
+            console.log(`📋 Message ID: ${activeMessageId}`);
         }
         audioBuffer = Buffer.alloc(0);
         isRecordingAudio = true;
@@ -294,8 +294,8 @@ async function handleAudioMessage(socket, logData) {
 
     if (isEnd) {
         console.log('🎯 FINAL CHUNK: Processing final transcription unconditionally...');
-        await triggerTranscription(true);
-        handleAudioEnd();
+        await triggerTranscription(true, activeMessageId);
+        handleAudioEnd(activeMessageId);
         return;
     }
 
@@ -312,11 +312,11 @@ async function handleAudioMessage(socket, logData) {
     }
 
     if (isRecordingAudio && !isTranscribing && audioBuffer.length >= 16000) {
-        triggerTranscription(false);
+        triggerTranscription(false, activeMessageId);
     }
 }
 
-async function triggerTranscription(isFinalChunk = false) {
+async function triggerTranscription(isFinalChunk = false, messageId = null) {
     if (isTranscribing) {
         pendingTranscription = true;
         return;
@@ -383,10 +383,10 @@ async function triggerTranscription(isFinalChunk = false) {
                     transcription: concatenatedText,
                     timestamp: Date.now()
                 };
-                if (currentMessageId) {
-                    rawTranscription.messageId = currentMessageId;
+                if (messageId) {
+                    rawTranscription.messageId = messageId;
                 }
-                console.log(`📤 SENDING TO iOS: ${isFinalChunk ? 'FINAL_CHUNK' : 'TRANSCRIPTION'} "${concatenatedText}"${currentMessageId ? ` (messageId: ${currentMessageId})` : ''}`);
+                console.log(`📤 SENDING TO iOS: ${isFinalChunk ? 'FINAL_CHUNK' : 'TRANSCRIPTION'} "${concatenatedText}"${messageId ? ` (messageId: ${messageId})` : ''}`);
                 activeSocket.write(JSON.stringify(rawTranscription) + '\n');
             }
 
@@ -399,12 +399,12 @@ async function triggerTranscription(isFinalChunk = false) {
 
         if (pendingTranscription && isRecordingAudio && audioBuffer.length >= 16000) {
             pendingTranscription = false;
-            triggerTranscription(false);
+            triggerTranscription(false, messageId);
         }
     }
 }
 
-async function handleAudioEnd() {
+async function handleAudioEnd(messageId = null) {
     console.log('🎤 Audio recording stopped (embedded flag)');
     isRecordingAudio = false;
     pendingTranscription = false;
@@ -414,7 +414,7 @@ async function handleAudioEnd() {
 
     if (!concatenatedText || concatenatedText.trim().length === 0) {
         console.log('⚠️ No concatenated text, skipping final processing');
-        currentMessageId = null;
+        activeMessageId = null;
         return;
     }
 
@@ -426,10 +426,10 @@ async function handleAudioEnd() {
                 transcription: concatenatedText,
                 timestamp: Date.now()
             };
-            if (currentMessageId) {
-                rawTranscription.messageId = currentMessageId;
+            if (messageId) {
+                rawTranscription.messageId = messageId;
             }
-            console.log(`📤 SENDING TO iOS: TRANSCRIPTION "${concatenatedText}"${currentMessageId ? ` (messageId: ${currentMessageId})` : ''}`);
+            console.log(`📤 SENDING TO iOS: TRANSCRIPTION "${concatenatedText}"${messageId ? ` (messageId: ${messageId})` : ''}`);
             activeSocket.write(JSON.stringify(rawTranscription) + '\n');
         }
 
@@ -457,10 +457,10 @@ async function handleAudioEnd() {
                 summary: null,
                 timestamp: Date.now()
             };
-            if (currentMessageId) {
-                promptMessage.messageId = currentMessageId;
+            if (messageId) {
+                promptMessage.messageId = messageId;
             }
-            console.log(`📤 SENDING TO iOS: PROMPT "${corrected}"${currentMessageId ? ` (messageId: ${currentMessageId})` : ''}`);
+            console.log(`📤 SENDING TO iOS: PROMPT "${corrected}"${messageId ? ` (messageId: ${messageId})` : ''}`);
             activeSocket.write(JSON.stringify(promptMessage) + '\n');
         }
 
@@ -485,10 +485,10 @@ async function handleAudioEnd() {
                     summary: summary,
                     timestamp: Date.now()
                 };
-                if (currentMessageId) {
-                    summaryMessage.messageId = currentMessageId;
+                if (messageId) {
+                    summaryMessage.messageId = messageId;
                 }
-                console.log(`📤 SENDING TO iOS: SUMMARY "${summary}"${currentMessageId ? ` (messageId: ${currentMessageId})` : ''}`);
+                console.log(`📤 SENDING TO iOS: SUMMARY "${summary}"${messageId ? ` (messageId: ${messageId})` : ''}`);
                 activeSocket.write(JSON.stringify(summaryMessage) + '\n');
             }
         })();
@@ -507,7 +507,7 @@ async function handleAudioEnd() {
         console.error(`❌ Final transcription error: ${err.message}`);
     } finally {
         audioBuffer = Buffer.alloc(0);
-        currentMessageId = null;
+        activeMessageId = null;
     }
 }
 
