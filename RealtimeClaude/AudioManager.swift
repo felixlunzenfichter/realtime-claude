@@ -139,7 +139,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         currentMessageId = nil
 
         responsePlayerNode.reset()
-        responsePlayerNode.play()
 
         queueLock.sync(flags: .barrier) {
             playQueue.removeAll()
