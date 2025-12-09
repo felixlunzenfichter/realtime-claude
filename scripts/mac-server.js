@@ -46,7 +46,6 @@ function getMessageState(messageId) {
             audioBuffer: Buffer.alloc(0),
             isTranscribing: false,
             isRecordingAudio: false,
-            pendingTranscription: false,
             transcriptionHistory: [],
             allTranscriptions: [],
             transcriptionCounter: 0
@@ -306,7 +305,6 @@ async function handleAudioMessage(socket, logData) {
         const messageState = getMessageState(msgId);
         messageState.audioBuffer = Buffer.alloc(0);
         messageState.isRecordingAudio = true;
-        messageState.pendingTranscription = false;
         messageState.transcriptionHistory = [];
         messageState.allTranscriptions = [];
         messageState.transcriptionCounter = 0;
@@ -430,11 +428,6 @@ async function triggerTranscription(isFinalChunk = false, messageId = null) {
         console.error(`❌ Interim transcription error: ${err.message}`);
     } finally {
         messageState.isTranscribing = false;
-
-        if (messageState.pendingTranscription && messageState.isRecordingAudio && messageState.audioBuffer.length >= 16000) {
-            messageState.pendingTranscription = false;
-            triggerTranscription(false, msgId);
-        }
     }
 }
 
@@ -445,7 +438,6 @@ async function handleAudioEnd(messageId = null) {
     const messageState = getMessageState(msgId);
 
     messageState.isRecordingAudio = false;
-    messageState.pendingTranscription = false;
 
     const concatenatedText = getConcatenatedText(messageState);
     console.log(`📝 Final concatenated text (${messageState.transcriptionHistory.length} entries): "${concatenatedText}"`);
