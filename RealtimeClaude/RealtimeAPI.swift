@@ -133,6 +133,7 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
             currentContext[index].transcription = text
             currentContext[index].timestamp = Date()
             conversationContextSubject.send(currentContext)
+            log("Successful transcription")
         } else {
             error("Message with ID \(messageId.uuidString) NOT FOUND in updateTranscription")
         }
@@ -169,6 +170,7 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         if status == "prompt" {
             debugLog(id: "promptFlow", message: "Handling prompt: updating prompt only")
             conversationContextSubject.send(currentContext)
+            log("Successful prompt creation")
             return
         }
 
@@ -176,6 +178,7 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
             debugLog(id: "promptFlow", message: "Handling summary: updating summary and marking as complete")
             currentContext[index].summary = summary
             conversationContextSubject.send(currentContext)
+            log("Successful summary creation")
 
             if let summary = summary, !summary.isEmpty {
                 log("Received final message with summary")

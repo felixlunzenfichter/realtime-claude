@@ -221,12 +221,14 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         }
                 if !responsePlayerNode.isPlaying {
             responsePlayerNode.play()
+            log("Started playing response")
         }
 
     }
 
     private func playbackFinished() {
         log("Playback finished")
+        log("Stopped playing response")
         currentPlayingMessageIdSubject.send(nil)
         isPlayingAudioSubject.send(false)
         playNext()
