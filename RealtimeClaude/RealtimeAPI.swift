@@ -180,7 +180,7 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
             if let summary = summary, !summary.isEmpty {
                 log("Received final message with summary")
 
-                if audioManager.getIsPlaybackEnabled() {
+                if audioManager.isPlaybackEnabledSubject.value {
                     speakWithTTS(text: summary, messageId: messageId)
                 }
             }
@@ -201,7 +201,7 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
             log("Received final message with summary")
             conversationContextSubject.send(currentContext)
 
-            if audioManager.getIsPlaybackEnabled() {
+            if audioManager.isPlaybackEnabledSubject.value {
                 speakWithTTS(text: summary, messageId: messageId)
             }
 
@@ -270,7 +270,7 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         log("Acknowledged: \(currentContext[index].prompt)")
         log("Summary: \(summary)")
 
-        if audioManager.getIsPlaybackEnabled() {
+        if audioManager.isPlaybackEnabledSubject.value {
             speakWithTTS(text: summary, messageId: messageId)
         }
     }
@@ -326,7 +326,7 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
 
         log("Added assistant message: \(text)")
 
-        if audioManager.getIsPlaybackEnabled() {
+        if audioManager.isPlaybackEnabledSubject.value {
             speakWithTTS(text: summary, messageId: message.id)
         }
     }

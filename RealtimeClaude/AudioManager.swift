@@ -11,7 +11,6 @@ protocol AudioManagerProtocol: Sendable {
 
     func startRecording(messageId: UUID)
     func stopRecording()
-    func getIsPlaybackEnabled() -> Bool
     func enablePlayback()
     func disablePlayback()
     func play(audio: Data, id: UUID)
@@ -130,10 +129,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
         }
 
         playNext()
-    }
-
-    func getIsPlaybackEnabled() -> Bool {
-        return isPlaybackEnabledSubject.value
     }
 
     func enablePlayback() {

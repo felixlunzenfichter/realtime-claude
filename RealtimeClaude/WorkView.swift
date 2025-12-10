@@ -354,7 +354,7 @@ class WorkViewModel {
             handleMicrophoneToggle()
         }
     }
-    var isPlaybackEnabled = audioManager.getIsPlaybackEnabled()
+    var isPlaybackEnabled = audioManager.isPlaybackEnabledSubject.value
     var audioInputSource = "Unknown"
     var loadingStatus: String? = nil
 
