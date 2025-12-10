@@ -113,9 +113,11 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
     private let TEST_DEFINITIONS: [Int: String] = [
         1: "Successful handshake",
-        2: "Prompt successfully injected into terminal",
-        3: "Started playing response",
-        4: "Stopped playing response"
+        2: "Successful transcription",
+        3: "Successful prompt creation",
+        4: "Successful summary creation",
+        5: "Started playing response",
+        6: "Stopped playing response"
     ]
 
     private var dataBuffer = Data()
@@ -459,7 +461,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         }
 
         if status == "success" {
-            log("✅ Prompt successfully injected into terminal: \(originalPrompt)")
+            log("✅ Prompt injected into terminal: \(originalPrompt)")
             log("   Summary: \(summary)")
             promptStatusSubject.send(PromptStatusUpdate(prompt: originalPrompt, status: "injected"))
 
@@ -659,20 +661,29 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     }
 
     private func startAckTimeoutTimer() {
-        cancelAckTimeoutTimer()
+        tcpProcessingQueue.async { [weak self] in
+            guard let self = self else { return }
 
-        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .userInitiated))
-        timer.schedule(deadline: .now() + 5.0)
-        timer.setEventHandler { [weak self] in
-            self?.handleAckTimeout()
+            self.ackTimeoutTimer?.cancel()
+            self.ackTimeoutTimer = nil
+
+            let timer = DispatchSource.makeTimerSource(queue: self.tcpProcessingQueue)
+            timer.schedule(deadline: .now() + 5.0)
+            timer.setEventHandler { [weak self] in
+                self?.handleAckTimeout()
+            }
+            timer.resume()
+            self.ackTimeoutTimer = timer
         }
-        timer.resume()
-        ackTimeoutTimer = timer
     }
 
     private func cancelAckTimeoutTimer() {
-        ackTimeoutTimer?.cancel()
-        ackTimeoutTimer = nil
+        tcpProcessingQueue.async { [weak self] in
+            guard let self = self else { return }
+
+            self.ackTimeoutTimer?.cancel()
+            self.ackTimeoutTimer = nil
+        }
     }
 
     private func handleAckTimeout() {
