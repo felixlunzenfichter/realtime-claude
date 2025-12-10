@@ -104,7 +104,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     private let tcpProcessingQueue = DispatchQueue(label: "logger.tcp.processing", qos: .userInitiated)
     private var reconnectAttempts: Int = 0
     private var reconnectTimer: DispatchSourceTimer?
-    private var ackTimeoutTimer: DispatchSourceTimer?
+    private var oldestUnackedSentAt: Date?
     private var isConnectionReady: Bool = false {
         didSet {
             macConnectionReadySubject.send(isConnectionReady)
@@ -202,6 +202,11 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
                 return
             }
 
+            if let oldest = self.oldestUnackedSentAt, Date().timeIntervalSince(oldest) > 5.0 {
+                realtimeAPI.disconnect()
+                return
+            }
+
             guard let newlineData = "\n".data(using: .utf8) else {
                 error("Failed to convert newline to UTF-8 data")
                 return
@@ -228,7 +233,9 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
                         self.scheduleReconnect()
                     }
                 } else {
-                    self.startAckTimeoutTimer()
+                    if self.oldestUnackedSentAt == nil {
+                        self.oldestUnackedSentAt = Date()
+                    }
                 }
             })
         }
@@ -363,7 +370,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             return
         }
 
-        cancelAckTimeoutTimer()
+        oldestUnackedSentAt = nil
         realtimeAPI.connect()
 
         debugLog(id: "ackReceived", message: "✅ [TCP] ACK received for log: \(logId)")
@@ -658,36 +665,6 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     private func cancelReconnectTimer() {
         reconnectTimer?.cancel()
         reconnectTimer = nil
-    }
-
-    private func startAckTimeoutTimer() {
-        tcpProcessingQueue.async { [weak self] in
-            guard let self = self else { return }
-
-            self.ackTimeoutTimer?.cancel()
-            self.ackTimeoutTimer = nil
-
-            let timer = DispatchSource.makeTimerSource(queue: self.tcpProcessingQueue)
-            timer.schedule(deadline: .now() + 5.0)
-            timer.setEventHandler { [weak self] in
-                self?.handleAckTimeout()
-            }
-            timer.resume()
-            self.ackTimeoutTimer = timer
-        }
-    }
-
-    private func cancelAckTimeoutTimer() {
-        tcpProcessingQueue.async { [weak self] in
-            guard let self = self else { return }
-
-            self.ackTimeoutTimer?.cancel()
-            self.ackTimeoutTimer = nil
-        }
-    }
-
-    private func handleAckTimeout() {
-        realtimeAPI.disconnect()
     }
 }
 
