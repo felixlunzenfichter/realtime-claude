@@ -33,7 +33,6 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     private let WHISPER_AUDIO_FORMAT = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: false)!
     private let TTS_OUTPUT_FORMAT = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24000, channels: 1, interleaved: false)!
 
-    private var isPlaybackEnabled: Bool = true
     private var scheduledBufferCount: Int = 0
     private var buffersPlayedCount: Int = 0
     private var currentMessageId: UUID?
@@ -134,17 +133,15 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     }
 
     func getIsPlaybackEnabled() -> Bool {
-        return isPlaybackEnabled
+        return isPlaybackEnabledSubject.value
     }
 
     func enablePlayback() {
-        isPlaybackEnabled = true
         isPlaybackEnabledSubject.send(true)
         log("Playback enabled")
     }
 
     func disablePlayback() {
-        isPlaybackEnabled = false
         isPlaybackEnabledSubject.send(false)
         responsePlayerNode.stop()
         currentPlayingMessageIdSubject.send(nil)
@@ -172,7 +169,7 @@ final class AudioManager: @unchecked Sendable, AudioManagerProtocol {
     }
 
     func play(audio: Data, id: UUID) {
-        guard isPlaybackEnabled else {
+        guard isPlaybackEnabledSubject.value else {
             log("Playback disabled, skipping audio")
             return
         }
