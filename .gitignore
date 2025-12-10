@@ -9,5 +9,4 @@ RealtimeClaude.xcodeproj/xcuserdata
 
 # Model files and virtual environments
 mlx_models/
-.claude/
 whisper-venv-312/
