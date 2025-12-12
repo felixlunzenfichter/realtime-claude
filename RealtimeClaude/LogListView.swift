@@ -539,7 +539,9 @@ class DiffViewModel {
 
         return codeDiff.split(separator: "\n", omittingEmptySubsequences: false).map { line in
             let lineString = String(line)
-            if lineString.hasPrefix("+") {
+            if lineString.hasPrefix("===") {
+                return (text: lineString, type: .sectionHeader)
+            } else if lineString.hasPrefix("+") {
                 return (text: lineString, type: .addition)
             } else if lineString.hasPrefix("-") {
                 return (text: lineString, type: .deletion)
@@ -559,6 +561,7 @@ enum DiffLineType {
     case deletion
     case hunk
     case header
+    case sectionHeader
     case context
 
     var color: Color {
@@ -571,6 +574,8 @@ enum DiffLineType {
             return .cyan
         case .header:
             return .purple
+        case .sectionHeader:
+            return .orange
         case .context:
             return .secondary
         }
@@ -636,14 +641,27 @@ struct DiffLineView: View {
     let type: DiffLineType
 
     var body: some View {
-        HStack(spacing: 0) {
-            Text(text)
-                .font(.system(.body, design: .monospaced))
-                .foregroundColor(type.color)
-                .lineLimit(nil)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(spacing: 0) {
+            if type == .sectionHeader {
+                Spacer()
+                    .frame(height: 16)
+            }
+
+            HStack(spacing: 0) {
+                Text(text)
+                    .font(.system(type == .sectionHeader ? .headline : .body, design: .monospaced))
+                    .fontWeight(type == .sectionHeader ? .bold : .regular)
+                    .foregroundColor(type.color)
+                    .lineLimit(nil)
+                    .frame(maxWidth: .infinity, alignment: type == .sectionHeader ? .center : .leading)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+
+            if type == .sectionHeader {
+                Spacer()
+                    .frame(height: 16)
+            }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 2)
     }
 }
