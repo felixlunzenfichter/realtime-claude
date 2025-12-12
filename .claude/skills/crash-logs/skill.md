@@ -1,3 +1,11 @@
+---
+name: crash-logs
+description: Find and analyze the latest crash log from connected iPhone for RealtimeClaude. Use when the app crashes and you need to understand what went wrong.
+allowed-tools:
+  - Bash
+  - Read
+---
+
 # Crash Logs Skill
 
 Finds and analyzes the latest crash log for RealtimeClaude from a connected iPhone using `idevicecrashreport`.
