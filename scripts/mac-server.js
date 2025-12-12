@@ -970,6 +970,8 @@ async function sendHandshakeResponse(socket, stats) {
 
     socket.write(handshakeResponse);
 
+    sendGitDiffToiOS(true);
+
     if (previousErrors.length > 0) {
         console.log(`📤 Sent ${previousErrors.length} previous error(s) to iOS app`);
     }
@@ -1179,58 +1181,43 @@ function initializeGitDiffWatcher() {
     });
 }
 
-function sendGitDiffToiOS() {
-    const repoPath = path.join(__dirname, '..');
+function sendGitDiffToiOS(force = false) {
     const os = require('os');
-    const tempScript = path.join(os.tmpdir(), `git-diff-${Date.now()}-${process.pid}.sh`);
-    const tempOutput = path.join(os.tmpdir(), `git-diff-output-${Date.now()}-${process.pid}.txt`);
+    const scriptPath = path.join(__dirname, 'get-diff.sh');
+    const outputFile = path.join(os.tmpdir(), `git-diff-${Date.now()}-${process.pid}.txt`);
 
     try {
-        fs.writeFileSync(tempScript, `#!/bin/bash
-cd "${repoPath}"
-git diff > "${tempOutput}" 2>&1
-`, { mode: 0o755 });
-
-        const child = spawn('/bin/bash', [tempScript], {
-            detached: true,
-            stdio: 'ignore'
+        execSync(`"${scriptPath}" > "${outputFile}" 2>&1`, {
+            stdio: 'ignore',
+            shell: '/bin/bash',
+            timeout: 5000
         });
-        child.unref();
 
-        setTimeout(() => {
-            try {
-                if (fs.existsSync(tempOutput)) {
-                    const diff = fs.readFileSync(tempOutput, 'utf8').trim();
+        const diff = fs.readFileSync(outputFile, 'utf8').trim();
 
-                    if (diff === lastDiffSent) {
-                        return;
-                    }
+        if (!force && diff === lastDiffSent) {
+            return;
+        }
 
-                    lastDiffSent = diff;
+        lastDiffSent = diff;
 
-                    if (activeSocket) {
-                        const diffMessage = {
-                            type: 'code_diff',
-                            diff: diff,
-                            timestamp: Date.now()
-                        };
+        if (activeSocket) {
+            const diffMessage = {
+                type: 'code_diff',
+                diff: diff,
+                timestamp: Date.now()
+            };
 
-                        const jsonData = JSON.stringify(diffMessage) + '\n';
-                        activeSocket.write(jsonData);
+            const jsonData = JSON.stringify(diffMessage) + '\n';
+            activeSocket.write(jsonData);
 
-                        const diffSummary = diff.length > 0 ? `${diff.split('\n').length} lines` : 'empty';
-                        console.log(`📤 Sent git diff to iOS: ${diffSummary}`);
-                    }
-                }
-            } catch (err) {
-                console.log(`⚠️ Failed to read git diff: ${err.message}`);
-            } finally {
-                try { fs.unlinkSync(tempScript); } catch {}
-                try { fs.unlinkSync(tempOutput); } catch {}
-            }
-        }, 500);
-    } catch (err) {
-        console.log(`⚠️ Failed to create git diff script: ${err.message}`);
+            const diffSummary = diff.length > 0 ? `${diff.split('\n').length} lines` : 'empty';
+            console.log(`📤 Sent git diff to iOS: ${diffSummary}${force ? ' (forced during handshake)' : ''}`);
+        }
+    } catch (error) {
+        console.log(`⚠️ Failed to get git diff: ${error.message}`);
+    } finally {
+        try { fs.unlinkSync(outputFile); } catch {}
     }
 }
 
