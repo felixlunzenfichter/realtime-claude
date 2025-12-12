@@ -22,6 +22,8 @@ let currentSessionFile = null;
 let currentSessionNumber = 0;
 let activeSocket = null;
 let lastSentAssistantMessage = null;
+let lastDiffSent = null;
+let diffDebounceTimer = null;
 
 const MAX_AUDIO_DURATION = 10;
 const MAX_AUDIO_BYTES = MAX_AUDIO_DURATION * 16000 * 4;
@@ -577,6 +579,7 @@ server.listen(8082, '0.0.0.0', () => {
     console.log(`Mac server listening on :8082 | ${getSessionCount()} sessions`);
 
     initializeClaudeMonitoring();
+    initializeGitDiffWatcher();
 });
 
 function processBufferedData(socket, buffer) {
@@ -1133,6 +1136,102 @@ function initializeClaudeMonitoring() {
     watcher.on('ready', () => {
         console.log(`✅ Prompt monitoring active on ${claudeProjectsPath}`);
     });
+}
+
+function initializeGitDiffWatcher() {
+    const repoPath = path.join(__dirname, '..');
+
+    const watcher = chokidar.watch(repoPath, {
+        persistent: true,
+        ignoreInitial: true,
+        ignored: [
+            '**/node_modules/**',
+            '**/.git/**',
+            '**/build/**',
+            '**/Build/**',
+            '**/DerivedData/**',
+            '**/*.log',
+            '**/private/**'
+        ],
+        awaitWriteFinish: {
+            stabilityThreshold: 200,
+            pollInterval: 100
+        }
+    });
+
+    watcher.on('all', (event, filePath) => {
+        if (diffDebounceTimer) {
+            clearTimeout(diffDebounceTimer);
+        }
+
+        diffDebounceTimer = setTimeout(() => {
+            sendGitDiffToiOS();
+        }, 500);
+    });
+
+    watcher.on('error', (error) => {
+        console.error('❌ Git diff watcher error:', error);
+    });
+
+    watcher.on('ready', () => {
+        console.log(`✅ Git diff monitoring active on ${repoPath}`);
+        sendGitDiffToiOS();
+    });
+}
+
+function sendGitDiffToiOS() {
+    const repoPath = path.join(__dirname, '..');
+    const os = require('os');
+    const tempScript = path.join(os.tmpdir(), `git-diff-${Date.now()}-${process.pid}.sh`);
+    const tempOutput = path.join(os.tmpdir(), `git-diff-output-${Date.now()}-${process.pid}.txt`);
+
+    try {
+        fs.writeFileSync(tempScript, `#!/bin/bash
+cd "${repoPath}"
+git diff > "${tempOutput}" 2>&1
+`, { mode: 0o755 });
+
+        const child = spawn('/bin/bash', [tempScript], {
+            detached: true,
+            stdio: 'ignore'
+        });
+        child.unref();
+
+        setTimeout(() => {
+            try {
+                if (fs.existsSync(tempOutput)) {
+                    const diff = fs.readFileSync(tempOutput, 'utf8').trim();
+
+                    if (diff === lastDiffSent) {
+                        return;
+                    }
+
+                    lastDiffSent = diff;
+
+                    if (activeSocket) {
+                        const diffMessage = {
+                            type: 'code_diff',
+                            diff: diff,
+                            timestamp: Date.now()
+                        };
+
+                        const jsonData = JSON.stringify(diffMessage) + '\n';
+                        activeSocket.write(jsonData);
+
+                        const diffSummary = diff.length > 0 ? `${diff.split('\n').length} lines` : 'empty';
+                        console.log(`📤 Sent git diff to iOS: ${diffSummary}`);
+                    }
+                }
+            } catch (err) {
+                console.log(`⚠️ Failed to read git diff: ${err.message}`);
+            } finally {
+                try { fs.unlinkSync(tempScript); } catch {}
+                try { fs.unlinkSync(tempOutput); } catch {}
+            }
+        }, 500);
+    } catch (err) {
+        console.log(`⚠️ Failed to create git diff script: ${err.message}`);
+    }
 }
 
 function checkForInjectedPrompts(filePath) {

@@ -18,8 +18,10 @@ var ACTUAL_SCREEN_WIDTH: CGFloat {
 class ViewModel {
     var isInitialized: Bool = false
     var showLogs: Bool = false
+    var showDiff: Bool = false
     var workViewModel = WorkViewModel()
     var logListViewModel = LogListViewModel()
+    var diffViewModel = DiffViewModel()
 }
 
 @main
@@ -31,10 +33,14 @@ struct RealtimeClaudeApp: App {
             GeometryReader { geometry in
                 if viewModel.isInitialized {
                     ZStack {
-                        WorkView(viewModel: viewModel.workViewModel, showLogs: $viewModel.showLogs)
+                        WorkView(viewModel: viewModel.workViewModel, showLogs: $viewModel.showLogs, showDiff: $viewModel.showDiff)
 
                         if viewModel.showLogs {
                             LogListView(showLogs: $viewModel.showLogs, viewModel: viewModel.logListViewModel)
+                        }
+
+                        if viewModel.showDiff {
+                            DiffView(showDiff: $viewModel.showDiff, viewModel: viewModel.diffViewModel)
                         }
                     }
                     .offset(y: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")))

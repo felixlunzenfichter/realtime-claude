@@ -120,6 +120,7 @@ struct ToggleBar: View {
 struct WorkView: View {
     @Bindable var viewModel: WorkViewModel
     @Binding var showLogs: Bool
+    @Binding var showDiff: Bool
 
     var body: some View {
         ZStack {
@@ -283,6 +284,19 @@ struct WorkView: View {
                         icon: "stop.circle.fill",
                         action: {
                             viewModel.stopClaudeCode()
+                        }
+                    ),
+                    ToggleBar.ToggleItem(
+                        color: .cyan,
+                        isOn: $showDiff,
+                        icon: "doc.text.fill",
+                        action: {
+                            showDiff.toggle()
+                            if showDiff {
+                                log("Diff view shown")
+                            } else {
+                                log("Diff view hidden")
+                            }
                         }
                     ),
                     ToggleBar.ToggleItem(

@@ -517,3 +517,133 @@ struct LogRowView: View {
         )
     }
 }
+
+@Observable
+class DiffViewModel {
+    var codeDiff: String = ""
+
+    private var cancellables = Set<AnyCancellable>()
+
+    init() {
+        logger.codeDiffSubject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] diff in
+                guard let self = self else { return }
+                self.codeDiff = diff
+            }
+            .store(in: &cancellables)
+    }
+
+    var diffLines: [(text: String, type: DiffLineType)] {
+        guard !codeDiff.isEmpty else { return [] }
+
+        return codeDiff.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+            let lineString = String(line)
+            if lineString.hasPrefix("+") {
+                return (text: lineString, type: .addition)
+            } else if lineString.hasPrefix("-") {
+                return (text: lineString, type: .deletion)
+            } else if lineString.hasPrefix("@@") {
+                return (text: lineString, type: .hunk)
+            } else if lineString.hasPrefix("diff --git") || lineString.hasPrefix("index") {
+                return (text: lineString, type: .header)
+            } else {
+                return (text: lineString, type: .context)
+            }
+        }
+    }
+}
+
+enum DiffLineType {
+    case addition
+    case deletion
+    case hunk
+    case header
+    case context
+
+    var color: Color {
+        switch self {
+        case .addition:
+            return .green
+        case .deletion:
+            return .red
+        case .hunk:
+            return .cyan
+        case .header:
+            return .purple
+        case .context:
+            return .secondary
+        }
+    }
+}
+
+struct DiffView: View {
+    @Binding var showDiff: Bool
+    @Bindable var viewModel: DiffViewModel
+
+    var body: some View {
+        ZStack {
+            Color(UIColor.systemBackground)
+                .ignoresSafeArea()
+
+            if viewModel.codeDiff.isEmpty {
+                VStack {
+                    Spacer()
+                    Text("No changes")
+                        .font(.title2)
+                        .foregroundColor(.secondary.opacity(0.5))
+                    Spacer()
+                }
+                .frame(height: ACTUAL_SCREEN_HEIGHT)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        Spacer()
+                            .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")) * 2)
+
+                        ForEach(Array(viewModel.diffLines.enumerated()), id: \.offset) { index, line in
+                            DiffLineView(text: line.text, type: line.type)
+                        }
+
+                        Spacer()
+                            .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) * 2)
+                    }
+                    .padding(.horizontal, 12)
+                }
+                .frame(height: ACTUAL_SCREEN_HEIGHT)
+            }
+
+            VStack {
+                Spacer()
+
+                ToggleBar(items: [
+                    ToggleBar.ToggleItem(
+                        color: .blue,
+                        isOn: $showDiff,
+                        icon: "xmark",
+                        action: {
+                            showDiff.toggle()
+                        }
+                    )
+                ])
+            }
+        }
+    }
+}
+
+struct DiffLineView: View {
+    let text: String
+    let type: DiffLineType
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Text(text)
+                .font(.system(.body, design: .monospaced))
+                .foregroundColor(type.color)
+                .lineLimit(nil)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
+    }
+}

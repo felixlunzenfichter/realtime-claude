@@ -45,6 +45,7 @@ protocol LoggerProtocol {
     var promptStatusSubject: PassthroughSubject<PromptStatusUpdate, Never> { get }
     var transcriptionSubject: PassthroughSubject<TranscriptionUpdate, Never> { get }
     var macConnectionReadySubject: CurrentValueSubject<Bool, Never> { get }
+    var codeDiffSubject: CurrentValueSubject<String, Never> { get }
 
     func sendPromptToMac(_ prompt: String, messageId: UUID)
     func sendAudioToMac(_ audioData: Data, isStart: Bool, isEnd: Bool, messageId: UUID?)
@@ -97,6 +98,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     let transmittedLogIdsSubject = CurrentValueSubject<[String], Never>([])
     let transcriptionSubject = PassthroughSubject<TranscriptionUpdate, Never>()
     let macConnectionReadySubject = CurrentValueSubject<Bool, Never>(false)
+    let codeDiffSubject = CurrentValueSubject<String, Never>("")
 
     private var connection: NWConnection
     private let macHostname = "Felixs-MacBook-Pro.local"
@@ -359,6 +361,8 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             handleAssistantMessages(jsonData)
         case "transcription":
             handleTranscriptionMessage(jsonData)
+        case "code_diff":
+            handleCodeDiffMessage(jsonData)
         default:
             error("Unexpected message type: \(messageType)")
         }
@@ -574,6 +578,16 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         ))
 
         debugLog(id: "promptFlow", message: "TranscriptionUpdate sent to transcriptionSubject")
+    }
+
+    private func handleCodeDiffMessage(_ jsonData: [String: Any]) {
+        guard let diff = jsonData["diff"] as? String else {
+            error("diff was nil in code_diff message")
+            return
+        }
+
+        codeDiffSubject.send(diff)
+        log("📥 Received git diff: \(diff.isEmpty ? "empty" : "\(diff.split(separator: "\n").count) lines")")
     }
 
     private func sendStartMessage() {
