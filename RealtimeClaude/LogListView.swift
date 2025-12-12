@@ -21,15 +21,16 @@ class LogListViewModel {
     private var cancellables = Set<AnyCancellable>()
 
     var combinedLogs: [(LogMessage, Int?)] {
+        let recentLogs = Array(logs.suffix(1000))
         var combined: [(LogMessage, Int?)] = []
 
         if showRegularLogs && showErrorLogs {
-            combined.append(contentsOf: logs.map { ($0, nil) })
+            combined.append(contentsOf: recentLogs.map { ($0, nil) })
         } else if showRegularLogs && !showErrorLogs {
-            let regularLogs = logs.filter { $0.type != .error }
+            let regularLogs = recentLogs.filter { $0.type != .error }
             combined.append(contentsOf: regularLogs.map { ($0, nil) })
         } else if !showRegularLogs && showErrorLogs {
-            let errorLogs = logs.filter { $0.type == .error }
+            let errorLogs = recentLogs.filter { $0.type == .error }
             combined.append(contentsOf: errorLogs.map { ($0, nil) })
         }
 
