@@ -28,8 +28,9 @@ let diffDebounceTimer = null;
 const MAX_AUDIO_DURATION = 10;
 const MAX_AUDIO_BYTES = MAX_AUDIO_DURATION * 16000 * 4;
 
-const MAX_SUMMARY_CHARS = 100;
+const MAX_SUMMARY_CHARS = 50;
 const MAX_CONTEXT_EVENTS = 20;
+const MAX_SPEAK_LENGTH = 25;
 
 const assistantSummaryCache = [];
 const MAX_SUMMARY_CACHE_SIZE = 5;
@@ -145,10 +146,10 @@ TASK: Create summary
 INPUT: "${cleanText}"
 
 INSTRUCTIONS:
-Create a brief summary (under ${MAX_SUMMARY_CHARS} characters) describing what this prompt is asking for.
+Create a brief summary (under ${MAX_SPEAK_LENGTH} characters) describing what this prompt is asking for.
 
 OUTPUT: Respond with valid JSON only, no markdown, no explanation:
-{"summary": "short summary under ${MAX_SUMMARY_CHARS} chars"}`;
+{"summary": "short summary under ${MAX_SPEAK_LENGTH} chars"}`;
             }
 
             const os = require('os');
@@ -629,8 +630,6 @@ async function handleMessage(socket, logData) {
 function isSpeakMessage(logData) {
     return logData.type === 'speak';
 }
-
-const MAX_SPEAK_LENGTH = 50;
 
 function handleSpeakMessage(socket, logData) {
     const { text, summary } = logData;
