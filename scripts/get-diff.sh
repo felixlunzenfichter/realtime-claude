@@ -1,22 +1,22 @@
 #!/bin/bash
 cd "$(dirname "$0")/.."
 
-# 1. Git status
-echo "=== Git Status ==="
-git status --short
+# Branch status with ahead/behind count
+echo "=== Branch Status ==="
+git status -sb
 echo ""
 
-# 2. Unstaged changes
+# Unstaged changes
 echo "=== Unstaged Changes ==="
 git diff
 echo ""
 
-# 3. Staged changes
+# Staged changes
 echo "=== Staged Changes ==="
 git diff --staged
 echo ""
 
-# 4. Untracked files with their content
+# Untracked files with their content
 echo "=== Untracked files ==="
 git ls-files --others --exclude-standard | while read -r f; do
     if [ -f "$f" ]; then
@@ -29,19 +29,19 @@ git ls-files --others --exclude-standard | while read -r f; do
 done
 echo ""
 
-# 5. Last 5 commits
+# Last 5 commits
 echo "=== Last 5 commits ==="
 git log --oneline -5
 echo ""
 
-# 6. Last 3 commits content
-echo "=== Commit 1 (HEAD) ==="
+# Last 3 commits content
+echo "=== Commit (HEAD) ==="
 git show HEAD
 echo ""
 echo ""
-echo "=== Commit 2 (HEAD~1) ==="
+echo "=== Commit (HEAD~1) ==="
 git show HEAD~1
 echo ""
 echo ""
-echo "=== Commit 3 (HEAD~2) ==="
+echo "=== Commit (HEAD~2) ==="
 git show HEAD~2
