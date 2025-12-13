@@ -97,6 +97,8 @@ struct ToggleBar: View {
                             Image(systemName: icon)
                                 .font(.system(size: 30, weight: .semibold))
                                 .foregroundColor(item.color)
+                                .frame(width: 30, height: 30)
+                                .padding(5)
                         }
 
                         if let text = item.text {
@@ -270,17 +272,17 @@ struct WorkView: View {
                     ToggleBar.ToggleItem(
                         color: .blue,
                         isOn: $viewModel.isPlaybackEnabled,
-                        icon: viewModel.isPlayingAudio ? "speaker.wave.3.fill" : "speaker.slash.fill",
+                        icon: viewModel.isPlaybackEnabled ? "speaker.wave.3.fill" : "speaker.slash.fill",
                         action: {
                             viewModel.togglePlayback()
                         }
                     ),
                     ToggleBar.ToggleItem(
                         color: .green,
-                        isOn: $viewModel.isMicrophoneEnabled,
-                        icon: viewModel.isRecordingAudio ? "mic.fill" : "mic.slash.fill",
+                        isOn: $viewModel.isDetectionEnabled,
+                        icon: viewModel.isDetectionEnabled ? "mic.fill" : "mic.slash.fill",
                         action: {
-                            viewModel.isMicrophoneEnabled.toggle()
+                            viewModel.toggleDetection()
                         }
                     ),
                     ToggleBar.ToggleItem(
@@ -367,6 +369,7 @@ class WorkViewModel {
     var currentRecordingStatus: RecordingStatus = .disconnected
     var isRecordingAudio = false
     var isPlayingAudio = false
+    var isDetectionEnabled = true
     var isMicrophoneEnabled = false {
         didSet {
             handleMicrophoneToggle()
@@ -492,7 +495,7 @@ class WorkViewModel {
 
             let pitchDegrees = attitude.pitch * (180 / .pi)
 
-            if !self.isMicrophoneEnabled {
+            if self.isDetectionEnabled {
                 if pitchDegrees < -45 && !self.turningOnRecording {
                     debugLog(id: "deviceTilt", message: "📱 [Motion] Tilted down: \(Int(pitchDegrees))° (enabling mic)")
                     log("Device tilted down > 45 degrees - enabling microphone")
@@ -511,7 +514,7 @@ class WorkViewModel {
                     debugLog(id: "deviceTilt", message: "📱 [Motion] Still upright: \(Int(pitchDegrees))° (mic disabled)")
                 }
             } else {
-                debugLog(id: "deviceTilt", message: "⛔ [Motion] Tilt detection disabled (override ON)")
+                debugLog(id: "deviceTilt", message: "⛔ [Motion] Tilt detection disabled")
             }
         }
     }
@@ -543,6 +546,15 @@ class WorkViewModel {
             audioManager.disablePlayback()
         } else {
             audioManager.enablePlayback()
+        }
+    }
+
+    func toggleDetection() {
+        isDetectionEnabled.toggle()
+        if isDetectionEnabled {
+            log("Detection enabled - tilt detection active")
+        } else {
+            log("Detection disabled - microphone stays in current state")
         }
     }
 
