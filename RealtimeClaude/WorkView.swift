@@ -168,6 +168,7 @@ struct WorkView: View {
                                                         .font(.caption)
                                                         .foregroundColor(.gray)
                                                         .lineLimit(nil)
+                                                        .fixedSize(horizontal: false, vertical: true)
                                                         .frame(maxWidth: .infinity, alignment: .leading)
                                                         .onAppear {
                                                             debugLog(id: "messageDisplay", message: "Displaying user message - ID: \(message.id), Transcription: \(message.transcription ?? "nil"), Prompt: \(message.prompt), Summary: \(message.summary ?? "nil")")
@@ -177,12 +178,14 @@ struct WorkView: View {
                                                         .font(.body)
                                                         .foregroundColor(.white)
                                                         .lineLimit(nil)
+                                                        .fixedSize(horizontal: false, vertical: true)
                                                         .frame(maxWidth: .infinity, alignment: .leading)
                                                 } else {
                                                     Text("Assistant: \(message.prompt)")
                                                         .font(.body)
                                                         .foregroundColor(.white)
                                                         .lineLimit(nil)
+                                                        .fixedSize(horizontal: false, vertical: true)
                                                         .frame(maxWidth: .infinity, alignment: .leading)
                                                         .onAppear {
                                                             debugLog(id: "messageDisplay", message: "Displaying assistant message - ID: \(message.id), Prompt: \(message.prompt), Summary: \(message.summary ?? "nil")")
@@ -197,6 +200,7 @@ struct WorkView: View {
                                                             message.isPlaying ? .blue : .purple
                                                         )
                                                         .lineLimit(nil)
+                                                        .fixedSize(horizontal: false, vertical: true)
                                                         .frame(maxWidth: .infinity, alignment: .leading)
                                                         .onAppear {
                                                             debugLog(id: "promptFlow", message: "UI - Summary view appeared: messageId=\(message.id.uuidString), summary='\(summary)'")
