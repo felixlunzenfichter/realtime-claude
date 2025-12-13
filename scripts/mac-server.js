@@ -31,6 +31,9 @@ const MAX_AUDIO_BYTES = MAX_AUDIO_DURATION * 16000 * 4;
 const MAX_SUMMARY_CHARS = 100;
 const MAX_CONTEXT_EVENTS = 20;
 
+const assistantSummaryCache = [];
+const MAX_SUMMARY_CACHE_SIZE = 5;
+
 let haikuContext = [];
 
 const messageStates = new Map();
@@ -1407,7 +1410,20 @@ async function sendAssistantMessageToiOS(text) {
     }
 
     try {
+        const cachedEntry = assistantSummaryCache.find(entry => entry.text === text);
+
+        if (cachedEntry) {
+            console.log(`⏭️  Message already in cache - already processed and sent, skipping`);
+            return;
+        }
+
         const summary = await summarizeWithClaude(text);
+        console.log(`✅ Created new summary: "${summary}"`);
+
+        assistantSummaryCache.push({ text: text, summary: summary });
+        if (assistantSummaryCache.length > MAX_SUMMARY_CACHE_SIZE) {
+            assistantSummaryCache.shift();
+        }
 
         addToContext({ type: 'assistant_message', text: text, summary: summary });
 
