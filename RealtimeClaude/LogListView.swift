@@ -569,6 +569,10 @@ class DiffViewModel {
         var firstChangeIndex: Int?
 
         for (index, currentLine) in currentLines.enumerated() {
+            if currentLine.text.contains("=== Last 5 commits ===") {
+                break
+            }
+
             guard currentLine.type == .addition || currentLine.type == .deletion else {
                 continue
             }
@@ -727,7 +731,7 @@ struct DiffLineView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
             .background(
-                isHighlighted ? Color.yellow.opacity(0.3) : Color.clear
+                isHighlighted ? Color.yellow.opacity(0.1) : Color.clear
             )
 
             if type == .sectionHeader {
