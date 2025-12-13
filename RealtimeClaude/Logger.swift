@@ -104,7 +104,8 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     private var connection: NWConnection
     private let macHostname = "Felixs-MacBook-Pro.local"
     private let port: UInt16 = 8082
-    private let tcpProcessingQueue = DispatchQueue(label: "logger.tcp.processing", qos: .userInitiated)
+    private let tcpProcessingSendingQueue = DispatchQueue(label: "logger.tcp.processing.sending", qos: .userInitiated)
+    private let tcpProcessingReceivingQueue = DispatchQueue(label: "logger.tcp.processing.receiving", qos: .userInitiated)
     private var reconnectAttempts: Int = 0
     private var reconnectTimer: DispatchSourceTimer?
     private var oldestUnackedSentAt: Date?
@@ -139,26 +140,28 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         connection.stateUpdateHandler = { [weak self] state in
             guard let self = self else { return }
 
-            switch state {
-            case .ready:
-                log("Connected to Mac server")
-                self.isConnectionReady = true
-                self.reconnectAttempts = 0
-                self.cancelReconnectTimer()
-                self.startReceiving()
-                self.sendStartMessage()
-            case .failed(let connectionError):
-                log("Logger connection failed: \(connectionError)")
-                self.isConnectionReady = false
-                self.scheduleReconnect()
-            case .waiting(let waitError):
-                log("Waiting to connect to Mac: \(waitError)")
-                self.isConnectionReady = false
-                self.scheduleReconnect()
-            case .cancelled:
-                self.isConnectionReady = false
-            default:
-                break
+            self.tcpProcessingSendingQueue.async {
+                switch state {
+                case .ready:
+                    log("Connected to Mac server")
+                    self.isConnectionReady = true
+                    self.reconnectAttempts = 0
+                    self.cancelReconnectTimer()
+                    self.startReceiving()
+                    self.sendStartMessage()
+                case .failed(let connectionError):
+                    log("Logger connection failed: \(connectionError)")
+                    self.isConnectionReady = false
+                    self.scheduleReconnect()
+                case .waiting(let waitError):
+                    log("Waiting to connect to Mac: \(waitError)")
+                    self.isConnectionReady = false
+                    self.scheduleReconnect()
+                case .cancelled:
+                    self.isConnectionReady = false
+                default:
+                    break
+                }
             }
         }
 
@@ -198,7 +201,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     }
 
     private func sendMessage(_ data: Data, messageType: String, logMessage: String? = nil) {
-        tcpProcessingQueue.async { [weak self] in
+        tcpProcessingSendingQueue.async { [weak self] in
             guard let self = self else { return }
 
             guard self.isConnectionReady else {
@@ -289,7 +292,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             }
 
             if let data = data, !data.isEmpty {
-                self.tcpProcessingQueue.async {
+                self.tcpProcessingReceivingQueue.async {
                     self.handleIncomingData(data)
                 }
             }
