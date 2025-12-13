@@ -39,6 +39,45 @@ let haikuContext = [];
 
 const messageStates = new Map();
 
+const haikuPriorityQueue = {
+    queue: [],
+    isProcessing: false,
+
+    add(priority, task, description) {
+        const queuedTask = { priority, task, description };
+        this.queue.push(queuedTask);
+        this.queue.sort((a, b) => a.priority - b.priority);
+        console.log(`🔄 [QUEUE] Added: ${description} (priority ${priority})`);
+        console.log(`🔄 [QUEUE] Current queue size: ${this.queue.length}`);
+
+        if (!this.isProcessing) {
+            this.processNext();
+        }
+    },
+
+    async processNext() {
+        if (this.queue.length === 0) {
+            this.isProcessing = false;
+            console.log(`🔄 [QUEUE] Empty - stopping processor`);
+            return;
+        }
+
+        this.isProcessing = true;
+        const { priority, task, description } = this.queue.shift();
+
+        console.log(`🔄 [QUEUE] Processing: ${description} (priority ${priority})`);
+        console.log(`🔄 [QUEUE] Remaining in queue: ${this.queue.length}`);
+
+        try {
+            await task();
+        } catch (error) {
+            console.error(`🔄 [QUEUE] Task failed: ${description} - ${error.message}`);
+        }
+
+        this.processNext();
+    }
+};
+
 function getMessageState(messageId) {
     if (!messageId) {
         console.log('⚠️ No messageId provided');
@@ -153,7 +192,7 @@ OUTPUT: Respond with valid JSON only, no markdown, no explanation:
             try {
                 fs.writeFileSync(inputFile, prompt);
 
-                execSync(`cat "${inputFile}" | claude --model haiku --print - > "${outputFile}" 2>/dev/null`, {
+                execSync(`cat "${inputFile}" | claude --model haiku --print - > "${outputFile}" 2>&1`, {
                     stdio: 'ignore',
                     shell: '/bin/bash',
                     timeout: 30000
@@ -490,80 +529,91 @@ async function handleAudioEnd(messageId = null) {
     }
 
     try {
-        if (activeSocket) {
-            if (messageState.deleted) {
-                console.log(`⏭️ Skipping iOS transcription send for deleted message: ${messageId}`);
-            } else {
-                const rawTranscription = {
-                    type: 'transcription',
-                    status: 'transcription',
-                    transcription: concatenatedText,
-                    timestamp: Date.now()
-                };
-                if (messageId) {
-                    rawTranscription.messageId = messageId;
-                }
-                console.log(`📤 SENDING TO iOS: TRANSCRIPTION "${concatenatedText}"${messageId ? ` (messageId: ${messageId})` : ''}`);
-                activeSocket.write(JSON.stringify(rawTranscription) + '\n');
+        if (activeSocket && !messageState.deleted) {
+            const rawTranscription = {
+                type: 'transcription',
+                status: 'transcription',
+                transcription: concatenatedText,
+                timestamp: Date.now()
+            };
+            if (messageId) {
+                rawTranscription.messageId = messageId;
             }
+            console.log(`📤 SENDING TO iOS: TRANSCRIPTION "${concatenatedText}"${messageId ? ` (messageId: ${messageId})` : ''}`);
+            activeSocket.write(JSON.stringify(rawTranscription) + '\n');
         }
 
         addToContext({ type: 'transcription', text: concatenatedText, interim: false });
 
-        console.log(`🤖 STAGE 1: Running Haiku correction on COMPLETE text (including final chunk)...`);
-        console.log(`🤖 SENDING TO HAIKU: "${concatenatedText}"`);
-        const { corrected } = await processWithHaiku(concatenatedText, 'correct_transcription', messageState.allTranscriptions);
-
-        console.log(`✅ RECEIVED FROM HAIKU: "${corrected}"`);
-
-        if (corrected !== concatenatedText) {
-            addToContext({ type: 'corrected', raw: concatenatedText, corrected: corrected, interim: false });
-        }
-
-        console.log(`🎤 [FINAL] Raw: "${concatenatedText}"`);
-        console.log(`🎤 [FINAL] Corrected: "${corrected}"`);
-
-        if (activeSocket) {
-            if (messageState.deleted) {
-                console.log(`⏭️ Skipping iOS prompt send for deleted message: ${messageId}`);
-            } else {
-                const promptMessage = {
-                    type: 'transcription',
-                    status: 'prompt',
-                    transcription: concatenatedText,
-                    prompt: corrected,
-                    summary: null,
-                    timestamp: Date.now()
-                };
-                if (messageId) {
-                    promptMessage.messageId = messageId;
-                }
-                console.log(`📤 SENDING TO iOS: PROMPT "${corrected}"${messageId ? ` (messageId: ${messageId})` : ''}`);
-                activeSocket.write(JSON.stringify(promptMessage) + '\n');
-            }
-        }
-
-        console.log(`🤖 STAGE 2: Creating summary (in parallel with injection)...`);
-        const summaryPromise = (async () => {
-            let summary;
+        haikuPriorityQueue.add(1, async () => {
             try {
-                const summaryResult = await processWithHaiku(corrected, 'create_summary');
-                summary = summaryResult.summary;
-                console.log(`✅ Summary created: "${summary}"`);
-            } catch (err) {
-                console.error(`❌ Summary creation failed: ${err.message}`);
-                summary = corrected.substring(0, MAX_SUMMARY_CHARS);
-            }
+                console.log(`🤖 PRIORITY 1: Running Haiku correction on COMPLETE text...`);
+                console.log(`🤖 SENDING TO HAIKU: "${concatenatedText}"`);
+                const { corrected } = await processWithHaiku(concatenatedText, 'correct_transcription', messageState.allTranscriptions);
 
-            if (activeSocket) {
-                if (messageState.deleted) {
-                    console.log(`⏭️ Skipping iOS summary send for deleted message: ${messageId}`);
-                } else {
+                console.log(`✅ RECEIVED FROM HAIKU: "${corrected}"`);
+
+                if (corrected !== concatenatedText) {
+                    addToContext({ type: 'corrected', raw: concatenatedText, corrected: corrected, interim: false });
+
+                    console.log(`🎤 [FINAL] Raw: "${concatenatedText}"`);
+                    console.log(`🎤 [FINAL] Corrected: "${corrected}"`);
+
+                    if (activeSocket && !messageState.deleted) {
+                        const promptMessage = {
+                            type: 'transcription',
+                            status: 'prompt',
+                            transcription: concatenatedText,
+                            prompt: corrected,
+                            summary: null,
+                            timestamp: Date.now()
+                        };
+                        if (messageId) {
+                            promptMessage.messageId = messageId;
+                        }
+                        console.log(`📤 SENDING TO iOS: PROMPT UPDATE "${corrected}"${messageId ? ` (messageId: ${messageId})` : ''}`);
+                        activeSocket.write(JSON.stringify(promptMessage) + '\n');
+                    }
+                }
+
+                console.log(`💉 Injecting corrected transcription: "${corrected}"`);
+                if (!messageState.deleted) {
+                    injectIntoTerminal(corrected, (success, error) => {
+                        if (success) {
+                            console.log('✅ Prompt injection successful');
+                        } else {
+                            console.error(`❌ Prompt injection failed: ${error}`);
+                        }
+                    });
+                }
+            } catch (err) {
+                console.error(`❌ Haiku correction failed: ${err.message}`);
+                console.log(`💉 Falling back to raw transcription: "${concatenatedText}"`);
+                if (!messageState.deleted) {
+                    injectIntoTerminal(concatenatedText, (success, error) => {
+                        if (success) {
+                            console.log('✅ Prompt injection successful (fallback)');
+                        } else {
+                            console.error(`❌ Prompt injection failed (fallback): ${error}`);
+                        }
+                    });
+                }
+            }
+        }, `Prompt correction for "${concatenatedText.substring(0, 30)}..."`);
+
+        haikuPriorityQueue.add(2, async () => {
+            try {
+                console.log(`🤖 PRIORITY 2: Creating summary...`);
+                const summaryResult = await processWithHaiku(concatenatedText, 'create_summary');
+                const summary = summaryResult.summary;
+                console.log(`✅ Summary created: "${summary}"`);
+
+                if (activeSocket && !messageState.deleted) {
                     const summaryMessage = {
                         type: 'transcription',
                         status: 'summary',
                         transcription: concatenatedText,
-                        prompt: corrected,
+                        prompt: concatenatedText,
                         summary: summary,
                         timestamp: Date.now()
                     };
@@ -573,24 +623,11 @@ async function handleAudioEnd(messageId = null) {
                     console.log(`📤 SENDING TO iOS: SUMMARY "${summary}"${messageId ? ` (messageId: ${messageId})` : ''}`);
                     activeSocket.write(JSON.stringify(summaryMessage) + '\n');
                 }
+            } catch (err) {
+                console.error(`❌ Summary creation failed: ${err.message}`);
             }
-        })();
+        }, `User message summary for "${concatenatedText.substring(0, 30)}..."`);
 
-        if (messageState.deleted) {
-            console.log(`⏭️ Skipping prompt injection for deleted message: ${messageId}`);
-            await summaryPromise;
-        } else {
-            console.log(`💉 Injecting corrected prompt into terminal: "${corrected}"`);
-            injectIntoTerminal(corrected, async (success, error) => {
-                if (success) {
-                    console.log('✅ Prompt injection successful');
-                } else {
-                    console.error(`❌ Prompt injection failed: ${error}`);
-                }
-
-                await summaryPromise;
-            });
-        }
     } catch (err) {
         console.error(`❌ Final transcription error: ${err.message}`);
     }
@@ -1022,17 +1059,6 @@ async function sendHandshakeResponse(socket, stats) {
 
     const previousErrors = getPreviousSessionErrors(stats.sessionNumber);
 
-    // Summarize the last assistant message if we have one
-    let assistantMessageSummary = null;
-    if (lastSentAssistantMessage) {
-        console.log(`📝 Summarizing last assistant message for handshake...`);
-        try {
-            assistantMessageSummary = await summarizeWithClaude(lastSentAssistantMessage);
-        } catch (error) {
-            console.error(`⚠️ Failed to summarize assistant message: ${error.message}`);
-        }
-    }
-
     const handshakeResponse = JSON.stringify({
         type: 'handshake',
         sessionNumber: stats.sessionNumber,
@@ -1042,7 +1068,7 @@ async function sendHandshakeResponse(socket, stats) {
         apiKey: apiKey,
         previousErrors: previousErrors,
         currentAssistantMessage: lastSentAssistantMessage,
-        currentAssistantMessageSummary: assistantMessageSummary
+        currentAssistantMessageSummary: null
     }) + '\n';
 
     socket.write(handshakeResponse);
@@ -1055,9 +1081,33 @@ async function sendHandshakeResponse(socket, stats) {
 
     if (lastSentAssistantMessage) {
         console.log(`📤 Handshake includes assistant message: ${lastSentAssistantMessage.substring(0, 100)}...`);
-        if (assistantMessageSummary) {
-            console.log(`📤 Summary: "${assistantMessageSummary}"`);
-        }
+        console.log(`📤 Summary pending...`);
+
+        haikuPriorityQueue.add(3, async () => {
+            try {
+                const assistantMessageSummary = await summarizeWithClaude(lastSentAssistantMessage);
+                console.log(`✅ Summary created: "${assistantMessageSummary}"`);
+
+                const summaryUpdate = JSON.stringify({
+                    type: 'handshake',
+                    sessionNumber: stats.sessionNumber,
+                    totalUptime: stats.totalUptime,
+                    todayUptime: stats.todayUptime,
+                    totalLogs: stats.totalLogs,
+                    apiKey: apiKey,
+                    previousErrors: previousErrors,
+                    currentAssistantMessage: lastSentAssistantMessage,
+                    currentAssistantMessageSummary: assistantMessageSummary
+                }) + '\n';
+
+                if (activeSocket) {
+                    activeSocket.write(summaryUpdate);
+                    console.log(`📤 Handshake summary update sent: "${assistantMessageSummary}"`);
+                }
+            } catch (error) {
+                console.error(`⚠️ Failed to summarize assistant message: ${error.message}`);
+            }
+        }, `Handshake assistant summary for "${lastSentAssistantMessage.substring(0, 30)}..."`);
     } else {
         console.log(`📤 Handshake sent with no assistant message (null)`);
     }
@@ -1445,36 +1495,56 @@ function checkForInjectedPrompts(filePath) {
 }
 
 async function sendPromptAckWithSummary(originalPrompt) {
-    try {
-        const summary = await summarizeWithClaude(originalPrompt);
+    let extractedSummary = null;
 
-        addToContext({ type: 'user_message', text: originalPrompt, summary: summary });
-
-        const ackMessage = {
-            type: 'prompt_ack',
-            status: 'success',
-            method: 'conversation_event_verification',
-            originalPrompt: originalPrompt,
-            summary: summary,
-            timestamp: Date.now()
-        };
-
-        activeSocket.write(JSON.stringify(ackMessage) + '\n');
-        console.log(`✅ Prompt verified with summary: "${summary}"`);
-    } catch (error) {
-        console.error(`❌ Failed to summarize prompt: ${error.message}`);
-        addToContext({ type: 'user_message', text: originalPrompt, summary: null });
-
-        const ackMessage = {
-            type: 'prompt_ack',
-            status: 'success',
-            method: 'conversation_event_verification',
-            originalPrompt: originalPrompt,
-            timestamp: Date.now()
-        };
-        activeSocket.write(JSON.stringify(ackMessage) + '\n');
-        console.log('✅ Prompt verified (no summary)');
+    const jsonMatch = originalPrompt.match(/\{\s*"summary"\s*:\s*"([^"]*)"\s*\}/);
+    if (jsonMatch) {
+        extractedSummary = jsonMatch[1];
+        console.log(`✅ Extracted embedded summary from user prompt: "${extractedSummary}"`);
     }
+
+    const ackMessage = {
+        type: 'prompt_ack',
+        status: 'success',
+        method: 'conversation_event_verification',
+        originalPrompt: originalPrompt,
+        summary: extractedSummary,
+        timestamp: Date.now()
+    };
+
+    activeSocket.write(JSON.stringify(ackMessage) + '\n');
+
+    if (extractedSummary) {
+        console.log('✅ Prompt verified with embedded summary - no Haiku call needed');
+        addToContext({ type: 'user_message', text: originalPrompt, summary: extractedSummary });
+        return;
+    }
+
+    console.log('✅ Prompt verified, summary pending...');
+
+    haikuPriorityQueue.add(2, async () => {
+        try {
+            const summary = await summarizeWithClaude(originalPrompt);
+            addToContext({ type: 'user_message', text: originalPrompt, summary: summary });
+
+            const summaryUpdate = {
+                type: 'prompt_ack',
+                status: 'success',
+                method: 'conversation_event_verification',
+                originalPrompt: originalPrompt,
+                summary: summary,
+                timestamp: Date.now()
+            };
+
+            if (activeSocket) {
+                activeSocket.write(JSON.stringify(summaryUpdate) + '\n');
+                console.log(`✅ Summary update sent: "${summary}"`);
+            }
+        } catch (error) {
+            console.error(`❌ Failed to summarize prompt: ${error.message}`);
+            addToContext({ type: 'user_message', text: originalPrompt, summary: null });
+        }
+    }, `User prompt summary for "${originalPrompt.substring(0, 30)}..."`);
 }
 
 async function sendAssistantMessageToiOS(text) {
@@ -1491,28 +1561,79 @@ async function sendAssistantMessageToiOS(text) {
             return;
         }
 
-        const summary = await summarizeWithClaude(text);
-        console.log(`✅ Created new summary: "${summary}"`);
+        let extractedSummary = null;
 
-        assistantSummaryCache.push({ text: text, summary: summary });
-        if (assistantSummaryCache.length > MAX_SUMMARY_CACHE_SIZE) {
-            assistantSummaryCache.shift();
+        if (text.startsWith('```json')) {
+            const jsonMatch = text.match(/```json\s*\n(\{[\s\S]*?\})\s*\n```/);
+            if (jsonMatch) {
+                try {
+                    const parsed = JSON.parse(jsonMatch[1]);
+                    if (parsed.summary) {
+                        extractedSummary = parsed.summary;
+                        console.log(`✅ Extracted embedded summary from JSON: "${extractedSummary}"`);
+                    }
+                } catch (parseErr) {
+                    console.log(`⚠️ Failed to parse embedded JSON: ${parseErr.message}`);
+                }
+            }
         }
-
-        addToContext({ type: 'assistant_message', text: text, summary: summary });
 
         const assistantMessage = {
             type: 'assistant_messages',
             messages: [{
                 text: text,
-                summary: summary,
+                summary: extractedSummary,
                 timestamp: Date.now()
             }],
             timestamp: Date.now()
         };
 
         activeSocket.write(JSON.stringify(assistantMessage) + '\n');
-        console.log(`✅ Sent assistant message to iOS with summary: "${summary}"`);
+
+        if (extractedSummary) {
+            console.log(`✅ Sent assistant message to iOS with embedded summary: "${extractedSummary}"`);
+
+            assistantSummaryCache.push({ text: text, summary: extractedSummary });
+            if (assistantSummaryCache.length > MAX_SUMMARY_CACHE_SIZE) {
+                assistantSummaryCache.shift();
+            }
+
+            addToContext({ type: 'assistant_message', text: text, summary: extractedSummary });
+            return;
+        }
+
+        console.log('✅ Sent assistant message to iOS, summary pending...');
+
+        haikuPriorityQueue.add(3, async () => {
+            try {
+                const summary = await summarizeWithClaude(text);
+                console.log(`✅ Created new summary: "${summary}"`);
+
+                assistantSummaryCache.push({ text: text, summary: summary });
+                if (assistantSummaryCache.length > MAX_SUMMARY_CACHE_SIZE) {
+                    assistantSummaryCache.shift();
+                }
+
+                addToContext({ type: 'assistant_message', text: text, summary: summary });
+
+                const summaryUpdate = {
+                    type: 'assistant_messages',
+                    messages: [{
+                        text: text,
+                        summary: summary,
+                        timestamp: Date.now()
+                    }],
+                    timestamp: Date.now()
+                };
+
+                if (activeSocket) {
+                    activeSocket.write(JSON.stringify(summaryUpdate) + '\n');
+                    console.log(`✅ Summary update sent: "${summary}"`);
+                }
+            } catch (error) {
+                console.error(`❌ Failed to summarize assistant message: ${error.message}`);
+            }
+        }, `Assistant message summary for "${text.substring(0, 30)}..."`);
     } catch (error) {
         console.error(`❌ Failed to send assistant message: ${error.message}`);
     }
