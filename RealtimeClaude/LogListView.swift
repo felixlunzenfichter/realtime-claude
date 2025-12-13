@@ -521,7 +521,9 @@ struct LogRowView: View {
 @Observable
 class DiffViewModel {
     var codeDiff: String = ""
+    var scrollToLineIndex: Int? = nil
 
+    private var previousDiffLines: [(text: String, type: DiffLineType)] = []
     private var cancellables = Set<AnyCancellable>()
 
     init() {
@@ -529,7 +531,13 @@ class DiffViewModel {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] diff in
                 guard let self = self else { return }
+
+                let previousDiff = self.codeDiff
                 self.codeDiff = diff
+
+                guard !diff.isEmpty, diff != previousDiff else { return }
+
+                self.findFirstChangedLine()
             }
             .store(in: &cancellables)
     }
@@ -553,6 +561,39 @@ class DiffViewModel {
                 return (text: lineString, type: .context)
             }
         }
+    }
+
+    func findFirstChangedLine() {
+        let currentLines = diffLines
+
+        var firstChangeIndex: Int?
+
+        for (index, currentLine) in currentLines.enumerated() {
+            guard currentLine.type == .addition || currentLine.type == .deletion else {
+                continue
+            }
+
+            let text = currentLine.text
+            if text.hasPrefix("---") || text.hasPrefix("+++") || text.hasPrefix("@@") {
+                continue
+            }
+
+            if index >= previousDiffLines.count {
+                firstChangeIndex = index
+                break
+            }
+
+            let previousLine = previousDiffLines[index]
+            if currentLine.text != previousLine.text {
+                firstChangeIndex = index
+                break
+            }
+        }
+
+        previousDiffLines = currentLines
+
+        scrollToLineIndex = nil
+        scrollToLineIndex = firstChangeIndex ?? 0
     }
 }
 
@@ -601,21 +642,42 @@ struct DiffView: View {
                 }
                 .frame(height: ACTUAL_SCREEN_HEIGHT)
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        Spacer()
-                            .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")) * 2)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            Spacer()
+                                .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")) * 2)
 
-                        ForEach(Array(viewModel.diffLines.enumerated()), id: \.offset) { index, line in
-                            DiffLineView(text: line.text, type: line.type)
+                            ForEach(Array(viewModel.diffLines.enumerated()), id: \.offset) { index, line in
+                                DiffLineView(text: line.text, type: line.type, index: index, scrollToLineIndex: viewModel.scrollToLineIndex)
+                                    .id(index)
+                            }
+
+                            Spacer()
+                                .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) * 2)
                         }
-
-                        Spacer()
-                            .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) * 2)
+                        .padding(.horizontal, 12)
                     }
-                    .padding(.horizontal, 12)
+                    .frame(height: ACTUAL_SCREEN_HEIGHT)
+                    .onChange(of: viewModel.scrollToLineIndex) { _, newIndex in
+                        guard let index = newIndex else { return }
+
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                proxy.scrollTo(index, anchor: .center)
+                            }
+                        }
+                    }
+                    .onAppear {
+                        guard let index = viewModel.scrollToLineIndex else { return }
+
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                proxy.scrollTo(index, anchor: .center)
+                            }
+                        }
+                    }
                 }
-                .frame(height: ACTUAL_SCREEN_HEIGHT)
             }
 
             VStack {
@@ -639,6 +701,13 @@ struct DiffView: View {
 struct DiffLineView: View {
     let text: String
     let type: DiffLineType
+    let index: Int
+    let scrollToLineIndex: Int?
+
+    var isHighlighted: Bool {
+        guard let scrollToLineIndex = scrollToLineIndex else { return false }
+        return index == scrollToLineIndex
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -657,6 +726,9 @@ struct DiffLineView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
+            .background(
+                isHighlighted ? Color.yellow.opacity(0.3) : Color.clear
+            )
 
             if type == .sectionHeader {
                 Spacer()
