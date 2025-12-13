@@ -6,12 +6,17 @@ echo "=== Git Status ==="
 git status --short
 echo ""
 
-# 2. Git diff HEAD
-echo "=== Git Diff HEAD ==="
-git diff HEAD
+# 2. Unstaged changes
+echo "=== Unstaged Changes ==="
+git diff
 echo ""
 
-# 3. Untracked files with their content
+# 3. Staged changes
+echo "=== Staged Changes ==="
+git diff --staged
+echo ""
+
+# 4. Untracked files with their content
 echo "=== Untracked files ==="
 git ls-files --others --exclude-standard | while read -r f; do
     if [ -f "$f" ]; then
@@ -24,12 +29,12 @@ git ls-files --others --exclude-standard | while read -r f; do
 done
 echo ""
 
-# 4. Last 5 commits
+# 5. Last 5 commits
 echo "=== Last 5 commits ==="
 git log --oneline -5
 echo ""
 
-# 5. Last 3 commits content
+# 6. Last 3 commits content
 echo "=== Commit 1 (HEAD) ==="
 git show HEAD
 echo ""
