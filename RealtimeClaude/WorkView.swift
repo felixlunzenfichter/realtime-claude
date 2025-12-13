@@ -585,6 +585,7 @@ class WorkViewModel {
 
     func deleteMessage(_ id: UUID) {
         realtimeAPI.deleteMessage(id: id)
+        logger.sendDeleteToMac(messageId: id)
         log("🗑️ Deleted message: \(id)")
     }
 

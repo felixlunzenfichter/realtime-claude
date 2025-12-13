@@ -49,6 +49,7 @@ protocol LoggerProtocol {
 
     func sendPromptToMac(_ prompt: String, messageId: UUID)
     func sendAudioToMac(_ audioData: Data, isStart: Bool, isEnd: Bool, messageId: UUID?)
+    func sendDeleteToMac(messageId: UUID)
 }
 
 enum LogType: Codable {
@@ -642,6 +643,20 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
         let flags = isStart ? " (START)" : (isEnd ? " (END)" : "")
         sendMessage(jsonData, messageType: "audio\(flags)")
+    }
+
+    func sendDeleteToMac(messageId: UUID) {
+        let deleteMessage: [String: Any] = [
+            "type": "delete",
+            "messageId": messageId.uuidString
+        ]
+
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: deleteMessage) else {
+            error("Failed to serialize delete message to JSON")
+            return
+        }
+
+        sendMessage(jsonData, messageType: "delete", logMessage: "📤 [iOS → macOS] Sending delete for messageId: \(messageId.uuidString)")
     }
 
     private func scheduleReconnect() {

@@ -41,8 +41,8 @@ const messageStates = new Map();
 
 function getMessageState(messageId) {
     if (!messageId) {
-        console.log('⚠️ No messageId provided, using fallback ID');
-        messageId = 'fallback';
+        console.log('⚠️ No messageId provided');
+        return null;
     }
 
     if (!messageStates.has(messageId)) {
@@ -54,18 +54,12 @@ function getMessageState(messageId) {
             isRecordingAudio: false,
             transcriptionHistory: [],
             allTranscriptions: [],
-            transcriptionCounter: 0
+            transcriptionCounter: 0,
+            deleted: false
         });
     }
 
     return messageStates.get(messageId);
-}
-
-function cleanupMessageState(messageId) {
-    if (messageId && messageStates.has(messageId)) {
-        console.log(`🧹 Cleaning up message state for ID: ${messageId}`);
-        messageStates.delete(messageId);
-    }
 }
 
 function addToContext(event) {
@@ -303,12 +297,25 @@ async function transcribeAudio(audioPath) {
 async function handleAudioMessage(socket, logData) {
     const { audioData, isStart, isEnd, messageId } = logData;
 
+    if (messageId) {
+        const messageState = getMessageState(messageId);
+        if (messageState && messageState.deleted) {
+            console.log(`⏭️ Skipping audio processing for deleted message: ${messageId}`);
+            return;
+        }
+    }
+
     if (isStart) {
         console.log('🎤 Audio recording started (embedded flag)');
-        const msgId = messageId || 'fallback';
-        console.log(`📋 Message ID: ${msgId}`);
+        if (!messageId) {
+            console.log('⚠️ No messageId provided for audio start');
+            return;
+        }
+        console.log(`📋 Message ID: ${messageId}`);
 
-        const messageState = getMessageState(msgId);
+        const messageState = getMessageState(messageId);
+        if (!messageState) return;
+
         messageState.audioBuffer = Buffer.alloc(0);
         messageState.isRecordingAudio = true;
         messageState.transcriptionHistory = [];
@@ -329,8 +336,13 @@ async function handleAudioMessage(socket, logData) {
         return;
     }
 
-    const msgId = messageId || 'fallback';
-    const messageState = getMessageState(msgId);
+    if (!messageId) {
+        console.log('⚠️ No messageId provided for audio data');
+        return;
+    }
+
+    const messageState = getMessageState(messageId);
+    if (!messageState) return;
 
     const newAudio = Buffer.from(audioData, 'base64');
     messageState.audioBuffer = Buffer.concat([messageState.audioBuffer, newAudio]);
@@ -340,13 +352,23 @@ async function handleAudioMessage(socket, logData) {
     }
 
     if (messageState.isRecordingAudio && !messageState.isTranscribing && messageState.audioBuffer.length >= 16000) {
-        triggerTranscription(false, msgId);
+        triggerTranscription(false, messageId);
     }
 }
 
 async function triggerTranscription(isFinalChunk = false, messageId = null) {
-    const msgId = messageId || 'fallback';
-    const messageState = getMessageState(msgId);
+    if (!messageId) {
+        console.log('⚠️ No messageId provided for transcription');
+        return;
+    }
+
+    const messageState = getMessageState(messageId);
+    if (!messageState) return;
+
+    if (messageState.deleted) {
+        console.log(`⏭️ Skipping transcription for deleted message: ${messageId}`);
+        return;
+    }
 
     if (messageState.isTranscribing) {
         console.log('⏳ Transcription already in progress, waiting for completion...');
@@ -415,17 +437,21 @@ async function triggerTranscription(isFinalChunk = false, messageId = null) {
             }
 
             if (activeSocket && (messageState.isRecordingAudio || isFinalChunk)) {
-                const rawTranscription = {
-                    type: 'transcription',
-                    status: isFinalChunk ? 'final_chunk' : 'transcription',
-                    transcription: concatenatedText,
-                    timestamp: Date.now()
-                };
-                if (messageId) {
-                    rawTranscription.messageId = messageId;
+                if (messageState.deleted) {
+                    console.log(`⏭️ Skipping iOS send for deleted message: ${messageId}`);
+                } else {
+                    const rawTranscription = {
+                        type: 'transcription',
+                        status: isFinalChunk ? 'final_chunk' : 'transcription',
+                        transcription: concatenatedText,
+                        timestamp: Date.now()
+                    };
+                    if (messageId) {
+                        rawTranscription.messageId = messageId;
+                    }
+                    console.log(`📤 SENDING TO iOS: ${isFinalChunk ? 'FINAL_CHUNK' : 'TRANSCRIPTION'} "${concatenatedText}"${messageId ? ` (messageId: ${messageId})` : ''}`);
+                    activeSocket.write(JSON.stringify(rawTranscription) + '\n');
                 }
-                console.log(`📤 SENDING TO iOS: ${isFinalChunk ? 'FINAL_CHUNK' : 'TRANSCRIPTION'} "${concatenatedText}"${messageId ? ` (messageId: ${messageId})` : ''}`);
-                activeSocket.write(JSON.stringify(rawTranscription) + '\n');
             }
 
             addToContext({ type: 'transcription', text: text, interim: !isFinalChunk });
@@ -440,8 +466,18 @@ async function triggerTranscription(isFinalChunk = false, messageId = null) {
 async function handleAudioEnd(messageId = null) {
     console.log('🎤 Audio recording stopped (embedded flag)');
 
-    const msgId = messageId || 'fallback';
-    const messageState = getMessageState(msgId);
+    if (!messageId) {
+        console.log('⚠️ No messageId provided for audio end');
+        return;
+    }
+
+    const messageState = getMessageState(messageId);
+    if (!messageState) return;
+
+    if (messageState.deleted) {
+        console.log(`⏭️ Skipping final processing for deleted message: ${messageId}`);
+        return;
+    }
 
     messageState.isRecordingAudio = false;
 
@@ -450,23 +486,26 @@ async function handleAudioEnd(messageId = null) {
 
     if (!concatenatedText || concatenatedText.trim().length === 0) {
         console.log('⚠️ No concatenated text, skipping final processing');
-        cleanupMessageState(msgId);
         return;
     }
 
     try {
         if (activeSocket) {
-            const rawTranscription = {
-                type: 'transcription',
-                status: 'transcription',
-                transcription: concatenatedText,
-                timestamp: Date.now()
-            };
-            if (messageId) {
-                rawTranscription.messageId = messageId;
+            if (messageState.deleted) {
+                console.log(`⏭️ Skipping iOS transcription send for deleted message: ${messageId}`);
+            } else {
+                const rawTranscription = {
+                    type: 'transcription',
+                    status: 'transcription',
+                    transcription: concatenatedText,
+                    timestamp: Date.now()
+                };
+                if (messageId) {
+                    rawTranscription.messageId = messageId;
+                }
+                console.log(`📤 SENDING TO iOS: TRANSCRIPTION "${concatenatedText}"${messageId ? ` (messageId: ${messageId})` : ''}`);
+                activeSocket.write(JSON.stringify(rawTranscription) + '\n');
             }
-            console.log(`📤 SENDING TO iOS: TRANSCRIPTION "${concatenatedText}"${messageId ? ` (messageId: ${messageId})` : ''}`);
-            activeSocket.write(JSON.stringify(rawTranscription) + '\n');
         }
 
         addToContext({ type: 'transcription', text: concatenatedText, interim: false });
@@ -485,19 +524,23 @@ async function handleAudioEnd(messageId = null) {
         console.log(`🎤 [FINAL] Corrected: "${corrected}"`);
 
         if (activeSocket) {
-            const promptMessage = {
-                type: 'transcription',
-                status: 'prompt',
-                transcription: concatenatedText,
-                prompt: corrected,
-                summary: null,
-                timestamp: Date.now()
-            };
-            if (messageId) {
-                promptMessage.messageId = messageId;
+            if (messageState.deleted) {
+                console.log(`⏭️ Skipping iOS prompt send for deleted message: ${messageId}`);
+            } else {
+                const promptMessage = {
+                    type: 'transcription',
+                    status: 'prompt',
+                    transcription: concatenatedText,
+                    prompt: corrected,
+                    summary: null,
+                    timestamp: Date.now()
+                };
+                if (messageId) {
+                    promptMessage.messageId = messageId;
+                }
+                console.log(`📤 SENDING TO iOS: PROMPT "${corrected}"${messageId ? ` (messageId: ${messageId})` : ''}`);
+                activeSocket.write(JSON.stringify(promptMessage) + '\n');
             }
-            console.log(`📤 SENDING TO iOS: PROMPT "${corrected}"${messageId ? ` (messageId: ${messageId})` : ''}`);
-            activeSocket.write(JSON.stringify(promptMessage) + '\n');
         }
 
         console.log(`🤖 STAGE 2: Creating summary (in parallel with injection)...`);
@@ -513,41 +556,71 @@ async function handleAudioEnd(messageId = null) {
             }
 
             if (activeSocket) {
-                const summaryMessage = {
-                    type: 'transcription',
-                    status: 'summary',
-                    transcription: concatenatedText,
-                    prompt: corrected,
-                    summary: summary,
-                    timestamp: Date.now()
-                };
-                if (messageId) {
-                    summaryMessage.messageId = messageId;
+                if (messageState.deleted) {
+                    console.log(`⏭️ Skipping iOS summary send for deleted message: ${messageId}`);
+                } else {
+                    const summaryMessage = {
+                        type: 'transcription',
+                        status: 'summary',
+                        transcription: concatenatedText,
+                        prompt: corrected,
+                        summary: summary,
+                        timestamp: Date.now()
+                    };
+                    if (messageId) {
+                        summaryMessage.messageId = messageId;
+                    }
+                    console.log(`📤 SENDING TO iOS: SUMMARY "${summary}"${messageId ? ` (messageId: ${messageId})` : ''}`);
+                    activeSocket.write(JSON.stringify(summaryMessage) + '\n');
                 }
-                console.log(`📤 SENDING TO iOS: SUMMARY "${summary}"${messageId ? ` (messageId: ${messageId})` : ''}`);
-                activeSocket.write(JSON.stringify(summaryMessage) + '\n');
             }
         })();
 
-        console.log(`💉 Injecting corrected prompt into terminal: "${corrected}"`);
-        injectIntoTerminal(corrected, async (success, error) => {
-            if (success) {
-                console.log('✅ Prompt injection successful');
-            } else {
-                console.error(`❌ Prompt injection failed: ${error}`);
-            }
-
+        if (messageState.deleted) {
+            console.log(`⏭️ Skipping prompt injection for deleted message: ${messageId}`);
             await summaryPromise;
-        });
+        } else {
+            console.log(`💉 Injecting corrected prompt into terminal: "${corrected}"`);
+            injectIntoTerminal(corrected, async (success, error) => {
+                if (success) {
+                    console.log('✅ Prompt injection successful');
+                } else {
+                    console.error(`❌ Prompt injection failed: ${error}`);
+                }
+
+                await summaryPromise;
+            });
+        }
     } catch (err) {
         console.error(`❌ Final transcription error: ${err.message}`);
-    } finally {
-        cleanupMessageState(msgId);
     }
 }
 
 function isAudioMessage(logData) {
     return logData.type === 'audio';
+}
+
+function isDeleteMessage(logData) {
+    return logData.type === 'delete';
+}
+
+function handleDeleteMessage(logData) {
+    const messageId = logData.messageId;
+
+    if (!messageId) {
+        console.log('⚠️ Delete message received without messageId');
+        return;
+    }
+
+    console.log(`🗑️ DELETE MESSAGE: Received delete request for messageId: ${messageId}`);
+
+    const messageState = getMessageState(messageId);
+    if (messageState) {
+        messageState.deleted = true;
+        console.log(`✅ Marked message as deleted: ${messageId}`);
+    } else {
+        console.log(`⚠️ No message state found for messageId: ${messageId}`);
+    }
 }
 
 const server = net.createServer((socket) => {
@@ -618,6 +691,8 @@ async function handleMessage(socket, logData) {
         handleSpeakMessage(socket, logData);
     } else if (isAudioMessage(logData)) {
         await handleAudioMessage(socket, logData);
+    } else if (isDeleteMessage(logData)) {
+        handleDeleteMessage(logData);
     } else if (isErrorMessage(logData)) {
         handleErrorMessage(socket, logData);
     } else if (isLogMessage(logData)) {
