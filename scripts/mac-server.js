@@ -21,7 +21,7 @@ const WHISPER_SERVER_URL = 'http://localhost:5050';
 let currentSessionFile = null;
 let currentSessionNumber = 0;
 let activeSocket = null;
-let lastSentAssistantMessage = null;
+
 let lastDiffSent = null;
 let diffDebounceTimer = null;
 
@@ -92,8 +92,10 @@ function getMessageState(messageId) {
             isTranscribing: false,
             isRecordingAudio: false,
             transcriptionHistory: [],
-            allTranscriptions: [],
-            transcriptionCounter: 0,
+            completeTranscription: '',
+            shortTranscription: '',
+            prompt: null,
+            summary: null,
             deleted: false
         });
     }
@@ -116,12 +118,11 @@ function formatContextForHaiku() {
     if (haikuContext.length === 0) return "No previous context.";
 
     return haikuContext.map((e, i) => {
-        const interimLabel = e.interim ? ' (interim)' : ' (final)';
         switch (e.type) {
             case 'transcription':
-                return `[${i + 1}] TRANSCRIPTION${interimLabel}: "${e.text}"`;
+                return `[${i + 1}] TRANSCRIPTION: "${e.text}"`;
             case 'corrected':
-                return `[${i + 1}] CORRECTED${interimLabel}: "${e.raw}" → "${e.corrected}"`;
+                return `[${i + 1}] CORRECTED: "${e.raw}" → "${e.corrected}"`;
             case 'user_message':
                 return `[${i + 1}] USER: "${e.text}" (summary: "${e.summary || 'pending'}")`;
             case 'assistant_message':
@@ -134,7 +135,7 @@ function formatContextForHaiku() {
     }).join('\n');
 }
 
-async function processWithHaiku(text, task, fullTranscriptions = null) {
+async function processWithHaiku(text, task, completeTranscription = null) {
     const cleanText = text.replace(/[\n\r]+/g, ' ').replace(/\s+/g, ' ').trim();
     const context = formatContextForHaiku();
 
@@ -149,8 +150,8 @@ async function processWithHaiku(text, task, fullTranscriptions = null) {
             const retryNote = attempt > 1 ? ` (attempt ${attempt}/${MAX_ATTEMPTS})` : '';
             console.log(`   Processing${retryNote}...`);
 
-            const fullTranscriptionsText = fullTranscriptions
-                ? `\n\nFULL TRANSCRIPTION HISTORY (all raw outputs from Whisper, no deduplication):\n${fullTranscriptions.map((t, i) => `[${i + 1}] (${t.startTime}s-${t.endTime}s) ${t.text}`).join('\n')}`
+            const completeTranscriptionText = completeTranscription
+                ? `\n\nCOMPLETE TRANSCRIPTION WITH TIMESTAMPS:\n${completeTranscription}`
                 : '';
 
             let prompt;
@@ -158,14 +159,14 @@ async function processWithHaiku(text, task, fullTranscriptions = null) {
                 prompt = `You are a transcription processor for a voice-controlled coding assistant.
 
 CONTEXT (last ${haikuContext.length} events):
-${context}${fullTranscriptionsText}
+${context}${completeTranscriptionText}
 
 TASK: Correct transcription errors
-INPUT (deduplicated version): "${cleanText}"
+INPUT (without timestamps): "${cleanText}"
 
 INSTRUCTIONS:
 Fix any speech-to-text errors based on context. Common issues: misheard technical terms, homophones, incomplete words.
-${fullTranscriptions ? '\nNOTE: You have both the full transcription history (all raw Whisper outputs) and the deduplicated version. Use the full history for context/safety if needed.' : ''}
+${completeTranscription ? '\nNOTE: You have the complete transcription with timestamps showing when each segment was spoken. Use this for context if needed.' : ''}
 
 OUTPUT: Respond with valid JSON only, no markdown, no explanation:
 {"corrected": "the corrected text or original if no correction needed"}`;
@@ -256,14 +257,16 @@ async function summarizeWithClaude(text) {
     return result.summary;
 }
 
-function deduplicateTranscription(newText, messageState) {
+function deduplicateTranscription(newText, messageState, timestamp) {
     if (!newText || newText.trim().length === 0) {
-        return getConcatenatedText(messageState);
+        return messageState.shortTranscription;
     }
 
     if (messageState.transcriptionHistory.length === 0) {
         console.log(`🔍 First transcription - adding all text: "${newText}"`);
         messageState.transcriptionHistory.push({ text: newText, timestamp: Date.now() });
+        messageState.completeTranscription = `${timestamp} ${newText}`;
+        messageState.shortTranscription = newText;
         return newText;
     }
 
@@ -291,15 +294,21 @@ function deduplicateTranscription(newText, messageState) {
     if (uniqueText.length > 0) {
         messageState.transcriptionHistory.push({ text: uniqueText, timestamp: Date.now() });
         console.log(`📝 Added to history: "${uniqueText}"`);
+
+        if (messageState.completeTranscription.length > 0) {
+            messageState.completeTranscription += ' ';
+        }
+        messageState.completeTranscription += `${timestamp} ${uniqueText}`;
+
+        if (messageState.shortTranscription.length > 0) {
+            messageState.shortTranscription += ' ';
+        }
+        messageState.shortTranscription += uniqueText;
     } else {
         console.log(`⏭️  No unique words to add`);
     }
 
-    return getConcatenatedText(messageState);
-}
-
-function getConcatenatedText(messageState) {
-    return messageState.transcriptionHistory.map(entry => entry.text).join(' ').trim();
+    return messageState.shortTranscription;
 }
 
 async function transcribeAudio(audioPath) {
@@ -358,8 +367,8 @@ async function handleAudioMessage(socket, logData) {
         messageState.audioBuffer = Buffer.alloc(0);
         messageState.isRecordingAudio = true;
         messageState.transcriptionHistory = [];
-        messageState.allTranscriptions = [];
-        messageState.transcriptionCounter = 0;
+        messageState.completeTranscription = '';
+        messageState.shortTranscription = '';
         return;
     }
 
@@ -456,21 +465,14 @@ async function triggerTranscription(isFinalChunk = false, messageId = null) {
             const chunkLabel = isFinalChunk ? '[FINAL CHUNK]' : '[RAW]';
             console.log(`🎤 ${chunkLabel} Raw whisper: "${text}"`);
 
-            const startTime = messageState.transcriptionCounter * 2;
-            const endTime = startTime + 2;
+            const startTimeSeconds = messageState.audioBuffer.length / 16000;
+            const minutes = Math.floor(startTimeSeconds / 60);
+            const seconds = Math.floor(startTimeSeconds % 60);
+            const timestamp = `[${minutes}:${seconds.toString().padStart(2, '0')}]`;
 
-            messageState.allTranscriptions.push({
-                text: text,
-                startTime: startTime,
-                endTime: endTime,
-                timestamp: Date.now()
-            });
+            deduplicateTranscription(text, messageState, timestamp);
 
-            messageState.transcriptionCounter++;
-
-            const concatenatedText = deduplicateTranscription(text, messageState);
-
-            if (!concatenatedText || concatenatedText.trim().length === 0) {
+            if (!messageState.shortTranscription || messageState.shortTranscription.trim().length === 0) {
                 console.log(`⏭️  Skipping (no unique words added)`);
                 return;
             }
@@ -482,18 +484,18 @@ async function triggerTranscription(isFinalChunk = false, messageId = null) {
                     const rawTranscription = {
                         type: 'transcription',
                         status: isFinalChunk ? 'final_chunk' : 'transcription',
-                        transcription: concatenatedText,
+                        transcription: messageState.shortTranscription,
                         timestamp: Date.now()
                     };
                     if (messageId) {
                         rawTranscription.messageId = messageId;
                     }
-                    console.log(`📤 SENDING TO iOS: ${isFinalChunk ? 'FINAL_CHUNK' : 'TRANSCRIPTION'} "${concatenatedText}"${messageId ? ` (messageId: ${messageId})` : ''}`);
+                    console.log(`📤 SENDING TO iOS: ${isFinalChunk ? 'FINAL_CHUNK' : 'TRANSCRIPTION'} "${messageState.shortTranscription}"${messageId ? ` (messageId: ${messageId})` : ''}`);
                     activeSocket.write(JSON.stringify(rawTranscription) + '\n');
                 }
             }
 
-            addToContext({ type: 'transcription', text: text, interim: !isFinalChunk });
+            addToContext({ type: 'transcription', text: messageState.completeTranscription });
         }
     } catch (err) {
         console.error(`❌ Interim transcription error: ${err.message}`);
@@ -520,10 +522,9 @@ async function handleAudioEnd(messageId = null) {
 
     messageState.isRecordingAudio = false;
 
-    const concatenatedText = getConcatenatedText(messageState);
-    console.log(`📝 Final concatenated text (${messageState.transcriptionHistory.length} entries): "${concatenatedText}"`);
+    console.log(`📝 Final concatenated text (${messageState.transcriptionHistory.length} entries): "${messageState.shortTranscription}"`);
 
-    if (!concatenatedText || concatenatedText.trim().length === 0) {
+    if (!messageState.shortTranscription || messageState.shortTranscription.trim().length === 0) {
         console.log('⚠️ No concatenated text, skipping final processing');
         return;
     }
@@ -533,39 +534,41 @@ async function handleAudioEnd(messageId = null) {
             const rawTranscription = {
                 type: 'transcription',
                 status: 'transcription',
-                transcription: concatenatedText,
+                transcription: messageState.shortTranscription,
                 timestamp: Date.now()
             };
             if (messageId) {
                 rawTranscription.messageId = messageId;
             }
-            console.log(`📤 SENDING TO iOS: TRANSCRIPTION "${concatenatedText}"${messageId ? ` (messageId: ${messageId})` : ''}`);
+            console.log(`📤 SENDING TO iOS: TRANSCRIPTION "${messageState.shortTranscription}"${messageId ? ` (messageId: ${messageId})` : ''}`);
             activeSocket.write(JSON.stringify(rawTranscription) + '\n');
         }
 
-        addToContext({ type: 'transcription', text: concatenatedText, interim: false });
+        addToContext({ type: 'transcription', text: messageState.completeTranscription });
 
         haikuPriorityQueue.add(1, async () => {
             try {
                 console.log(`🤖 PRIORITY 1: Running Haiku correction on COMPLETE text...`);
-                console.log(`🤖 SENDING TO HAIKU: "${concatenatedText}"`);
-                const { corrected } = await processWithHaiku(concatenatedText, 'correct_transcription', messageState.allTranscriptions);
+                console.log(`🤖 SENDING TO HAIKU: "${messageState.shortTranscription}"`);
+                const { corrected } = await processWithHaiku(messageState.shortTranscription, 'correct_transcription', messageState.completeTranscription);
 
                 console.log(`✅ RECEIVED FROM HAIKU: "${corrected}"`);
 
-                if (corrected !== concatenatedText) {
-                    addToContext({ type: 'corrected', raw: concatenatedText, corrected: corrected, interim: false });
+                messageState.prompt = corrected;
 
-                    console.log(`🎤 [FINAL] Raw: "${concatenatedText}"`);
+                if (corrected !== messageState.shortTranscription) {
+                    addToContext({ type: 'corrected', raw: messageState.completeTranscription, corrected: corrected });
+
+                    console.log(`🎤 [FINAL] Raw: "${messageState.shortTranscription}"`);
                     console.log(`🎤 [FINAL] Corrected: "${corrected}"`);
 
                     if (activeSocket && !messageState.deleted) {
                         const promptMessage = {
                             type: 'transcription',
                             status: 'prompt',
-                            transcription: concatenatedText,
-                            prompt: corrected,
-                            summary: null,
+                            transcription: messageState.shortTranscription,
+                            prompt: messageState.prompt,
+                            summary: messageState.summary,
                             timestamp: Date.now()
                         };
                         if (messageId) {
@@ -588,9 +591,9 @@ async function handleAudioEnd(messageId = null) {
                 }
             } catch (err) {
                 console.error(`❌ Haiku correction failed: ${err.message}`);
-                console.log(`💉 Falling back to raw transcription: "${concatenatedText}"`);
+                console.log(`💉 Falling back to raw transcription: "${messageState.shortTranscription}"`);
                 if (!messageState.deleted) {
-                    injectIntoTerminal(concatenatedText, (success, error) => {
+                    injectIntoTerminal(messageState.shortTranscription, (success, error) => {
                         if (success) {
                             console.log('✅ Prompt injection successful (fallback)');
                         } else {
@@ -599,22 +602,24 @@ async function handleAudioEnd(messageId = null) {
                     });
                 }
             }
-        }, `Prompt correction for "${concatenatedText.substring(0, 30)}..."`);
+        }, `Prompt correction for "${messageState.shortTranscription.substring(0, 30)}..."`);
 
         haikuPriorityQueue.add(2, async () => {
             try {
                 console.log(`🤖 PRIORITY 2: Creating summary...`);
-                const summaryResult = await processWithHaiku(concatenatedText, 'create_summary');
+                const summaryResult = await processWithHaiku(messageState.shortTranscription, 'create_summary');
                 const summary = summaryResult.summary;
                 console.log(`✅ Summary created: "${summary}"`);
+
+                messageState.summary = summary;
 
                 if (activeSocket && !messageState.deleted) {
                     const summaryMessage = {
                         type: 'transcription',
                         status: 'summary',
-                        transcription: concatenatedText,
-                        prompt: concatenatedText,
-                        summary: summary,
+                        transcription: messageState.shortTranscription,
+                        prompt: messageState.prompt,
+                        summary: messageState.summary,
                         timestamp: Date.now()
                     };
                     if (messageId) {
@@ -626,7 +631,7 @@ async function handleAudioEnd(messageId = null) {
             } catch (err) {
                 console.error(`❌ Summary creation failed: ${err.message}`);
             }
-        }, `User message summary for "${concatenatedText.substring(0, 30)}..."`);
+        }, `User message summary for "${messageState.shortTranscription.substring(0, 30)}..."`);
 
     } catch (err) {
         console.error(`❌ Final transcription error: ${err.message}`);
