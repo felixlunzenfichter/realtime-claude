@@ -42,6 +42,7 @@ let haikuContext = [];
 
 const messageStates = new Map();
 
+
 const haikuPriorityQueue = {
     queue: [],
     isProcessing: false,
@@ -1503,6 +1504,25 @@ function checkForInjectedPrompts(filePath) {
 
         const lastMessage = userEvents.length > 0 ? userEvents[userEvents.length - 1].text.substring(0, 100).replace(/\n/g, ' ') : 'none';
 
+        for (const userEvent of allUserEvents) {
+            if (userEvent.text.includes('interrupted by user') ||
+                userEvent.text.includes('Request interrupted by user')) {
+
+                console.log(`🛑 Detected interrupt message in conversation: "${userEvent.text.substring(0, 80)}..."`);
+
+                if (activeSocket) {
+                    const stateMessage = {
+                        type: 'claude_state',
+                        state: 'idle',
+                        isActive: false,
+                        timestamp: Date.now()
+                    };
+                    activeSocket.write(JSON.stringify(stateMessage) + '\n');
+                    console.log(`📤 Sent idle state to iOS (from interrupt detection)`);
+                }
+                break;
+            }
+        }
 
         for (const [promptId, data] of pendingPrompts.entries()) {
             if (!data.verified) {
