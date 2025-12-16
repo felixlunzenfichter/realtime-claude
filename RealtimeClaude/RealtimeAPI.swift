@@ -5,11 +5,10 @@ import Combine
 enum APIState {
     case disconnected
     case connected
-    case restarting
 }
 
 struct ConversationMessage: Identifiable, Sendable {
-    let id = UUID()
+    let id: UUID
     var timestamp: Date
     var transcription: String?
     var prompt: String
@@ -18,7 +17,8 @@ struct ConversationMessage: Identifiable, Sendable {
     var audioData: Data?
     var isPlaying: Bool = false
 
-    init(transcription: String? = nil, prompt: String, role: String, summary: String? = nil, audioData: Data? = nil) {
+    init(id: UUID = UUID(), transcription: String? = nil, prompt: String, role: String, summary: String? = nil, audioData: Data? = nil) {
+        self.id = id
         self.timestamp = Date()
         self.transcription = transcription
         self.prompt = prompt
@@ -32,21 +32,19 @@ protocol RealtimeAPIProtocol: Sendable {
     var apiStateSubject: CurrentValueSubject<APIState, Never> { get }
     var conversationContextSubject: CurrentValueSubject<[ConversationMessage], Never> { get }
     var loadingStatusSubject: CurrentValueSubject<String?, Never> { get }
+    var claudeIsActiveSubject: CurrentValueSubject<Bool, Never> { get }
 
     func saveAPIKey(_ apiKey: String?)
-    func acknowledgeSuccessfulPromptInjection(summary: String, messageId: UUID)
-    func acknowledgeSuccessfulInterruptExecution()
-    func clearAccumulatedPrompts()
-    func finalizeMessage(messageId: UUID)
     func stopCurrentRecording()
-    func restart()
-    func addAssistantMessage(_ text: String, summary: String)
     func addInterruptMessage(_ text: String) -> UUID
-    func updateAPIState(_ newState: APIState)
     func createRecordingMessage() -> UUID
     func connect()
     func disconnect()
     func deleteMessage(id: UUID)
+    func updateClaudeActiveState(_ isActive: Bool)
+    func updateTranscription(messageId: UUID, text: String)
+    func updatePrompt(messageId: UUID, text: String)
+    func updateSummary(messageId: UUID, text: String)
 }
 
 nonisolated(unsafe) let realtimeAPI: RealtimeAPIProtocol = RealtimeAPI()
@@ -55,39 +53,16 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
     let apiStateSubject = CurrentValueSubject<APIState, Never>(.disconnected)
     let conversationContextSubject = CurrentValueSubject<[ConversationMessage], Never>([])
     let loadingStatusSubject = CurrentValueSubject<String?, Never>(nil)
+    let claudeIsActiveSubject = CurrentValueSubject<Bool, Never>(false)
 
-    private var transcriptionCancellable: AnyCancellable?
     private var connectionStatusCancellable: AnyCancellable?
     private var audioPlaybackCancellable: AnyCancellable?
-    private var accumulatedText: String = ""
 
     private let sampleRate: Double = 16000
 
     init() {
         log("RealtimeAPI initialized with Mac-based transcription")
-        setupTranscriptionSubscription()
         setupAudioPlaybackTracking()
-    }
-
-    private func setupTranscriptionSubscription() {
-        transcriptionCancellable = logger.transcriptionSubject
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] update in
-                guard let self = self else { return }
-
-                debugLog(id: "promptFlow", message: "Received TranscriptionUpdate: status='\(update.status)', transcription='\(update.transcription)', prompt='\(update.prompt ?? "nil")', summary='\(update.summary ?? "nil")', isFinal=\(update.isFinal), isRaw=\(update.isRaw), messageId=\(update.messageId?.uuidString ?? "nil")")
-
-                if update.isRaw || update.status == "final_chunk" {
-                    debugLog(id: "promptFlow", message: "Calling updateTranscription() for raw update (status: \(update.status))")
-                    self.updateTranscription(update.transcription, messageId: update.messageId)
-                } else if update.isFinal {
-                    debugLog(id: "promptFlow", message: "Calling updatePrompt() for final update with status '\(update.status)'")
-                    self.updatePrompt(transcription: update.transcription, prompt: update.prompt ?? update.transcription, summary: update.summary, status: update.status, messageId: update.messageId)
-                } else {
-                    log("Update is neither raw nor final - IGNORING")
-                }
-            }
-        log("Subscribed to Mac transcription updates")
     }
 
     private func setupAudioPlaybackTracking() {
@@ -119,13 +94,8 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         }
     }
 
-    private func updateTranscription(_ text: String, messageId: UUID?) {
-        if text.isEmpty { return }
-
-        guard let messageId = messageId else {
-            error("updateTranscription called without messageId")
-            return
-        }
+    func updateTranscription(messageId: UUID, text: String) {
+        guard !text.isEmpty else { return }
 
         var currentContext = conversationContextSubject.value
 
@@ -135,170 +105,62 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
             conversationContextSubject.send(currentContext)
             log("Successful transcription")
         } else {
-            error("Message with ID \(messageId.uuidString) NOT FOUND in updateTranscription")
+            let newMessage = ConversationMessage(
+                id: messageId,
+                transcription: text,
+                prompt: "",
+                role: "user"
+            )
+            currentContext.insert(newMessage, at: 0)
+            conversationContextSubject.send(currentContext)
+            log("Created new user message with ID \(messageId.uuidString)")
         }
     }
 
-    private func updatePrompt(transcription: String, prompt: String, summary: String?, status: String, messageId: UUID?) {
-        guard let messageId = messageId else {
-            error("updatePrompt called without messageId")
-            return
-        }
-
-        debugLog(id: "promptFlow", message: "updatePrompt() called: status='\(status)', transcription='\(transcription)', prompt='\(prompt)', summary='\(summary ?? "nil")', messageId=\(messageId.uuidString)")
-
-        if !prompt.isEmpty {
-            accumulatedText = prompt
-            log("Final transcription: \(accumulatedText)")
-        }
+    func updatePrompt(messageId: UUID, text: String) {
+        guard !text.isEmpty else { return }
 
         var currentContext = conversationContextSubject.value
-        debugLog(id: "promptFlow", message: "Current context has \(currentContext.count) messages")
 
-        guard let index = currentContext.firstIndex(where: { $0.id == messageId }) else {
-            error("MESSAGE NOT FOUND in context array (ID: \(messageId.uuidString))")
-            debugLog(id: "promptFlow", message: "Messages in context: \(currentContext.enumerated().map { "[\($0)] ID: \($1.id.uuidString), prompt: '\(String($1.prompt.prefix(30)))'" }.joined(separator: ", "))")
-            return
-        }
-
-        debugLog(id: "promptFlow", message: "FOUND message at index \(index), before: prompt='\(currentContext[index].prompt)', summary='\(currentContext[index].summary ?? "nil")'")
-
-        currentContext[index].transcription = transcription
-        currentContext[index].prompt = accumulatedText.isEmpty ? "..." : accumulatedText
-        currentContext[index].timestamp = Date()
-
-        if status == "prompt" {
-            debugLog(id: "promptFlow", message: "Handling prompt: updating prompt only")
+        if let index = currentContext.firstIndex(where: { $0.id == messageId }) {
+            currentContext[index].prompt = text
+            currentContext[index].timestamp = Date()
             conversationContextSubject.send(currentContext)
             log("Successful prompt creation")
-            return
-        }
-
-        if status == "summary" {
-            debugLog(id: "promptFlow", message: "Handling summary: updating summary and marking as complete")
-            currentContext[index].summary = summary
-            conversationContextSubject.send(currentContext)
-            log("Successful summary creation")
-
-            if let summary = summary, !summary.isEmpty {
-                log("Received final message with summary")
-
-                if audioManager.isPlaybackEnabledSubject.value {
-                    speakWithTTS(text: summary, messageId: messageId)
-                }
-            }
-
-            accumulatedText = ""
-            updateAPIState(.connected)
-            debugLog(id: "promptFlow", message: "Message complete with summary")
-            return
-        }
-
-        currentContext[index].summary = summary
-
-        debugLog(id: "promptFlow", message: "After update: prompt='\(currentContext[index].prompt)', summary='\(currentContext[index].summary ?? "nil")', publishing to conversationContextSubject")
-
-        conversationContextSubject.send(currentContext)
-
-        if let summary = summary, !summary.isEmpty {
-            log("Received final message with summary")
-            conversationContextSubject.send(currentContext)
-
-            if audioManager.isPlaybackEnabledSubject.value {
-                speakWithTTS(text: summary, messageId: messageId)
-            }
-
-            accumulatedText = ""
-            updateAPIState(.connected)
-            debugLog(id: "promptFlow", message: "Early return - message complete with summary")
-            return
         } else {
-            debugLog(id: "promptFlow", message: "Summary is nil or empty - proceeding to finalizeMessage with messageId")
+            let newMessage = ConversationMessage(
+                id: messageId,
+                prompt: text,
+                role: "assistant"
+            )
+            currentContext.insert(newMessage, at: 0)
+            conversationContextSubject.send(currentContext)
+            log("Created new assistant message with ID \(messageId.uuidString)")
         }
-
-        debugLog(id: "promptFlow", message: "Calling finalizeMessage()")
-        finalizeMessage(messageId: messageId)
     }
 
-    func finalizeMessage(messageId: UUID) {
-        guard !accumulatedText.isEmpty else {
-            log("No text to finalize")
-            return
-        }
+    func updateSummary(messageId: UUID, text: String) {
+        guard !text.isEmpty else { return }
 
         var currentContext = conversationContextSubject.value
 
         guard let index = currentContext.firstIndex(where: { $0.id == messageId }) else {
-            error("Message with ID \(messageId.uuidString) NOT FOUND in finalizeMessage")
+            error("Message with ID \(messageId.uuidString) NOT FOUND in updateSummary")
             return
         }
 
-        currentContext[index].prompt = accumulatedText
+        currentContext[index].summary = text
+        currentContext[index].timestamp = Date()
         conversationContextSubject.send(currentContext)
+        log("Successful summary creation")
 
-        log("Sending message to Mac: \(accumulatedText)")
-        logger.sendPromptToMac(accumulatedText, messageId: messageId)
-
-        accumulatedText = ""
-        updateAPIState(.connected)
-    }
-
-    func finalizeMessage() {
-        error("finalizeMessage() called without messageId - this should not happen")
+        if audioManager.isPlaybackEnabledSubject.value {
+            speakWithTTS(text: text, messageId: messageId)
+        }
     }
 
     func stopCurrentRecording() {
         log("Stopped current recording session")
-    }
-
-    func acknowledgeSuccessfulPromptInjection(summary: String, messageId: UUID) {
-        debugLog(id: "promptFlow", message: "acknowledgeSuccessfulPromptInjection() called: summary='\(summary)', messageId=\(messageId.uuidString)")
-
-        var currentContext = conversationContextSubject.value
-
-        guard let index = currentContext.firstIndex(where: { $0.id == messageId }) else {
-            error("Message with ID \(messageId.uuidString) NOT FOUND in context")
-            debugLog(id: "promptFlow", message: "Messages in context: \(currentContext.enumerated().map { "[\($0)] ID: \($1.id.uuidString), prompt: '\(String($1.prompt.prefix(30)))'" }.joined(separator: ", "))")
-            return
-        }
-
-        debugLog(id: "promptFlow", message: "FOUND message at index \(index), before: prompt='\(currentContext[index].prompt)', summary='\(currentContext[index].summary ?? "nil")'")
-
-        currentContext[index].summary = summary
-
-        debugLog(id: "promptFlow", message: "After update: prompt='\(currentContext[index].prompt)', summary='\(currentContext[index].summary ?? "nil")', publishing to conversationContextSubject")
-
-        conversationContextSubject.send(currentContext)
-
-        log("Acknowledged: \(currentContext[index].prompt)")
-        log("Summary: \(summary)")
-
-        if audioManager.isPlaybackEnabledSubject.value {
-            speakWithTTS(text: summary, messageId: messageId)
-        }
-    }
-
-    func acknowledgeSuccessfulPromptInjection(summary: String) {
-        error("acknowledgeSuccessfulPromptInjection() called without messageId - this should not happen")
-    }
-
-    func acknowledgeSuccessfulInterruptExecution() {
-        log("Interrupt acknowledged")
-    }
-
-    func clearAccumulatedPrompts() {
-        accumulatedText = ""
-        log("Cleared accumulated prompts")
-    }
-
-    func restart() {
-        log("Restarting...")
-
-        accumulatedText = ""
-        conversationContextSubject.send([])
-
-        updateAPIState(.connected)
-        log("Restart complete")
     }
 
     func createRecordingMessage() -> UUID {
@@ -316,24 +178,6 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         return userMessage.id
     }
 
-    func addAssistantMessage(_ text: String, summary: String) {
-        let message = ConversationMessage(
-            prompt: text,
-            role: "assistant",
-            summary: summary
-        )
-
-        var currentContext = conversationContextSubject.value
-        currentContext.insert(message, at: 0)
-        conversationContextSubject.send(currentContext)
-
-        log("Added assistant message: \(text)")
-
-        if audioManager.isPlaybackEnabledSubject.value {
-            speakWithTTS(text: summary, messageId: message.id)
-        }
-    }
-
     func addInterruptMessage(_ text: String) -> UUID {
         let message = ConversationMessage(
             prompt: text,
@@ -349,6 +193,11 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
     }
 
     private func speakWithTTS(text: String, messageId: UUID) {
+        guard !text.isEmpty else {
+            error("Skipping TTS - empty text")
+            return
+        }
+
         guard let apiKey = loadFromKeychain(key: "OPENAI_API_KEY") else {
             error("No API key for TTS")
             return
@@ -384,7 +233,9 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
             }
 
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                error("TTS bad response")
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+                let responseBody = data.flatMap { String(data: $0, encoding: .utf8) } ?? "no body"
+                error("TTS bad response: status=\(statusCode), body=\(responseBody)")
                 return
             }
 
@@ -396,42 +247,40 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
             log("TTS received \(audioData.count) bytes")
 
             var currentContext = self.conversationContextSubject.value
-            if let index = currentContext.firstIndex(where: { $0.id == messageId }) {
-                currentContext[index].audioData = audioData
-                self.conversationContextSubject.send(currentContext)
+            guard let index = currentContext.firstIndex(where: { $0.id == messageId }) else {
+                error("Message with ID \(messageId.uuidString) NOT FOUND when storing audio")
+                return
             }
+
+            currentContext[index].audioData = audioData
+            self.conversationContextSubject.send(currentContext)
 
             audioManager.play(audio: audioData, id: messageId)
         }.resume()
     }
 
-    func updateAPIState(_ newState: APIState) {
-        let emoji: String
-        switch newState {
-        case .disconnected: emoji = "🔴"
-        case .connected: emoji = "🟢"
-        case .restarting: emoji = "🔄"
-        }
-        log("\(emoji) State: \(newState)")
-        apiStateSubject.send(newState)
-    }
-
     func connect() {
         guard apiStateSubject.value != .connected else { return }
-        debugLog(id: "connect", message: "🟢 State: connected")
-        updateAPIState(.connected)
+        log("🟢 State: connected")
+        apiStateSubject.send(.connected)
     }
 
     func disconnect() {
         guard apiStateSubject.value != .disconnected else { return }
-        debugLog(id: "disconnect", message: "🔴 State: disconnected")
-        updateAPIState(.disconnected)
+        log("🔴 State: disconnected")
+        apiStateSubject.send(.disconnected)
     }
 
     func deleteMessage(id: UUID) {
         var context = conversationContextSubject.value
         context.removeAll { $0.id == id }
         conversationContextSubject.send(context)
+    }
+
+    func updateClaudeActiveState(_ isActive: Bool) {
+        guard claudeIsActiveSubject.value != isActive else { return }
+        claudeIsActiveSubject.send(isActive)
+        log("Claude active state updated: \(isActive)")
     }
 
     private func updateLoadingStatus(_ status: String?) {

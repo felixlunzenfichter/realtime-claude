@@ -20,8 +20,6 @@ struct TiltProgressBar: View {
     var fillColor: Color {
         if currentStatus == .disconnected {
             return .red
-        } else if currentStatus == .restarting {
-            return .gray
         }
         return normalColor
     }
@@ -39,14 +37,12 @@ enum RecordingStatus {
     case disconnected
     case connected
     case isRecording
-    case restarting
 
     var color: Color {
         switch self {
         case .disconnected: return .red
         case .connected: return .blue
         case .isRecording: return .green
-        case .restarting: return .gray
         }
     }
 
@@ -55,7 +51,6 @@ enum RecordingStatus {
         case .disconnected: return "Disconnected"
         case .connected: return "Connected"
         case .isRecording: return "Recording"
-        case .restarting: return "Restarting..."
         }
     }
 }
@@ -286,16 +281,20 @@ struct WorkView: View {
                         }
                     ),
                     ToggleBar.ToggleItem(
-                        color: .red,
-                        icon: "stop.circle.fill",
+                        color: viewModel.claudeIsActive ? .red : .green,
+                        icon: viewModel.claudeIsActive ? "pause.fill" : "play.fill",
                         action: {
-                            viewModel.stopClaudeCode()
+                            if viewModel.claudeIsActive {
+                                viewModel.stopClaudeCode()
+                            } else {
+                                viewModel.sendContinueMessage()
+                            }
                         }
                     ),
                     ToggleBar.ToggleItem(
                         color: .cyan,
                         isOn: $showDiff,
-                        icon: "doc.text.fill",
+                        icon: "water.waves",
                         action: {
                             showDiff.toggle()
                             if showDiff {
@@ -378,6 +377,7 @@ class WorkViewModel {
     var isPlaybackEnabled = audioManager.isPlaybackEnabledSubject.value
     var audioInputSource = "Unknown"
     var loadingStatus: String? = nil
+    var claudeIsActive = false
 
     var allMessages: [ConversationMessage] = []
 
@@ -418,8 +418,6 @@ class WorkViewModel {
                     self.currentRecordingStatus = .disconnected
                 case .connected:
                     self.currentRecordingStatus = self.isRecordingAudio ? .isRecording : .connected
-                case .restarting:
-                    self.currentRecordingStatus = .restarting
                 }
             }
             .store(in: &cancellables)
@@ -475,6 +473,13 @@ class WorkViewModel {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] status in
                 self?.loadingStatus = status
+            }
+            .store(in: &cancellables)
+
+        realtimeAPI.claudeIsActiveSubject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isActive in
+                self?.claudeIsActive = isActive
             }
             .store(in: &cancellables)
     }
@@ -593,6 +598,12 @@ class WorkViewModel {
         log("🛑 Adding stop signal to conversation")
         let messageId = realtimeAPI.addInterruptMessage(INTERRUPT_MESSAGE)
         logger.sendPromptToMac(INTERRUPT_MESSAGE, messageId: messageId)
+    }
+
+    func sendContinueMessage() {
+        log("▶️ Sending continue signal to Claude")
+        let messageId = realtimeAPI.createRecordingMessage()
+        logger.sendPromptToMac("continue working", messageId: messageId)
     }
 
     deinit {

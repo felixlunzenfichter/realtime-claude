@@ -13,39 +13,15 @@ struct SessionStats {
     let previousRunFailed: Bool
 }
 
-struct PromptStatusUpdate {
-    let prompt: String
-    let status: String
-}
-
-struct TranscriptionSegment: Sendable {
-    let start: Double
-    let end: Double
-    let text: String
-    let noSpeechProb: Double
-}
-
-struct TranscriptionUpdate {
-    let transcription: String
-    let prompt: String?
-    let summary: String?
-    let isFinal: Bool
-    let isRaw: Bool
-    let status: String
-    let segments: [TranscriptionSegment]
-    let messageId: UUID?
-}
-
 protocol LoggerProtocol {
     var logsSubject: CurrentValueSubject<[LogMessage], Never> { get }
     var debugLogsSubject: CurrentValueSubject<[(LogMessage, Int)], Never> { get }
     var transmittedLogIdsSubject: CurrentValueSubject<[String], Never> { get }
     var sessionStatsSubject: CurrentValueSubject<SessionStats, Never> { get }
     var testsPassedSubject: CurrentValueSubject<Int, Never> { get }
-    var promptStatusSubject: PassthroughSubject<PromptStatusUpdate, Never> { get }
-    var transcriptionSubject: PassthroughSubject<TranscriptionUpdate, Never> { get }
     var macConnectionReadySubject: CurrentValueSubject<Bool, Never> { get }
     var codeDiffSubject: CurrentValueSubject<String, Never> { get }
+    var claudeIsActiveSubject: CurrentValueSubject<Bool, Never> { get }
 
     func sendPromptToMac(_ prompt: String, messageId: UUID)
     func sendAudioToMac(_ audioData: Data, isStart: Bool, isEnd: Bool, messageId: UUID?)
@@ -93,13 +69,12 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
     let debugLogsSubject = CurrentValueSubject<[(LogMessage, Int)], Never>([])
     let logsSubject = CurrentValueSubject<[LogMessage], Never>([])
-    let promptStatusSubject = PassthroughSubject<PromptStatusUpdate, Never>()
     let sessionStatsSubject = CurrentValueSubject<SessionStats, Never>(SessionStats(sessionNumber: 0, totalUptime: 0, todayUptime: 0, totalLogs: 0, totalTests: 0, previousRunFailed: false))
     let testsPassedSubject = CurrentValueSubject<Int, Never>(0)
     let transmittedLogIdsSubject = CurrentValueSubject<[String], Never>([])
-    let transcriptionSubject = PassthroughSubject<TranscriptionUpdate, Never>()
     let macConnectionReadySubject = CurrentValueSubject<Bool, Never>(false)
     let codeDiffSubject = CurrentValueSubject<String, Never>("")
+    let claudeIsActiveSubject = CurrentValueSubject<Bool, Never>(false)
 
     private var connection: NWConnection
     private let macHostname = "Felixs-MacBook-Pro.local"
@@ -108,10 +83,14 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     private let tcpProcessingReceivingQueue = DispatchQueue(label: "logger.tcp.processing.receiving", qos: .userInitiated)
     private var reconnectAttempts: Int = 0
     private var reconnectTimer: DispatchSourceTimer?
-    private var oldestUnackedSentAt: Date?
     private var isConnectionReady: Bool = false {
         didSet {
             macConnectionReadySubject.send(isConnectionReady)
+            if isConnectionReady {
+                realtimeAPI.connect()
+            } else {
+                realtimeAPI.disconnect()
+            }
         }
     }
 
@@ -208,11 +187,6 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
                 return
             }
 
-            if let oldest = self.oldestUnackedSentAt, Date().timeIntervalSince(oldest) > 5.0 {
-                realtimeAPI.disconnect()
-                return
-            }
-
             guard let newlineData = "\n".data(using: .utf8) else {
                 error("Failed to convert newline to UTF-8 data")
                 return
@@ -237,10 +211,6 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
                         log("❌ Failed to send \(messageType): \(sendError)")
                         self.isConnectionReady = false
                         self.scheduleReconnect()
-                    }
-                } else {
-                    if self.oldestUnackedSentAt == nil {
-                        self.oldestUnackedSentAt = Date()
                     }
                 }
             })
@@ -361,12 +331,18 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             handleHandshakeMessage(jsonData)
         case "prompt_ack":
             handlePromptAckMessage(jsonData)
-        case "assistant_messages":
-            handleAssistantMessages(jsonData)
         case "transcription":
             handleTranscriptionMessage(jsonData)
+        case "prompt":
+            handlePromptMessage(jsonData)
+        case "summary":
+            handleSummaryMessage(jsonData)
+        case "assistant":
+            handleAssistantMessage(jsonData)
         case "code_diff":
             handleCodeDiffMessage(jsonData)
+        case "claude_state":
+            handleClaudeStateMessage(jsonData)
         default:
             error("Unexpected message type: \(messageType)")
         }
@@ -377,9 +353,6 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             error("logId was nil in ACK message")
             return
         }
-
-        oldestUnackedSentAt = nil
-        realtimeAPI.connect()
 
         debugLog(id: "ackReceived", message: "✅ [TCP] ACK received for log: \(logId)")
 
@@ -392,9 +365,6 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
                 log("✅ Test \(nextTestNumber) passed: \(testString)")
             }
 
-            if logMessage.type == .error && logMessage.message == "Manual restart triggered from log view" {
-                showRestartAlert(fileName: logMessage.shortFileName, functionName: logMessage.functionName, message: logMessage.message)
-            }
         }
 
         acknowledgeTransmission(for: logId)
@@ -404,10 +374,6 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         var currentIds = transmittedLogIdsSubject.value
         currentIds.append(logId)
         transmittedLogIdsSubject.send(currentIds)
-    }
-
-    private func showRestartAlert(fileName: String, functionName: String, message: String) {
-        realtimeAPI.restart()
     }
 
     private func handleHandshakeMessage(_ jsonData: [String: Any]) {
@@ -425,8 +391,13 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         let todayUptime = jsonData["todayUptime"] as? Int ?? 0
 
         if let currentAssistantMessage = jsonData["currentAssistantMessage"] as? String,
-           let summary = jsonData["currentAssistantMessageSummary"] as? String {
-            realtimeAPI.addAssistantMessage(currentAssistantMessage, summary: summary)
+           let summary = jsonData["currentAssistantMessageSummary"] as? String,
+           !currentAssistantMessage.isEmpty,
+           !summary.isEmpty,
+           let messageIdString = jsonData["messageId"] as? String,
+           let messageId = UUID(uuidString: messageIdString) {
+            realtimeAPI.updatePrompt(messageId: messageId, text: currentAssistantMessage)
+            realtimeAPI.updateSummary(messageId: messageId, text: summary)
             log("Loaded assistant message from handshake with TTS: \"\(summary)\"")
         }
 
@@ -469,83 +440,37 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             return
         }
 
-        let originalPrompt = jsonData["originalPrompt"] as? String ?? "Unknown prompt"
         guard let summary = jsonData["summary"] as? String else {
             error("Missing summary in prompt ACK message")
             return
         }
 
-        if status == "success" {
-            log("✅ Prompt injected into terminal: \(originalPrompt)")
-            log("   Summary: \(summary)")
-            promptStatusSubject.send(PromptStatusUpdate(prompt: originalPrompt, status: "injected"))
-
-            if originalPrompt == "[Request interrupted by user]" {
-                realtimeAPI.acknowledgeSuccessfulInterruptExecution()
-            } else {
-                guard let messageIdString = jsonData["messageId"] as? String,
-                      let messageId = UUID(uuidString: messageIdString) else {
-                    error("Missing or invalid messageId in prompt ACK message")
-                    return
-                }
-                realtimeAPI.acknowledgeSuccessfulPromptInjection(summary: summary, messageId: messageId)
-            }
-        } else {
-            let errorMessage = jsonData["error"] as? String ?? "Unknown error"
-            error("❌ Failed to inject prompt: \(errorMessage)")
-            promptStatusSubject.send(PromptStatusUpdate(prompt: originalPrompt, status: "failed"))
-        }
-    }
-
-    private func handleAssistantMessages(_ jsonData: [String: Any]) {
-        guard let messages = jsonData["messages"] as? [[String: Any]] else {
-            error("messages was nil in assistant_messages")
+        guard let messageIdString = jsonData["messageId"] as? String,
+              let messageId = UUID(uuidString: messageIdString) else {
+            error("Missing or invalid messageId in prompt ACK message")
             return
         }
 
-        log("📨 Received \(messages.count) assistant messages from Mac")
-
-        for message in messages {
-            guard let text = message["text"] as? String,
-                  let summary = message["summary"] as? String else {
-                continue
-            }
-            realtimeAPI.addAssistantMessage(text, summary: summary)
+        if status == "success" {
+            log("✅ Prompt injected into terminal")
+            log("   Summary: \(summary)")
+            realtimeAPI.updateSummary(messageId: messageId, text: summary)
+        } else {
+            let errorMessage = jsonData["error"] as? String ?? "Unknown error"
+            error("❌ Failed to inject prompt: \(errorMessage)")
         }
     }
 
     private func handleTranscriptionMessage(_ jsonData: [String: Any]) {
-        debugLog(id: "promptFlow", message: "handleTranscriptionMessage() called, JSON keys: \(jsonData.keys.joined(separator: ", "))")
-
-        let status = jsonData["status"] as? String ?? "transcription"
-        let isFinal = status == "prompt" || status == "summary"
-        let isRaw = status == "transcription" || status == "final_chunk"
-
-        let transcription = jsonData["transcription"] as? String ?? ""
-        let prompt = jsonData["prompt"] as? String
-        let summary = jsonData["summary"] as? String
-
-        debugLog(id: "promptFlow", message: "Parsed: status='\(status)', transcription='\(transcription)', prompt='\(prompt ?? "nil")', summary='\(summary ?? "nil")', isFinal=\(isFinal), isRaw=\(isRaw)")
-
-        var messageId: UUID? = nil
-        if let messageIdString = jsonData["messageId"] as? String {
-            messageId = UUID(uuidString: messageIdString)
-            debugLog(id: "promptFlow", message: "messageId = \(messageIdString)")
-        } else {
-            debugLog(id: "promptFlow", message: "messageId = nil")
+        guard let transcription = jsonData["transcription"] as? String else {
+            error("Missing transcription in transcription message")
+            return
         }
 
-        var segments: [TranscriptionSegment] = []
-        if let segmentsData = jsonData["segments"] as? [[String: Any]] {
-            segments = segmentsData.compactMap { segmentDict in
-                guard let start = segmentDict["start"] as? Double,
-                      let end = segmentDict["end"] as? Double,
-                      let text = segmentDict["text"] as? String,
-                      let noSpeechProb = segmentDict["no_speech_prob"] as? Double else {
-                    return nil
-                }
-                return TranscriptionSegment(start: start, end: end, text: text, noSpeechProb: noSpeechProb)
-            }
+        guard let messageIdString = jsonData["messageId"] as? String,
+              let messageId = UUID(uuidString: messageIdString) else {
+            error("Missing or invalid messageId in transcription message")
+            return
         }
 
         if transcription.isEmpty {
@@ -553,35 +478,58 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             return
         }
 
-        if status == "transcription" {
-            log("📥 [TRANSCRIPTION] \(transcription)")
-        } else if status == "prompt" {
-            log("📥 [PROMPT] Raw: \(transcription) | Prompt: \(prompt ?? "none")")
-        } else if status == "summary" {
-            log("📥 [SUMMARY] Raw: \(transcription) | Prompt: \(prompt ?? "none")")
-            if let summary = summary {
-                log("   Summary: \(summary)")
-            }
-        } else if status == "final_chunk" {
-            log("📥 [FINAL_CHUNK] \(transcription)")
-        } else {
-            debugLog(id: "transcription", message: "🎤 [\(status)] \(prompt ?? transcription)")
+        log("📥 [MESSAGE] transcription: \(transcription)")
+
+        realtimeAPI.updateTranscription(messageId: messageId, text: transcription)
+    }
+
+    private func handlePromptMessage(_ jsonData: [String: Any]) {
+        guard let prompt = jsonData["prompt"] as? String else {
+            error("Missing prompt in prompt message")
+            return
         }
 
-        debugLog(id: "promptFlow", message: "Sending to transcriptionSubject: status='\(status)', transcription='\(transcription)', prompt='\(prompt ?? "nil")', summary='\(summary ?? "nil")', isFinal=\(isFinal), isRaw=\(isRaw), messageId=\(messageId?.uuidString ?? "nil")")
+        guard let messageIdString = jsonData["messageId"] as? String,
+              let messageId = UUID(uuidString: messageIdString) else {
+            error("Missing or invalid messageId in prompt message")
+            return
+        }
 
-        transcriptionSubject.send(TranscriptionUpdate(
-            transcription: transcription,
-            prompt: prompt,
-            summary: summary,
-            isFinal: isFinal,
-            isRaw: isRaw,
-            status: status,
-            segments: segments,
-            messageId: messageId
-        ))
+        log("📥 [MESSAGE] prompt: \(prompt)")
 
-        debugLog(id: "promptFlow", message: "TranscriptionUpdate sent to transcriptionSubject")
+        realtimeAPI.updatePrompt(messageId: messageId, text: prompt)
+    }
+
+    private func handleSummaryMessage(_ jsonData: [String: Any]) {
+        guard let summary = jsonData["summary"] as? String else {
+            error("Missing summary in summary message")
+            return
+        }
+
+        guard let messageIdString = jsonData["messageId"] as? String,
+              let messageId = UUID(uuidString: messageIdString) else {
+            error("Missing or invalid messageId in summary message")
+            return
+        }
+
+        log("📥 [MESSAGE] summary: \(summary)")
+
+        realtimeAPI.updateSummary(messageId: messageId, text: summary)
+    }
+
+    private func handleAssistantMessage(_ jsonData: [String: Any]) {
+        guard let prompt = jsonData["prompt"] as? String,
+              let summary = jsonData["summary"] as? String,
+              let messageIdString = jsonData["messageId"] as? String,
+              let messageId = UUID(uuidString: messageIdString) else {
+            error("Missing required fields in assistant message")
+            return
+        }
+
+        log("📥 [MESSAGE] assistant: \(summary)")
+
+        realtimeAPI.updatePrompt(messageId: messageId, text: prompt)
+        realtimeAPI.updateSummary(messageId: messageId, text: summary)
     }
 
     private func handleCodeDiffMessage(_ jsonData: [String: Any]) {
@@ -592,6 +540,22 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
         codeDiffSubject.send(diff)
         log("📥 Received git diff: \(diff.isEmpty ? "empty" : "\(diff.split(separator: "\n").count) lines")")
+    }
+
+    private func handleClaudeStateMessage(_ jsonData: [String: Any]) {
+        guard let isActive = jsonData["isActive"] as? Bool else {
+            error("isActive was nil in claude_state message")
+            return
+        }
+
+        guard let state = jsonData["state"] as? String else {
+            error("state was nil in claude_state message")
+            return
+        }
+
+        claudeIsActiveSubject.send(isActive)
+        log("📡 Claude state update: \(state), active: \(isActive)")
+        realtimeAPI.updateClaudeActiveState(isActive)
     }
 
     private func sendStartMessage() {
@@ -619,8 +583,6 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         }
 
         sendMessage(jsonData, messageType: "prompt", logMessage: "📤 [iOS → macOS] Sending prompt: \(prompt) (messageId: \(messageId.uuidString))")
-
-        promptStatusSubject.send(PromptStatusUpdate(prompt: prompt, status: "sent"))
     }
 
     func sendAudioToMac(_ audioData: Data, isStart: Bool = false, isEnd: Bool = false, messageId: UUID? = nil) {
