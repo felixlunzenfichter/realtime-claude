@@ -152,6 +152,11 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
         currentContext[index].summary = text
         currentContext[index].timestamp = Date()
         conversationContextSubject.send(currentContext)
+
+        if currentContext[index].role == "user" {
+            claudeIsActiveSubject.send(true)
+        }
+
         log("Successful summary creation")
 
         if audioManager.isPlaybackEnabledSubject.value {

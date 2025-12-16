@@ -543,6 +543,7 @@ async function handleAudioEnd(messageId) {
                 console.log(`🤖 SENDING TO HAIKU: "${messageState.shortTranscription}"`);
 
                 const result = await processWithHaiku(messageState.shortTranscription, 'correct_transcription', messageState.completeTranscription);
+
                 const corrected = result.corrected;
 
                 console.log(`✅ Got correction from Haiku: "${corrected}"`);
@@ -589,6 +590,7 @@ async function handleAudioEnd(messageId) {
                 console.log(`🤖 PRIORITY 2: Creating summary...`);
 
                 const result = await processWithHaiku(messageState.shortTranscription, 'create_summary');
+
                 const summary = result.summary;
 
                 console.log(`✅ Got summary from Haiku: "${summary}"`);
@@ -1082,6 +1084,7 @@ async function sendHandshakeResponse(socket, stats) {
                 console.log(`🤖 Creating handshake summary...`);
 
                 const result = await processWithHaiku(lastSentAssistantMessage, 'create_summary');
+
                 const summary = result.summary;
 
                 console.log(`✅ Got handshake summary from Haiku: "${summary}"`);
@@ -1609,6 +1612,7 @@ async function sendPromptAckWithSummary(originalPrompt, messageId) {
             console.log(`🤖 Creating prompt summary...`);
 
             const result = await processWithHaiku(originalPrompt, 'create_summary');
+
             const summary = result.summary;
 
             console.log(`✅ Got prompt summary from Haiku: "${summary}"`);
