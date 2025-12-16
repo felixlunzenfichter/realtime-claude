@@ -522,6 +522,7 @@ struct LogRowView: View {
 class DiffViewModel {
     var codeDiff: String = ""
     var scrollToLineIndex: Int? = nil
+    var currentChangeIndex: Int = 0
 
     private var previousDiffLines: [(text: String, type: DiffLineType)] = []
     private var cancellables = Set<AnyCancellable>()
@@ -563,22 +564,83 @@ class DiffViewModel {
         }
     }
 
+    var changeIndices: [Int] {
+        let lines = diffLines
+        var indices: [Int] = []
+
+        for (index, line) in lines.enumerated() {
+            let text = line.text
+            if text.hasPrefix("---") || text.hasPrefix("+++") {
+                continue
+            }
+
+            guard line.type == .addition || line.type == .deletion || line.type == .hunk else {
+                continue
+            }
+
+            indices.append(index)
+        }
+
+        return indices
+    }
+
+    var changeChunkIndices: [Int] {
+        let indices = changeIndices
+        guard !indices.isEmpty else { return [] }
+
+        var chunkStarts: [Int] = [indices[0]]
+
+        for i in 1..<indices.count {
+            if indices[i] - indices[i-1] > 1 {
+                chunkStarts.append(indices[i])
+            }
+        }
+
+        return chunkStarts
+    }
+
+    func navigateToNextChange() {
+        let chunks = changeChunkIndices
+        guard !chunks.isEmpty else { return }
+
+        if currentChangeIndex < chunks.count - 1 {
+            currentChangeIndex += 1
+        } else {
+            currentChangeIndex = 0
+        }
+
+        scrollToLineIndex = nil
+        scrollToLineIndex = chunks[currentChangeIndex]
+        log("Navigated to next change chunk: \(currentChangeIndex + 1)/\(chunks.count)")
+    }
+
+    func navigateToPreviousChange() {
+        let chunks = changeChunkIndices
+        guard !chunks.isEmpty else { return }
+
+        if currentChangeIndex > 0 {
+            currentChangeIndex -= 1
+        } else {
+            currentChangeIndex = chunks.count - 1
+        }
+
+        scrollToLineIndex = nil
+        scrollToLineIndex = chunks[currentChangeIndex]
+        log("Navigated to previous change chunk: \(currentChangeIndex + 1)/\(chunks.count)")
+    }
+
     func findFirstChangedLine() {
         let currentLines = diffLines
 
         var firstChangeIndex: Int?
 
         for (index, currentLine) in currentLines.enumerated() {
-            if currentLine.text.contains("=== Last 5 commits ===") {
-                break
-            }
-
-            guard currentLine.type == .addition || currentLine.type == .deletion else {
+            let text = currentLine.text
+            if text.hasPrefix("---") || text.hasPrefix("+++") {
                 continue
             }
 
-            let text = currentLine.text
-            if text.hasPrefix("---") || text.hasPrefix("+++") || text.hasPrefix("@@") {
+            guard currentLine.type == .addition || currentLine.type == .deletion || currentLine.type == .hunk else {
                 continue
             }
 
@@ -596,6 +658,7 @@ class DiffViewModel {
 
         previousDiffLines = currentLines
 
+        currentChangeIndex = 0
         scrollToLineIndex = nil
         scrollToLineIndex = firstChangeIndex ?? 0
     }
@@ -690,10 +753,26 @@ struct DiffView: View {
                 ToggleBar(items: [
                     ToggleBar.ToggleItem(
                         color: .blue,
+                        isOn: .constant(false),
+                        icon: "chevron.left",
+                        action: {
+                            viewModel.navigateToPreviousChange()
+                        }
+                    ),
+                    ToggleBar.ToggleItem(
+                        color: .blue,
                         isOn: $showDiff,
                         icon: "xmark",
                         action: {
                             showDiff.toggle()
+                        }
+                    ),
+                    ToggleBar.ToggleItem(
+                        color: .blue,
+                        isOn: .constant(false),
+                        icon: "chevron.right",
+                        action: {
+                            viewModel.navigateToNextChange()
                         }
                     )
                 ])
