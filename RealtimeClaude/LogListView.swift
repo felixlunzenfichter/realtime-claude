@@ -518,11 +518,58 @@ struct LogRowView: View {
     }
 }
 
+enum NavigationMode {
+    case headers
+    case hunks
+    case changes
+    case sections
+
+    var color: Color {
+        switch self {
+        case .headers:
+            return .purple
+        case .hunks:
+            return .cyan
+        case .changes:
+            return .green
+        case .sections:
+            return .orange
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .headers:
+            return "Headers"
+        case .hunks:
+            return "Hunks"
+        case .changes:
+            return "Changes"
+        case .sections:
+            return "Sections"
+        }
+    }
+
+    func next() -> NavigationMode {
+        switch self {
+        case .headers:
+            return .hunks
+        case .hunks:
+            return .changes
+        case .changes:
+            return .sections
+        case .sections:
+            return .headers
+        }
+    }
+}
+
 @Observable
 class DiffViewModel {
     var codeDiff: String = ""
     var scrollToLineIndex: Int? = nil
     var currentChangeIndex: Int = 0
+    var currentNavigationMode: NavigationMode = .changes
 
     private var previousDiffLines: [(text: String, type: DiffLineType)] = []
     private var cancellables = Set<AnyCancellable>()
@@ -599,34 +646,71 @@ class DiffViewModel {
         return chunkStarts
     }
 
-    func navigateToNextChange() {
-        let chunks = changeChunkIndices
-        guard !chunks.isEmpty else { return }
+    var modeSpecificIndices: [Int] {
+        let lines = diffLines
 
-        if currentChangeIndex < chunks.count - 1 {
+        switch currentNavigationMode {
+        case .headers:
+            return lines.enumerated().compactMap { index, line in
+                line.type == .header ? index : nil
+            }
+        case .hunks:
+            return lines.enumerated().compactMap { index, line in
+                line.type == .hunk ? index : nil
+            }
+        case .changes:
+            var indices: [Int] = []
+            for (index, line) in lines.enumerated() {
+                let text = line.text
+                if text.hasPrefix("---") || text.hasPrefix("+++") {
+                    continue
+                }
+                if line.type == .addition || line.type == .deletion {
+                    indices.append(index)
+                }
+            }
+            return indices
+        case .sections:
+            return lines.enumerated().compactMap { index, line in
+                line.type == .sectionHeader ? index : nil
+            }
+        }
+    }
+
+    func cycleNavigationMode() {
+        currentNavigationMode = currentNavigationMode.next()
+        currentChangeIndex = 0
+        log("Navigation mode changed to: \(currentNavigationMode.label)")
+    }
+
+    func navigateToNextChange() {
+        let indices = modeSpecificIndices
+        guard !indices.isEmpty else { return }
+
+        if currentChangeIndex < indices.count - 1 {
             currentChangeIndex += 1
         } else {
             currentChangeIndex = 0
         }
 
         scrollToLineIndex = nil
-        scrollToLineIndex = chunks[currentChangeIndex]
-        log("Navigated to next change chunk: \(currentChangeIndex + 1)/\(chunks.count)")
+        scrollToLineIndex = indices[currentChangeIndex]
+        log("Navigated to next \(currentNavigationMode.label): \(currentChangeIndex + 1)/\(indices.count)")
     }
 
     func navigateToPreviousChange() {
-        let chunks = changeChunkIndices
-        guard !chunks.isEmpty else { return }
+        let indices = modeSpecificIndices
+        guard !indices.isEmpty else { return }
 
         if currentChangeIndex > 0 {
             currentChangeIndex -= 1
         } else {
-            currentChangeIndex = chunks.count - 1
+            currentChangeIndex = indices.count - 1
         }
 
         scrollToLineIndex = nil
-        scrollToLineIndex = chunks[currentChangeIndex]
-        log("Navigated to previous change chunk: \(currentChangeIndex + 1)/\(chunks.count)")
+        scrollToLineIndex = indices[currentChangeIndex]
+        log("Navigated to previous \(currentNavigationMode.label): \(currentChangeIndex + 1)/\(indices.count)")
     }
 
     func findFirstChangedLine() {
@@ -752,11 +836,19 @@ struct DiffView: View {
 
                 ToggleBar(items: [
                     ToggleBar.ToggleItem(
-                        color: .blue,
+                        color: viewModel.currentNavigationMode.color,
                         isOn: .constant(false),
                         icon: "chevron.left",
                         action: {
                             viewModel.navigateToPreviousChange()
+                        }
+                    ),
+                    ToggleBar.ToggleItem(
+                        color: viewModel.currentNavigationMode.color,
+                        isOn: .constant(false),
+                        icon: "circle.fill",
+                        action: {
+                            viewModel.cycleNavigationMode()
                         }
                     ),
                     ToggleBar.ToggleItem(
@@ -768,7 +860,7 @@ struct DiffView: View {
                         }
                     ),
                     ToggleBar.ToggleItem(
-                        color: .blue,
+                        color: viewModel.currentNavigationMode.color,
                         isOn: .constant(false),
                         icon: "chevron.right",
                         action: {

@@ -1,3 +1,125 @@
+/*
+ * MAC-SERVER.JS
+ *
+ * MESSAGE TYPES (JSON over TCP socket):
+ * - {type:'start'} → iOS app starting/reconnecting
+ * - {type:'audio', audioData:base64, isStart:bool, isEnd:bool, messageId:str} → voice input
+ * - {type:'delete', messageId:str} → user deleted message
+ * - {type:'prompt', prompt:str, timestamp:num, messageId:str} → typed/manual prompt
+ * - {type:'speak', text:str, summary:str} → assistant response to be spoken
+ * - {type:'log', message:str, fileName:str, functionName:str} → info log
+ * - {type:'error', message:str, fileName:str, functionName:str} → error log
+ *
+ * RESPONSES TO iOS:
+ * - {type:'handshake', sessionNumber, totalUptime, todayUptime, totalLogs, apiKey, previousErrors, currentAssistantMessage, currentAssistantMessageSummary, messageId}
+ * - {type:'transcription', messageId, timestamp, transcription} → interim whisper output
+ * - {type:'prompt', messageId, timestamp, prompt} → corrected/final prompt
+ * - {type:'summary', messageId, timestamp, summary} → user/assistant message summary
+ * - {type:'assistant', messageId, timestamp, prompt, summary} → assistant message from conversation
+ * - {type:'speak_result', success:bool, error?:str} → speak validation result
+ * - {type:'prompt_ack', messageId, timestamp, status, summary, error?} → prompt received/verified
+ * - {type:'claude_state', state:str, isActive:bool, timestamp} → claude active/idle
+ * - {type:'code_diff', diff:str, timestamp} → git diff output
+ * - {type:'ack', logId} → log received confirmation
+ *
+ * const net, fs, path, {execSync}, chokidar, FormData, fetch, {Worker}
+ * process.on('uncaughtException'), process.on('unhandledRejection')
+ *
+ * logsDir = 'private/logs'
+ * lastAssistantMessageFile = 'private/last-assistant-message.txt'
+ * CLAUDE_WINDOW_PATTERN = 'claude --dangerously-skip-permissions'
+ * WHISPER_SERVER_URL = 'http://localhost:5050'
+ * currentSessionFile, currentSessionNumber
+ * activeSocket
+ *
+ * lastDiffSent, diffDebounceTimer
+ *
+ * claudeIsActive, lastActivitySentTime
+ *
+ * MAX_AUDIO_DURATION=10, MAX_AUDIO_BYTES
+ *
+ * MAX_SUMMARY_CHARS=50, MAX_CONTEXT_EVENTS=20, MAX_SPEAK_LENGTH=25
+ *
+ * assistantSummaryCache[], MAX_SUMMARY_CACHE_SIZE=5
+ *
+ * haikuContext[]
+ *
+ * messageStates=Map{messageId→{audioBuffer,isTranscribing,isRecordingAudio,shortTranscription,completeTranscription,deleted,injected,audioEnded}}
+ *
+ * haikuPriorityQueue.add(priority, task, description) → queue.push, queue.sort, processNext
+ * haikuPriorityQueue.processNext() → queue.shift, task(), processNext | isProcessing=true/false
+ *
+ * getMessageState(messageId) → messageStates.get/set
+ * addToContext(event) → haikuContext.push | shift if >MAX_CONTEXT_EVENTS
+ * formatContextForHaiku() → map haikuContext to strings
+ *
+ * buildPrompt(text, task, completeTranscription?) → formatContextForHaiku, prompt string
+ * processWithHaiku(text, task, completeTranscription?) → Worker(haiku-worker.js), parse JSON | {corrected}|{summary}
+ *
+ * deduplicateTranscription(newText, messageState, timestamp) → word-level dedup | messageState.shortTranscription+=unique, completeTranscription+=timestamped
+ * transcribeAudio(audioPath) → fetch(WHISPER_SERVER_URL/transcribe) | {text, segments}
+ * handleAudioMessage(socket, {audioData, isStart, isEnd, messageId}) → getMessageState, audioBuffer management, triggerTranscription | messageState.audioEnded=true on isEnd
+ * triggerTranscription(messageId) → ffmpeg, transcribeAudio, deduplicateTranscription, activeSocket.write(transcription) | messageState.isTranscribing=true/false, handleAudioEnd if audioEnded
+ * handleAudioEnd(messageId) → activeSocket.write(final transcription), haikuPriorityQueue.add(correction priority=1), haikuPriorityQueue.add(summary priority=2), injectIntoTerminal | messageState.isRecordingAudio=false
+ *
+ * isAudioMessage, isDeleteMessage, isStartMessage, isPromptMessage, isSpeakMessage, isErrorMessage, isLogMessage
+ * handleDeleteMessage({messageId}) → messageState.deleted=true
+ *
+ * server=net.createServer → activeSocket=socket, readClaudeState, processBufferedData
+ * loadLastAssistantMessage()
+ * server.listen(8082) → initializeClaudeMonitoring, initializeGitDiffWatcher
+ * processBufferedData(socket, buffer) → JSON.parse lines, handleMessage
+ * handleMessage(socket, logData) → route to handlers
+ *
+ * isSpeakMessage
+ * handleSpeakMessage(socket, {text, summary}) → validate length, activeSocket.write(assistant message)
+ * isStartMessage, isPromptMessage, isErrorMessage, isLogMessage
+ * handleUnknownMessage(logData)
+ * handleStartMessage(socket) → createNewSession, gatherSessionStatistics, sendHandshakeResponse, logHandshakeDetails
+ * findLatestConversationFile(dir) → .jsonl files sorted by mtime
+ * handlePromptMessage(socket, {prompt, timestamp, messageId}) → detect interrupt, pendingPrompts.set, injectIntoTerminal | promptCounter++
+ *
+ * createNewSession() → currentSessionNumber++, fs.writeFileSync(currentSessionFile)
+ * gatherSessionStatistics() → {sessionNumber, totalUptime, todayUptime, totalLogs}
+ * computeUptimeStats() → getAllSessionFiles, calculateSessionUptime, isSessionFromToday | {totalUptime, todayUptime}
+ * noSessionsExist(files)
+ * getMidnightToday()
+ * calculateSessionUptime(file) → {duration, startTime}
+ * sessionHasNoLogs(lines)
+ * isSessionFromToday(sessionStartTime, today)
+ * countAllLogs() → getAllSessionFiles, countLinesInContent
+ * getAllSessionFiles() → .json files
+ * countLinesInContent(content)
+ * sendHandshakeResponse(socket, stats) → getPreviousSessionErrors, activeSocket.write(handshake), sendGitDiffToiOS, haikuPriorityQueue.add(handshake_summary priority=3)
+ * getPreviousSessionErrors(currentSessionNumber) → read previous session .json, filter error logs
+ * logHandshakeDetails(stats)
+ *
+ * handleLogMessage(socket, logData) → persistLogToFile, confirmLogReception
+ * handleErrorMessage(socket, logData) → reportErrorToConsole, persistLogToFile, confirmLogReception, executeDeployment if manual restart
+ * reportErrorToConsole(logData)
+ * persistLogToFile(logData) → writeLogToFile
+ * confirmLogReception(socket, logId) → sendAcknowledgment
+ * getSessionCount()
+ * writeLogToFile(logData) → fs.appendFileSync(currentSessionFile)
+ * sendAcknowledgment(socket, logId) → activeSocket.write({type:'ack'})
+ *
+ * pendingPrompts=Map, promptCounter
+ * loadLastAssistantMessage() → fs.readFileSync(lastAssistantMessageFile) | lastSentAssistantMessage=text
+ * saveLastAssistantMessage(message) → fs.writeFileSync
+ *
+ * initializeClaudeMonitoring() → chokidar.watch(claude-state.txt), chokidar.watch(claudeProjectsPath) | stateWatcher.on(add/change→readClaudeState), conversationWatcher.on(change→checkForInjectedPrompts)
+ * initializeGitDiffWatcher() → chokidar.watch(repoPath), watcher.on(all→sendGitDiffToiOS debounced 500ms)
+ * readClaudeState(filePath) → parse state|timestamp, activeSocket.write({type:'claude_state', state:'idle'}) if stopped/finished | claudeIsActive=false
+ * sendGitDiffToiOS(force?) → execSync(get-diff.sh), activeSocket.write({type:'code_diff'}) | lastDiffSent=diff
+ * checkForInjectedPrompts(filePath) → parse .jsonl, find user/assistant events, detect interrupts, verify pendingPrompts, sendPromptAckWithSummary, sendAssistantMessageToiOS | activeSocket.write(claude_state), lastSentAssistantMessage=text
+ * sendPromptAckWithSummary(originalPrompt, messageId) → extract embedded summary or haikuPriorityQueue.add(summary priority=2), activeSocket.write({type:'summary'}), addToContext
+ * sendAssistantMessageToiOS(text) → assistantSummaryCache check, activeSocket.write({type:'assistant'}) | assistantSummaryCache.push/shift
+ *
+ * executeDeployment() → execSync(pgrep), execSync(deploy-in-window.sh) if not running
+ * switchToWindow(windowNamePattern, callback) → osascript tell Terminal, callback(success/error)
+ * injectIntoTerminal(prompt, callback) → switchToWindow, osascript keystroke+enter
+ */
+
 const net = require('net');
 const fs = require('fs');
 const path = require('path');
@@ -27,6 +149,7 @@ let lastDiffSent = null;
 let diffDebounceTimer = null;
 
 let claudeIsActive = false;
+let lastActivitySentTime = 0;
 
 const MAX_AUDIO_DURATION = 10;
 const MAX_AUDIO_BYTES = MAX_AUDIO_DURATION * 16000 * 4;
@@ -1383,6 +1506,7 @@ function readClaudeState(filePath) {
                     timestamp: Date.now()
                 };
                 activeSocket.write(JSON.stringify(stateMessage) + '\n');
+                lastActivitySentTime = Date.now();
                 console.log(`📤 Sent idle state to iOS (from "${state}")`);
             } else {
                 console.log(`   ⚠️ No active socket - cannot send state to iOS`);
@@ -1442,6 +1566,8 @@ function checkForInjectedPrompts(filePath) {
 
         const allUserEvents = [];
         const allAssistantEvents = [];
+        let hasConversationActivity = false;
+
         for (const line of lines) {
             try {
                 const event = JSON.parse(line);
@@ -1450,6 +1576,8 @@ function checkForInjectedPrompts(filePath) {
                     event.message &&
                     event.message.role === 'user' &&
                     event.message.content) {
+
+                    hasConversationActivity = true;
 
                     if (typeof event.message.content === 'string') {
                         allUserEvents.push({
@@ -1476,6 +1604,8 @@ function checkForInjectedPrompts(filePath) {
                     event.message.role === 'assistant' &&
                     event.message.content) {
 
+                    hasConversationActivity = true;
+
                     if (typeof event.message.content === 'string') {
                         allAssistantEvents.push({
                             text: event.message.content,
@@ -1500,15 +1630,42 @@ function checkForInjectedPrompts(filePath) {
             }
         }
 
+        if (hasConversationActivity && activeSocket) {
+            const now = Date.now();
+            if (now - lastActivitySentTime > 3000) {
+                const idleMessage = {
+                    type: 'claude_state',
+                    state: 'idle',
+                    isActive: false,
+                    timestamp: now
+                };
+                activeSocket.write(JSON.stringify(idleMessage) + '\n');
+
+                const activeMessage = {
+                    type: 'claude_state',
+                    state: 'active',
+                    isActive: true,
+                    timestamp: now + 1
+                };
+                activeSocket.write(JSON.stringify(activeMessage) + '\n');
+                lastActivitySentTime = now;
+                console.log('📤 Sent claude_state pulse (idle→active) to iOS (conversation activity detected)');
+            } else {
+                console.log('⏭️  Skipping claude_state active (debounced - too soon since last send)');
+            }
+        }
+
         const userEvents = allUserEvents.slice(-5);
 
         const lastMessage = userEvents.length > 0 ? userEvents[userEvents.length - 1].text.substring(0, 100).replace(/\n/g, ' ') : 'none';
 
-        for (const userEvent of allUserEvents) {
-            if (userEvent.text.includes('interrupted by user') ||
-                userEvent.text.includes('Request interrupted by user')) {
+        if (allUserEvents.length > 0) {
+            const lastUserEvent = allUserEvents[allUserEvents.length - 1];
 
-                console.log(`🛑 Detected interrupt message in conversation: "${userEvent.text.substring(0, 80)}..."`);
+            if (lastUserEvent.text.includes('interrupted by user') ||
+                lastUserEvent.text.includes('Request interrupted by user')) {
+
+                console.log(`🛑 Detected interrupt message in last user message: "${lastUserEvent.text.substring(0, 80)}..."`);
 
                 if (activeSocket) {
                     const stateMessage = {
@@ -1518,9 +1675,9 @@ function checkForInjectedPrompts(filePath) {
                         timestamp: Date.now()
                     };
                     activeSocket.write(JSON.stringify(stateMessage) + '\n');
+                    lastActivitySentTime = Date.now();
                     console.log(`📤 Sent idle state to iOS (from interrupt detection)`);
                 }
-                break;
             }
         }
 
@@ -1609,23 +1766,25 @@ async function sendPromptAckWithSummary(originalPrompt, messageId) {
         console.log(`✅ Extracted embedded summary from user prompt: "${extractedSummary}"`);
     }
 
-    if (extractedSummary) {
-        console.log('✅ Prompt verified with embedded summary - no Haiku call needed');
+    console.log('✅ Prompt verified in conversation');
 
-        const ackMessage = {
+    if (extractedSummary) {
+        console.log('✅ Using embedded summary - sending immediately');
+
+        const summaryMessage = {
             messageId: messageId,
             timestamp: Date.now(),
-            type: 'prompt_ack',
-            status: 'success',
+            type: 'summary',
             summary: extractedSummary
         };
 
-        activeSocket.write(JSON.stringify(ackMessage) + '\n');
+        activeSocket.write(JSON.stringify(summaryMessage) + '\n');
+        console.log(`📤 Sent summary to iOS: "${extractedSummary}"`);
         addToContext({ type: 'user_message', text: originalPrompt, summary: extractedSummary });
         return;
     }
 
-    console.log('✅ Prompt verified, summary pending...');
+    console.log('⏳ Queueing Haiku for summary generation...');
 
     haikuPriorityQueue.add(2, async () => {
         try {
@@ -1639,17 +1798,16 @@ async function sendPromptAckWithSummary(originalPrompt, messageId) {
 
             addToContext({ type: 'user_message', text: originalPrompt, summary: summary });
 
-            const summaryUpdate = {
+            const summaryMessage = {
                 messageId: messageId,
                 timestamp: Date.now(),
-                type: 'prompt_ack',
-                status: 'success',
+                type: 'summary',
                 summary: summary
             };
 
             if (activeSocket) {
-                activeSocket.write(JSON.stringify(summaryUpdate) + '\n');
-                console.log(`✅ Summary update sent: "${summary}"`);
+                activeSocket.write(JSON.stringify(summaryMessage) + '\n');
+                console.log(`📤 Sent summary to iOS: "${summary}"`);
             }
         } catch (error) {
             console.error(`❌ Failed to create prompt summary: ${error.message}`);
@@ -1677,6 +1835,17 @@ async function sendAssistantMessageToiOS(text) {
         if (assistantSummaryCache.length > MAX_SUMMARY_CACHE_SIZE) {
             assistantSummaryCache.shift();
         }
+
+        const assistantMessage = {
+            messageId: messageId,
+            timestamp: Date.now(),
+            type: 'assistant',
+            prompt: text,
+            summary: ""
+        };
+
+        activeSocket.write(JSON.stringify(assistantMessage) + '\n');
+        console.log(`✅ Assistant message sent to iOS: "${text.substring(0, 80)}..."`);
 
         // DISABLED: Assistant message summarization (was causing summary loops)
         // console.log('⏳ Assistant message queued for summary generation...');
@@ -1869,4 +2038,3 @@ end tell`;
         }
     });
 }
-

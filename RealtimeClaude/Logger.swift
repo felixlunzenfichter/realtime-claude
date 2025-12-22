@@ -329,8 +329,6 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             handleAckMessage(jsonData)
         case "handshake":
             handleHandshakeMessage(jsonData)
-        case "prompt_ack":
-            handlePromptAckMessage(jsonData)
         case "transcription":
             handleTranscriptionMessage(jsonData)
         case "prompt":
@@ -434,33 +432,6 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         log("Successful handshake: Session #\(sessionNumber), Total: \(totalUptime)ms, Today: \(todayUptime)ms, Logs: \(totalLogs)")
     }
 
-    private func handlePromptAckMessage(_ jsonData: [String: Any]) {
-        guard let status = jsonData["status"] as? String else {
-            error("status was nil in prompt ACK message")
-            return
-        }
-
-        guard let summary = jsonData["summary"] as? String else {
-            error("Missing summary in prompt ACK message")
-            return
-        }
-
-        guard let messageIdString = jsonData["messageId"] as? String,
-              let messageId = UUID(uuidString: messageIdString) else {
-            error("Missing or invalid messageId in prompt ACK message")
-            return
-        }
-
-        if status == "success" {
-            log("✅ Prompt injected into terminal")
-            log("   Summary: \(summary)")
-            realtimeAPI.updateSummary(messageId: messageId, text: summary)
-        } else {
-            let errorMessage = jsonData["error"] as? String ?? "Unknown error"
-            error("❌ Failed to inject prompt: \(errorMessage)")
-        }
-    }
-
     private func handleTranscriptionMessage(_ jsonData: [String: Any]) {
         guard let transcription = jsonData["transcription"] as? String else {
             error("Missing transcription in transcription message")
@@ -553,8 +524,15 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             return
         }
 
+        let timestamp = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: timestamp)
+
+        let stateText = isActive ? "active" : "inactive"
+        log("📡 Claude state: \(stateText) at \(timeString)")
+
         claudeIsActiveSubject.send(isActive)
-        log("📡 Claude state update: \(state), active: \(isActive)")
         realtimeAPI.updateClaudeActiveState(isActive)
     }
 

@@ -62,13 +62,15 @@ struct ToggleBar: View {
         let icon: String?
         let text: String?
         let action: () -> Void
+        var scale: CGFloat = 1.0
 
-        init(color: Color, isOn: Binding<Bool>? = nil, icon: String? = nil, text: String? = nil, action: @escaping () -> Void) {
+        init(color: Color, isOn: Binding<Bool>? = nil, icon: String? = nil, text: String? = nil, action: @escaping () -> Void, scale: CGFloat = 1.0) {
             self.color = color
             self.isOn = isOn
             self.icon = icon
             self.text = text
             self.action = action
+            self.scale = scale
         }
     }
 
@@ -107,6 +109,7 @@ struct ToggleBar: View {
                     .padding(10)
                     .glassEffect(.regular.tint(item.color.opacity(item.isOn?.wrappedValue == true ? 0.5 : 0.1)).interactive(), in: .capsule)
                     .padding(10)
+                    .scaleEffect(item.scale)
                 }
             }
         }
@@ -118,6 +121,7 @@ struct WorkView: View {
     @Bindable var viewModel: WorkViewModel
     @Binding var showLogs: Bool
     @Binding var showDiff: Bool
+    @State private var claudeButtonScale: CGFloat = 1.0
 
     var body: some View {
         ZStack {
@@ -289,7 +293,8 @@ struct WorkView: View {
                             } else {
                                 viewModel.sendContinueMessage()
                             }
-                        }
+                        },
+                        scale: claudeButtonScale
                     ),
                     ToggleBar.ToggleItem(
                         color: .cyan,
@@ -359,6 +364,18 @@ struct WorkView: View {
         }
         .onDisappear {
             viewModel.stopMotionDetection()
+        }
+        .onChange(of: viewModel.claudeIsActive) { _, isActive in
+            if isActive {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                    claudeButtonScale = 1.15
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                        claudeButtonScale = 1.0
+                    }
+                }
+            }
         }
     }
 }
@@ -476,7 +493,7 @@ class WorkViewModel {
             }
             .store(in: &cancellables)
 
-        realtimeAPI.claudeIsActiveSubject
+        logger.claudeIsActiveSubject
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isActive in
                 self?.claudeIsActive = isActive

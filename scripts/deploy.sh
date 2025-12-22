@@ -10,7 +10,7 @@ exec > >(tee -a /tmp/deploy.log) 2>&1
 echo "=== Deployment started at $(date '+%Y-%m-%d %H:%M:%S') ==="
 echo ""
 
-DEVICE_TYPE=${1:-iphone}
+DEVICE_TYPE=${1:-ipad}
 
 trap 'echo ""; echo "💥 FATAL: Deployment failed at line $LINENO"; echo "Command: $BASH_COMMAND"; echo "Exit code: $?"; echo ""; exit 1' ERR
 
