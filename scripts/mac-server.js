@@ -1739,8 +1739,13 @@ function checkForInjectedPrompts(filePath) {
         if (allAssistantEvents.length > 0) {
             const latestAssistant = allAssistantEvents[allAssistantEvents.length - 1];
 
-            // Only send if this is a genuinely new message (different content)
-            if (latestAssistant.text !== lastSentAssistantMessage) {
+            // Filter out messages from the summary system itself
+            const looksLikeJSON = latestAssistant.text.trim().startsWith('```json');
+
+            if (looksLikeJSON) {
+                console.log(`⏭️  Ignoring assistant message - looks like JSON/summary response`);
+                console.log(`   Filtered content: "${latestAssistant.text}"`);
+            } else if (latestAssistant.text !== lastSentAssistantMessage) {
                 console.log(`📨 New assistant message detected: "${latestAssistant.text.substring(0, 80)}..."`);
 
                 // Save IMMEDIATELY to prevent duplicate sends (before async summarization)
@@ -1847,37 +1852,41 @@ async function sendAssistantMessageToiOS(text) {
         activeSocket.write(JSON.stringify(assistantMessage) + '\n');
         console.log(`✅ Assistant message sent to iOS: "${text.substring(0, 80)}..."`);
 
-        // DISABLED: Assistant message summarization (was causing summary loops)
-        // console.log('⏳ Assistant message queued for summary generation...');
-        //
-        // haikuPriorityQueue.add(3, async () => {
-        //     try {
-        //         const summary = await summarizeWithClaude(text);
-        //         console.log(`✅ Created new summary: "${summary}"`);
-        //
-        //         const cacheEntry = assistantSummaryCache.find(entry => entry.text === text);
-        //         if (cacheEntry) {
-        //             cacheEntry.summary = summary;
-        //         }
-        //
-        //         addToContext({ type: 'assistant_message', text: text, summary: summary });
-        //
-        //         const summaryUpdate = {
-        //             messageId: cacheEntry?.messageId || messageId,
-        //             timestamp: Date.now(),
-        //             type: 'assistant',
-        //             prompt: text,
-        //             summary: summary
-        //         };
-        //
-        //         if (activeSocket) {
-        //             activeSocket.write(JSON.stringify(summaryUpdate) + '\n');
-        //             console.log(`✅ Summary update sent: "${summary}"`);
-        //         }
-        //     } catch (error) {
-        //         console.error(`❌ Failed to summarize assistant message: ${error.message}`);
-        //     }
-        // }, `Assistant message summary for "${text.substring(0, 30)}..."`);
+        console.log('⏳ Assistant message queued for summary generation...');
+
+        haikuPriorityQueue.add(3, async () => {
+            try {
+                console.log(`🤖 Creating assistant message summary...`);
+
+                const result = await processWithHaiku(text, 'create_summary');
+
+                const summary = result.summary;
+
+                console.log(`✅ Created new summary: "${summary}"`);
+
+                const cacheEntry = assistantSummaryCache.find(entry => entry.text === text);
+                if (cacheEntry) {
+                    cacheEntry.summary = summary;
+                }
+
+                addToContext({ type: 'assistant_message', text: text, summary: summary });
+
+                const summaryUpdate = {
+                    messageId: cacheEntry?.messageId || messageId,
+                    timestamp: Date.now(),
+                    type: 'assistant',
+                    prompt: text,
+                    summary: summary
+                };
+
+                if (activeSocket) {
+                    activeSocket.write(JSON.stringify(summaryUpdate) + '\n');
+                    console.log(`✅ Summary update sent: "${summary}"`);
+                }
+            } catch (error) {
+                console.error(`❌ Failed to summarize assistant message: ${error.message}`);
+            }
+        }, `Assistant message summary for "${text.substring(0, 30)}..."`);
     } catch (error) {
         console.error(`❌ Failed to send assistant message: ${error.message}`);
     }
