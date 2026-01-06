@@ -1403,17 +1403,15 @@ function initializeClaudeMonitoring() {
         depth: 99,
         awaitWriteFinish: {
             stabilityThreshold: 2000,
-            pollInterval: 100
+            pollInterval: 1000
         }
     });
 
     conversationWatcher.on('change', (filePath) => {
-        console.log(`📝 [CONVERSATION] File changed: ${filePath}`);
         if (filePath.endsWith('.jsonl')) {
-            console.log(`   ✅ Matches .jsonl - checking for injected prompts`);
+            const conversationId = path.basename(filePath, '.jsonl');
+            console.log(`📝 [CONVERSATION] conversationId=${conversationId}`);
             checkForInjectedPrompts(filePath);
-        } else {
-            console.log(`   ⏭️  Skipping non-.jsonl file`);
         }
     });
 
@@ -1605,11 +1603,13 @@ function checkForInjectedPrompts(filePath) {
                     event.message.content) {
 
                     hasConversationActivity = true;
+                    const stopReason = event.message.stop_reason;
 
                     if (typeof event.message.content === 'string') {
                         allAssistantEvents.push({
                             text: event.message.content,
-                            timestamp: event.timestamp
+                            timestamp: event.timestamp,
+                            stopReason: stopReason
                         });
                     }
                     else if (Array.isArray(event.message.content)) {
@@ -1619,7 +1619,8 @@ function checkForInjectedPrompts(filePath) {
                                 typeof content.text === 'string') {
                                 allAssistantEvents.push({
                                     text: content.text,
-                                    timestamp: event.timestamp
+                                    timestamp: event.timestamp,
+                                    stopReason: stopReason
                                 });
                             }
                         }
@@ -1630,28 +1631,21 @@ function checkForInjectedPrompts(filePath) {
             }
         }
 
-        if (hasConversationActivity && activeSocket) {
+        if (hasConversationActivity && activeSocket && allAssistantEvents.length > 0) {
             const now = Date.now();
-            if (now - lastActivitySentTime > 3000) {
-                const idleMessage = {
-                    type: 'claude_state',
-                    state: 'idle',
-                    isActive: false,
-                    timestamp: now
-                };
-                activeSocket.write(JSON.stringify(idleMessage) + '\n');
+            const latestAssistant = allAssistantEvents[allAssistantEvents.length - 1];
+            const isActive = latestAssistant.stopReason === null || latestAssistant.stopReason === 'tool_use';
 
-                const activeMessage = {
+            if (now - lastActivitySentTime > 3000) {
+                const stateMessage = {
                     type: 'claude_state',
-                    state: 'active',
-                    isActive: true,
-                    timestamp: now + 1
+                    isActive: isActive
                 };
-                activeSocket.write(JSON.stringify(activeMessage) + '\n');
+                activeSocket.write(JSON.stringify(stateMessage) + '\n');
                 lastActivitySentTime = now;
-                console.log('📤 Sent claude_state pulse (idle→active) to iOS (conversation activity detected)');
+                console.log(`📤 Sent claude_state isActive=${isActive} (stop_reason: ${latestAssistant.stopReason})`);
             } else {
-                console.log('⏭️  Skipping claude_state active (debounced - too soon since last send)');
+                console.log(`⏭️  Skipping claude_state (debounced - stop_reason: ${latestAssistant.stopReason})`);
             }
         }
 

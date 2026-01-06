@@ -21,7 +21,38 @@ cd "$SCRIPT_DIR"
 
 echo ""
 echo "--------------------------------------------------------------------------------"
-echo "STEP 1: DEPLOY MAC SERVER"
+echo "STEP 1: DEPLOY WHISPER SERVER"
+echo "--------------------------------------------------------------------------------"
+echo ""
+
+echo "🧹 Cleaning up existing Whisper server processes..."
+pkill -f "whisper-server.py" 2>/dev/null || true
+lsof -ti:5050 | xargs kill -9 2>/dev/null || true
+sleep 0.5
+echo "✅ Whisper server cleanup complete"
+
+echo "🚀 Starting Whisper server (Lightning Whisper MLX)..."
+./whisper-venv-312/bin/python3.12 scripts/whisper-server.py > /tmp/whisper-server-output.log 2>&1 &
+WHISPER_PID=$!
+
+for i in {1..180}; do
+    if curl -s http://localhost:5050/health > /dev/null 2>&1; then
+        ELAPSED=$(echo "scale=1; $i * 1" | bc)
+        echo "✅ Whisper server started in ~${ELAPSED}s (PID: $WHISPER_PID)"
+        break
+    fi
+    if [ $i -eq 180 ]; then
+        echo "❌ FATAL: Whisper server failed to start after 180 seconds"
+        echo "   The large-v3 model can take 2-3 minutes to load"
+        echo "   Check /tmp/whisper-server-output.log for details"
+        exit 1
+    fi
+    sleep 1
+done
+
+echo ""
+echo "--------------------------------------------------------------------------------"
+echo "STEP 2: DEPLOY MAC SERVER"
 echo "--------------------------------------------------------------------------------"
 echo ""
 
@@ -52,7 +83,7 @@ done
 
 echo ""
 echo "--------------------------------------------------------------------------------"
-echo "STEP 2: DEVICE DISCOVERY"
+echo "STEP 3: DEVICE DISCOVERY"
 echo "--------------------------------------------------------------------------------"
 echo ""
 
@@ -81,7 +112,7 @@ echo "   Device ID: $DEVICECTL_ID"
 
 echo ""
 echo "--------------------------------------------------------------------------------"
-echo "STEP 3: BUILD IOS APPLICATION"
+echo "STEP 4: BUILD IOS APPLICATION"
 echo "--------------------------------------------------------------------------------"
 echo ""
 
@@ -155,7 +186,7 @@ echo "   Binary: $APP_PATH"
 
 echo ""
 echo "--------------------------------------------------------------------------------"
-echo "STEP 4: DEPLOY IOS APP"
+echo "STEP 5: DEPLOY IOS APP"
 echo "--------------------------------------------------------------------------------"
 echo ""
 
@@ -215,7 +246,8 @@ echo "--------------------------------------------------------------------------
 echo "DEPLOYMENT COMPLETE"
 echo "--------------------------------------------------------------------------------"
 echo ""
-echo "   Mac Server: Running (PID: $SERVER_PID)"
+echo "   Whisper Server: Running (PID: $WHISPER_PID) on port 5050"
+echo "   Mac Server: Running (PID: $SERVER_PID) on port 8082"
 echo "   Device: $DEVICE_NAME ($DEVICECTL_ID)"
 echo ""
 echo "--------------------------------------------------------------------------------"

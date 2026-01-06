@@ -519,19 +519,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             return
         }
 
-        guard let state = jsonData["state"] as? String else {
-            error("state was nil in claude_state message")
-            return
-        }
-
-        let timestamp = Date()
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss.SSS"
-        let timeString = formatter.string(from: timestamp)
-
-        let stateText = isActive ? "active" : "inactive"
-        log("📡 Claude state: \(stateText) at \(timeString)")
-
+        log("📡 Claude state: \(isActive ? "active" : "inactive")")
         claudeIsActiveSubject.send(isActive)
         realtimeAPI.updateClaudeActiveState(isActive)
     }

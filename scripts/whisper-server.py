@@ -7,14 +7,15 @@ import os
 
 app = Flask(__name__)
 
-print("Loading Lightning Whisper MLX (distil-large-v3 model)...")
+print("Loading Lightning Whisper MLX (large-v3 model)...")
 start = time.time()
-whisper = LightningWhisperMLX(model="distil-large-v3", batch_size=12)
+# whisper = LightningWhisperMLX(model="distil-large-v3", batch_size=12)  # Original: distil-large-v3
+whisper = LightningWhisperMLX(model="large-v3", batch_size=12)
 print(f"Model loaded in {time.time()-start:.2f}s")
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({"status": "ok", "model": "distil-large-v3"})
+    return jsonify({"status": "ok", "model": "large-v3"})
 
 @app.route('/transcribe', methods=['POST'])
 def transcribe():

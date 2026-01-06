@@ -2,6 +2,13 @@ import SwiftUI
 import Combine
 import Observation
 
+struct VisibleLinePreferenceKey: PreferenceKey {
+    nonisolated(unsafe) static var defaultValue: [Int: CGFloat] = [:]
+    static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
 @Observable
 class LogListViewModel {
     var debugLogs: [(LogMessage, Int)] = []
@@ -570,6 +577,7 @@ class DiffViewModel {
     var scrollToLineIndex: Int? = nil
     var currentChangeIndex: Int = 0
     var currentNavigationMode: NavigationMode = .changes
+    var highlightedLineIndex: Int?
 
     private var previousDiffLines: [(text: String, type: DiffLineType)] = []
     private var cancellables = Set<AnyCancellable>()
@@ -659,17 +667,7 @@ class DiffViewModel {
                 line.type == .hunk ? index : nil
             }
         case .changes:
-            var indices: [Int] = []
-            for (index, line) in lines.enumerated() {
-                let text = line.text
-                if text.hasPrefix("---") || text.hasPrefix("+++") {
-                    continue
-                }
-                if line.type == .addition || line.type == .deletion {
-                    indices.append(index)
-                }
-            }
-            return indices
+            return changeChunkIndices
         case .sections:
             return lines.enumerated().compactMap { index, line in
                 line.type == .sectionHeader ? index : nil
@@ -687,14 +685,26 @@ class DiffViewModel {
         let indices = modeSpecificIndices
         guard !indices.isEmpty else { return }
 
+        if let currentPos = highlightedLineIndex {
+            for (arrayIndex, lineIndex) in indices.enumerated() {
+                if lineIndex <= currentPos {
+                    currentChangeIndex = arrayIndex
+                } else {
+                    break
+                }
+            }
+        }
+
         if currentChangeIndex < indices.count - 1 {
             currentChangeIndex += 1
         } else {
             currentChangeIndex = 0
         }
 
+        let targetIndex = indices[currentChangeIndex]
         scrollToLineIndex = nil
-        scrollToLineIndex = indices[currentChangeIndex]
+        scrollToLineIndex = targetIndex
+        highlightedLineIndex = targetIndex
         log("Navigated to next \(currentNavigationMode.label): \(currentChangeIndex + 1)/\(indices.count)")
     }
 
@@ -702,14 +712,26 @@ class DiffViewModel {
         let indices = modeSpecificIndices
         guard !indices.isEmpty else { return }
 
+        if let currentPos = highlightedLineIndex {
+            for (arrayIndex, lineIndex) in indices.enumerated() {
+                if lineIndex <= currentPos {
+                    currentChangeIndex = arrayIndex
+                } else {
+                    break
+                }
+            }
+        }
+
         if currentChangeIndex > 0 {
             currentChangeIndex -= 1
         } else {
             currentChangeIndex = indices.count - 1
         }
 
+        let targetIndex = indices[currentChangeIndex]
         scrollToLineIndex = nil
-        scrollToLineIndex = indices[currentChangeIndex]
+        scrollToLineIndex = targetIndex
+        highlightedLineIndex = targetIndex
         log("Navigated to previous \(currentNavigationMode.label): \(currentChangeIndex + 1)/\(indices.count)")
     }
 
@@ -742,10 +764,13 @@ class DiffViewModel {
 
         previousDiffLines = currentLines
 
+        let targetIndex = firstChangeIndex ?? 0
         currentChangeIndex = 0
         scrollToLineIndex = nil
-        scrollToLineIndex = firstChangeIndex ?? 0
+        scrollToLineIndex = targetIndex
+        highlightedLineIndex = targetIndex
     }
+
 }
 
 enum DiffLineType {
@@ -799,9 +824,18 @@ struct DiffView: View {
                             Spacer()
                                 .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")) * 2)
 
+                            let highlightedLine = viewModel.highlightedLineIndex
                             ForEach(Array(viewModel.diffLines.enumerated()), id: \.offset) { index, line in
-                                DiffLineView(text: line.text, type: line.type, index: index, scrollToLineIndex: viewModel.scrollToLineIndex)
+                                DiffLineView(text: line.text, type: line.type, index: index, currentLineIndex: highlightedLine)
                                     .id(index)
+                                    .background(
+                                        GeometryReader { geo in
+                                            Color.clear.preference(
+                                                key: VisibleLinePreferenceKey.self,
+                                                value: [index: geo.frame(in: .named("diffScroll")).midY]
+                                            )
+                                        }
+                                    )
                             }
 
                             Spacer()
@@ -809,10 +843,17 @@ struct DiffView: View {
                         }
                         .padding(.horizontal, 12)
                     }
+                    .coordinateSpace(name: "diffScroll")
+                    .onPreferenceChange(VisibleLinePreferenceKey.self) { positions in
+                        let centerY = ACTUAL_SCREEN_HEIGHT / 2
+                        if let closestLine = positions.min(by: { abs($0.value - centerY) < abs($1.value - centerY) }) {
+                            viewModel.highlightedLineIndex = closestLine.key
+                        }
+                    }
                     .frame(height: ACTUAL_SCREEN_HEIGHT)
                     .onChange(of: viewModel.scrollToLineIndex) { _, newIndex in
                         guard let index = newIndex else { return }
-
+                        viewModel.highlightedLineIndex = index
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             withAnimation(.easeInOut(duration: 0.3)) {
                                 proxy.scrollTo(index, anchor: .center)
@@ -821,7 +862,6 @@ struct DiffView: View {
                     }
                     .onAppear {
                         guard let index = viewModel.scrollToLineIndex else { return }
-
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             withAnimation(.easeInOut(duration: 0.3)) {
                                 proxy.scrollTo(index, anchor: .center)
@@ -877,11 +917,11 @@ struct DiffLineView: View {
     let text: String
     let type: DiffLineType
     let index: Int
-    let scrollToLineIndex: Int?
+    let currentLineIndex: Int?
 
     var isHighlighted: Bool {
-        guard let scrollToLineIndex = scrollToLineIndex else { return false }
-        return index == scrollToLineIndex
+        guard let currentLineIndex = currentLineIndex else { return false }
+        return index == currentLineIndex
     }
 
     var body: some View {
