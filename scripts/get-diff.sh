@@ -1,5 +1,5 @@
 #!/bin/bash
-cd "$(dirname "$0")/.."
+cd /Users/felixlunzenfichter/Documents/voices
 
 # Branch status with ahead/behind count
 echo "=== Branch Status ==="
@@ -38,7 +38,7 @@ local_head=$(git rev-parse HEAD 2>/dev/null)
 remote_head=$(git rev-parse origin/development 2>/dev/null || echo "")
 
 # Get all commits and process them
-git log --all -10 --format="%H|%ad %s %h" --date=format:'%b %d %H:%M' | while IFS='|' read -r commit_hash commit_line; do
+git log -10 --format="%H|%ad %s %h" --date=format:'%b %d %H:%M' | while IFS='|' read -r commit_hash commit_line; do
     # Check if this commit is the remote HEAD
     if [ "$commit_hash" = "$remote_head" ]; then
         echo "=== REMOTE HEAD ==="
@@ -57,8 +57,8 @@ done
 echo "=== Latest 3 Commits Content ==="
 local_head=$(git rev-parse HEAD)
 
-# Get the last 3 commit hashes with dates from all refs (local and remote)
-commits=$(git log --all -3 --format="%H|%ad" --date=format:'%b %d %H:%M')
+# Get the last 3 commit hashes with dates from current branch
+commits=$(git log -3 --format="%H|%ad" --date=format:'%b %d %H:%M')
 
 index=0
 echo "$commits" | while IFS='|' read -r commit_hash commit_date; do

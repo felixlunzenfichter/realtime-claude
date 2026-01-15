@@ -137,6 +137,34 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error(`⚠️ Unhandled promise rejection (continuing): ${reason}`);
 });
 
+function closeAllWatchers() {
+    if (stateWatcher) {
+        stateWatcher.close();
+        stateWatcher = null;
+    }
+    if (conversationWatcher) {
+        conversationWatcher.close();
+        conversationWatcher = null;
+    }
+    if (gitDiffWatcher) {
+        gitDiffWatcher.close();
+        gitDiffWatcher = null;
+    }
+    console.log('🧹 All file watchers closed');
+}
+
+process.on('SIGTERM', () => {
+    console.log('📴 Received SIGTERM, shutting down...');
+    closeAllWatchers();
+    process.exit(0);
+});
+
+process.on('SIGINT', () => {
+    console.log('📴 Received SIGINT, shutting down...');
+    closeAllWatchers();
+    process.exit(0);
+});
+
 const logsDir = path.join('private', 'logs');
 const lastAssistantMessageFile = path.join('private', 'last-assistant-message.txt');
 const CLAUDE_WINDOW_PATTERN = 'claude --dangerously-skip-permissions';
@@ -162,6 +190,10 @@ const assistantSummaryCache = [];
 const MAX_SUMMARY_CACHE_SIZE = 5;
 
 let haikuContext = [];
+
+let stateWatcher = null;
+let conversationWatcher = null;
+let gitDiffWatcher = null;
 
 const messageStates = new Map();
 
@@ -792,6 +824,7 @@ const server = net.createServer((socket) => {
         console.log('iOS client disconnected - waiting for reconnection...');
         if (activeSocket === socket) {
             activeSocket = null;
+            closeAllWatchers();
         }
     });
 
@@ -1371,7 +1404,7 @@ function initializeClaudeMonitoring() {
     console.log(`   📄 State file: ${stateFile}`);
     console.log(`   📄 State file exists: ${fs.existsSync(stateFile)}`);
 
-    const stateWatcher = chokidar.watch(stateFile, {
+    stateWatcher = chokidar.watch(stateFile, {
         persistent: true,
         ignoreInitial: false
     });
@@ -1396,14 +1429,14 @@ function initializeClaudeMonitoring() {
         console.log(`✅ [STATE] State watcher active on ${stateFile}`);
     });
 
-    const conversationWatcher = chokidar.watch(claudeProjectsPath, {
+    conversationWatcher = chokidar.watch(claudeProjectsPath, {
         persistent: true,
         ignoreInitial: true,
         recursive: true,
-        depth: 99,
+        depth: 5,
         awaitWriteFinish: {
             stabilityThreshold: 2000,
-            pollInterval: 1000
+            pollInterval: 500
         }
     });
 
@@ -1425,11 +1458,12 @@ function initializeClaudeMonitoring() {
 }
 
 function initializeGitDiffWatcher() {
-    const repoPath = path.join(__dirname, '..');
+    const repoPath = '/Users/felixlunzenfichter/Documents/voices';
 
-    const watcher = chokidar.watch(repoPath, {
+    gitDiffWatcher = chokidar.watch(repoPath, {
         persistent: true,
         ignoreInitial: true,
+        depth: 5,
         ignored: [
             '**/node_modules/**',
             '**/.git/**',
@@ -1440,12 +1474,12 @@ function initializeGitDiffWatcher() {
             '**/private/**'
         ],
         awaitWriteFinish: {
-            stabilityThreshold: 200,
-            pollInterval: 100
+            stabilityThreshold: 300,
+            pollInterval: 200
         }
     });
 
-    watcher.on('all', (event, filePath) => {
+    gitDiffWatcher.on('all', (event, filePath) => {
         if (diffDebounceTimer) {
             clearTimeout(diffDebounceTimer);
         }
@@ -1455,11 +1489,11 @@ function initializeGitDiffWatcher() {
         }, 500);
     });
 
-    watcher.on('error', (error) => {
+    gitDiffWatcher.on('error', (error) => {
         console.error('❌ Git diff watcher error:', error);
     });
 
-    watcher.on('ready', () => {
+    gitDiffWatcher.on('ready', () => {
         console.log(`✅ Git diff monitoring active on ${repoPath}`);
         sendGitDiffToiOS();
     });
@@ -1526,7 +1560,8 @@ function sendGitDiffToiOS(force = false) {
         execSync(`"${scriptPath}" > "${outputFile}" 2>&1`, {
             stdio: 'ignore',
             shell: '/bin/bash',
-            timeout: 5000
+            timeout: 5000,
+            cwd: '/Users/felixlunzenfichter/Documents/voices'
         });
 
         const diff = fs.readFileSync(outputFile, 'utf8').trim();

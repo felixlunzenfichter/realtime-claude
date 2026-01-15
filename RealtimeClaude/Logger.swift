@@ -77,7 +77,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     let claudeIsActiveSubject = CurrentValueSubject<Bool, Never>(false)
 
     private var connection: NWConnection
-    private let macHostname = "Felixs-MacBook-Pro.local"
+    private let macHostname = "100.73.64.63"  // Mac's Tailscale IP - works from anywhere
     private let port: UInt16 = 8082
     private let tcpProcessingSendingQueue = DispatchQueue(label: "logger.tcp.processing.sending", qos: .userInitiated)
     private let tcpProcessingReceivingQueue = DispatchQueue(label: "logger.tcp.processing.receiving", qos: .userInitiated)
