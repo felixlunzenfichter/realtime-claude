@@ -77,7 +77,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     let claudeIsActiveSubject = CurrentValueSubject<Bool, Never>(false)
 
     private var connection: NWConnection
-    private let macHostname = "100.73.64.63"  // Mac's Tailscale IP - works from anywhere
+    private let macHostname = "100.73.64.63"
     private let port: UInt16 = 8082
     private let tcpProcessingSendingQueue = DispatchQueue(label: "logger.tcp.processing.sending", qos: .userInitiated)
     private let tcpProcessingReceivingQueue = DispatchQueue(label: "logger.tcp.processing.receiving", qos: .userInitiated)
@@ -267,7 +267,9 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
                 }
             }
 
-            if !isComplete {
+            if isComplete {
+                log("TCP connection marked complete - receive loop ending")
+            } else {
                 self.startReceiving()
             }
         }
@@ -298,7 +300,8 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
                         messagesProcessed += 1
                     }
                 } catch let parseError {
-                    error("Failed to parse JSON: \(parseError)")
+                    let preview = String(data: lineData.prefix(100), encoding: .utf8) ?? "binary"
+                    error("Failed to parse JSON: \(parseError) - data preview: \(preview)")
                 }
             }
         }

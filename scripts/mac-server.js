@@ -150,6 +150,10 @@ function closeAllWatchers() {
         gitDiffWatcher.close();
         gitDiffWatcher = null;
     }
+    if (typeof configWatcher !== 'undefined' && configWatcher) {
+        configWatcher.close();
+        configWatcher = null;
+    }
     console.log('🧹 All file watchers closed');
 }
 
@@ -174,7 +178,10 @@ let currentSessionNumber = 0;
 let activeSocket = null;
 
 let lastDiffSent = null;
+let lastDiffHash = null;
 let diffDebounceTimer = null;
+const COLUMNS_JSON_PATH = path.join(require('os').homedir(), '.git-diff-columns.json');
+const REPO_CONFIG_PATH = path.join(require('os').homedir(), '.watched-repo');
 
 let claudeIsActive = false;
 let lastActivitySentTime = 0;
@@ -1366,6 +1373,7 @@ function sendAcknowledgment(socket, logId) {
         }) + '\n';
 
         socket.write(ackMessage);
+        console.log(`📨 Sent ACK for: ${logId.substring(0, 8)}...`);
     } catch (error) {
         console.error(`⚠️ Failed to send acknowledgment (continuing): ${error.message}`);
     }
@@ -1457,12 +1465,95 @@ function initializeClaudeMonitoring() {
     });
 }
 
-function initializeGitDiffWatcher() {
-    const repoPath = '/Users/felixlunzenfichter/Documents/voices';
+function getRepoPath() {
+    try {
+        if (fs.existsSync(REPO_CONFIG_PATH)) {
+            return fs.readFileSync(REPO_CONFIG_PATH, 'utf8').trim();
+        }
+    } catch (err) {
+        console.error(`⚠️ Failed to read repo config: ${err.message}`);
+    }
+    return null;
+}
+
+function getRepoFingerprint(repoPath) {
+    try {
+        const head = execSync('git rev-parse HEAD', { cwd: repoPath, encoding: 'utf8' }).trim();
+        const porcelain = execSync('git status --porcelain', { cwd: repoPath, encoding: 'utf8' });
+        const crypto = require('crypto');
+        return crypto.createHash('md5').update(head + porcelain).digest('hex');
+    } catch (err) {
+        return null;
+    }
+}
+
+function computeColumns(text) {
+    const LINE_WIDTH = 100;
+    const MIN_ROWS = 100;
+    const MAX_COLS = 20;
+
+    const lines = text.split('\n');
+
+    const wrapped = [];
+    for (const line of lines) {
+        if (line.length > LINE_WIDTH) {
+            for (let i = 0; i < line.length; i += LINE_WIDTH) {
+                wrapped.push(line.slice(i, i + LINE_WIDTH));
+            }
+        } else {
+            wrapped.push(line);
+        }
+    }
+
+    let numCols = Math.ceil(wrapped.length / MIN_ROWS);
+    let numRows = MIN_ROWS;
+
+    if (numCols > MAX_COLS) {
+        numCols = MAX_COLS;
+        numRows = Math.ceil(wrapped.length / MAX_COLS);
+    }
+
+    const columns = [];
+    for (let i = 0; i < numCols; i++) {
+        const col = wrapped.slice(i * numRows, (i + 1) * numRows);
+        while (col.length < numRows) {
+            col.push('');
+        }
+        columns.push(col.join('\n'));
+    }
+
+    return columns;
+}
+
+function writeColumnsJson(hash, columns) {
+    const data = {
+        hash: hash,
+        timestamp: Date.now(),
+        columns: columns
+    };
+    try {
+        fs.writeFileSync(COLUMNS_JSON_PATH, JSON.stringify(data, null, 2));
+        console.log(`📝 Wrote ${columns.length} columns to ${COLUMNS_JSON_PATH}`);
+    } catch (err) {
+        console.error(`⚠️ Failed to write columns JSON: ${err.message}`);
+    }
+}
+
+let configWatcher = null;
+let currentWatchedRepo = null;
+
+function startRepoWatcher(repoPath) {
+    if (gitDiffWatcher) {
+        gitDiffWatcher.close();
+        gitDiffWatcher = null;
+        console.log(`🔄 Closed previous repo watcher`);
+    }
+
+    currentWatchedRepo = repoPath;
 
     gitDiffWatcher = chokidar.watch(repoPath, {
         persistent: true,
-        ignoreInitial: true,
+        ignoreInitial: false,
         depth: 5,
         ignored: [
             '**/node_modules/**',
@@ -1497,6 +1588,38 @@ function initializeGitDiffWatcher() {
         console.log(`✅ Git diff monitoring active on ${repoPath}`);
         sendGitDiffToiOS();
     });
+}
+
+function initializeGitDiffWatcher() {
+    const repoPath = getRepoPath();
+    if (repoPath) {
+        startRepoWatcher(repoPath);
+    } else {
+        console.log(`⚠️ No repo configured yet. Waiting for ${REPO_CONFIG_PATH}`);
+    }
+
+    configWatcher = chokidar.watch(REPO_CONFIG_PATH, {
+        persistent: true,
+        ignoreInitial: true
+    });
+
+    configWatcher.on('change', () => {
+        const newRepoPath = getRepoPath();
+        if (newRepoPath && newRepoPath !== currentWatchedRepo) {
+            console.log(`🔄 Config changed: switching to ${newRepoPath}`);
+            startRepoWatcher(newRepoPath);
+        }
+    });
+
+    configWatcher.on('add', () => {
+        const newRepoPath = getRepoPath();
+        if (newRepoPath && !currentWatchedRepo) {
+            console.log(`📁 Config created: watching ${newRepoPath}`);
+            startRepoWatcher(newRepoPath);
+        }
+    });
+
+    console.log(`👀 Watching config file: ${REPO_CONFIG_PATH}`);
 }
 
 
@@ -1552,6 +1675,17 @@ function readClaudeState(filePath) {
 }
 
 function sendGitDiffToiOS(force = false) {
+    const repoPath = getRepoPath();
+    if (!repoPath) {
+        console.log(`⚠️ No repo configured, skipping git diff`);
+        return;
+    }
+
+    const hash = getRepoFingerprint(repoPath);
+    if (!force && hash && hash === lastDiffHash) {
+        return;
+    }
+
     const os = require('os');
     const scriptPath = path.join(__dirname, 'get-diff.sh');
     const outputFile = path.join(os.tmpdir(), `git-diff-${Date.now()}-${process.pid}.txt`);
@@ -1561,7 +1695,7 @@ function sendGitDiffToiOS(force = false) {
             stdio: 'ignore',
             shell: '/bin/bash',
             timeout: 5000,
-            cwd: '/Users/felixlunzenfichter/Documents/voices'
+            cwd: repoPath
         });
 
         const diff = fs.readFileSync(outputFile, 'utf8').trim();
@@ -1571,19 +1705,23 @@ function sendGitDiffToiOS(force = false) {
         }
 
         lastDiffSent = diff;
+        lastDiffHash = hash;
+
+        const columns = computeColumns(diff);
+        writeColumnsJson(hash, columns);
 
         if (activeSocket) {
             const diffMessage = {
                 type: 'code_diff',
-                diff: diff,
+                diff: columns.join('\n\n--- COLUMN ---\n\n'),
+                columns: columns,
                 timestamp: Date.now()
             };
 
             const jsonData = JSON.stringify(diffMessage) + '\n';
             activeSocket.write(jsonData);
 
-            const diffSummary = diff.length > 0 ? `${diff.split('\n').length} lines` : 'empty';
-            console.log(`📤 Sent git diff to iOS: ${diffSummary}${force ? ' (forced during handshake)' : ''}`);
+            console.log(`📤 Sent git diff to iOS: ${columns.length} columns${force ? ' (forced during handshake)' : ''}`);
         }
     } catch (error) {
         console.log(`⚠️ Failed to get git diff: ${error.message}`);
