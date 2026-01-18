@@ -123,6 +123,19 @@
 - Tests pass → merge → deploy
 - Tests fail → fix in worktree → try again
 
+**STORY.md is LOCKED.**
+
+- The story is the contract
+- Agents fix code to match the story, never the reverse
+- Enforced by pre-commit hook:
+```bash
+# .git/hooks/pre-commit
+if git diff --cached --name-only | grep -q "tests/STORY.md"; then
+    echo "ERROR: STORY.md is LOCKED"
+    exit 1
+fi
+```
+
 ---
 
 ## File Structure
