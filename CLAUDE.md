@@ -25,6 +25,10 @@ Always debug mode, always direct install. This is our tool.
 
 ## TDD Development
 
+**STORY.md is LOCKED. If tests fail, fix the code, not the spec.**
+
+The story is the contract. Agents fix code to match the story, never the reverse.
+
 Each task = 3 commits:
 1. Write test (test file is located in: scripts/test-system.js)
 2. Make test pass (minimal code only, ignore refactoring rules)
