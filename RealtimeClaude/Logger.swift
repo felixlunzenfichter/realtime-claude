@@ -103,6 +103,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     ]
 
     private var storyIndex = 0
+    private var isCheckingStory = false
 
     private func pre(_ condition: Bool, _ message: String) {
         if !condition { error("PRE: \(message)") }
@@ -117,6 +118,10 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     }
 
     private func checkStoryProgress(_ loggedMessage: String) {
+        guard !isCheckingStory else { return }
+        isCheckingStory = true
+        defer { isCheckingStory = false }
+
         inv(storyIndex >= 0, "storyIndex must be non-negative")
         inv(storyIndex <= STORY.count, "storyIndex must not exceed STORY.count")
 
