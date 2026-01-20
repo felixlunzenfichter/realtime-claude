@@ -606,7 +606,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         realtimeAPI.updateSummary(messageId: messageId, text: summary)
 
         testClaudeResponds()
-        testClaudeRecallsWord(summary)
+        testClaudeRecallsWord(prompt)
     }
 
     private func handleCodeDiffMessage(_ jsonData: [String: Any]) {
