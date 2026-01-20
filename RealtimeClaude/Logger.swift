@@ -87,6 +87,92 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     private let tcpProcessingReceivingQueue = DispatchQueue(label: "logger.tcp.processing.receiving", qos: .userInitiated)
     private var reconnectAttempts: Int = 0
     private var reconnectTimer: DispatchSourceTimer?
+
+    #if IS_TEST
+    private static let TEST_WORD = "MOONLIGHT"
+    private static let STORY_HANDSHAKE = "Successful handshake"
+    private static let STORY_REMEMBER = "Remember \(TEST_WORD)"
+    private static let STORY_CLAUDE_RESPONDS = "Claude responds"
+    private static let STORY_ASK_WORD = "What word did I ask you to remember?"
+    private static let STORY_RECALLS_WORD = TEST_WORD
+
+    private let STORY: [(command: String?, result: String)] = [
+        (nil, Logger.STORY_HANDSHAKE),
+        (Logger.STORY_REMEMBER, Logger.STORY_CLAUDE_RESPONDS),
+        (Logger.STORY_ASK_WORD, Logger.STORY_RECALLS_WORD)
+    ]
+
+    private var storyIndex = 0
+
+    private func pre(_ condition: Bool, _ message: String) {
+        if !condition { error("PRE: \(message)") }
+    }
+
+    private func post(_ condition: Bool, _ message: String) {
+        if !condition { error("POST: \(message)") }
+    }
+
+    private func inv(_ condition: Bool, _ message: String) {
+        if !condition { error("INV: \(message)") }
+    }
+
+    private func checkStoryProgress(_ loggedMessage: String) {
+        inv(storyIndex >= 0, "storyIndex must be non-negative")
+        inv(storyIndex <= STORY.count, "storyIndex must not exceed STORY.count")
+
+        guard storyIndex < STORY.count else { return }
+
+        let expected = STORY[storyIndex].result
+
+        if loggedMessage.contains(expected) {
+            log("📖 Story[\(storyIndex)] matched: \(expected)")
+            storyIndex += 1
+            advanceStory()
+        }
+    }
+
+    private func advanceStory() {
+        pre(storyIndex >= 0, "storyIndex must be non-negative")
+
+        guard storyIndex < STORY.count else {
+            log("✅ Story complete")
+            return
+        }
+
+        let step = STORY[storyIndex]
+        log("📖 Story[\(storyIndex)] waiting for: \(step.result)")
+
+        #if !MANUAL_TESTING
+        if let command = step.command {
+            log("📖 Executing command: \(command)")
+            executeCommand(command)
+        }
+        #endif
+    }
+
+    #if !MANUAL_TESTING
+    private func executeCommand(_ command: String) {
+        pre(!command.isEmpty, "command must not be empty")
+        log("📤 Sending prompt to Mac: \(command)")
+        sendPromptToMac(command, messageId: UUID())
+    }
+    #endif
+
+    func testClaudeResponds() {
+        log("\(Logger.STORY_CLAUDE_RESPONDS)")
+    }
+
+    func testClaudeRecallsWord(_ response: String) {
+        pre(!response.isEmpty, "response must not be empty")
+        if response.contains(Logger.TEST_WORD) {
+            log("\(Logger.STORY_RECALLS_WORD)")
+        }
+    }
+    #else
+    func testClaudeResponds() {}
+    func testClaudeRecallsWord(_ response: String) {}
+    #endif
+
     private var isConnectionReady: Bool = false {
         didSet {
             macConnectionReadySubject.send(isConnectionReady)
@@ -132,6 +218,9 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
                     self.cancelReconnectTimer()
                     self.startReceiving()
                     self.sendStartMessage()
+                    #if IS_TEST
+                    self.advanceStory()
+                    #endif
                 case .failed(let connectionError):
                     log("Logger connection failed: \(connectionError)")
                     self.isConnectionReady = false
@@ -167,6 +256,10 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
         addLogMessage(logMessage)
         sendLog(logMessage)
+
+        #if IS_TEST
+        checkStoryProgress(message)
+        #endif
     }
 
     private func addLogMessage(_ logMessage: LogMessage) {
@@ -506,6 +599,9 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
         realtimeAPI.updatePrompt(messageId: messageId, text: prompt)
         realtimeAPI.updateSummary(messageId: messageId, text: summary)
+
+        testClaudeResponds()
+        testClaudeRecallsWord(summary)
     }
 
     private func handleCodeDiffMessage(_ jsonData: [String: Any]) {
