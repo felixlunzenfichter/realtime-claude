@@ -129,6 +129,10 @@ const FormData = require('form-data');
 const fetch = require('node-fetch');
 const { Worker } = require('worker_threads');
 
+const IS_TEST = process.env.IS_TEST === 'true';
+const MANUAL_TESTING = process.env.MANUAL_TESTING === 'true';
+const SERVER_PORT = parseInt(process.env.SERVER_PORT, 10) || 8082;
+
 process.on('uncaughtException', (error) => {
     console.error(`⚠️ Uncaught exception (continuing): ${error.stack || error}`);
 });
@@ -465,6 +469,11 @@ function deduplicateTranscription(newText, messageState, timestamp) {
 }
 
 async function transcribeAudio(audioPath) {
+    if (IS_TEST && !MANUAL_TESTING) {
+        console.log(`🧪 Automated testing: Skipping Whisper, returning mock "hello"`);
+        return { text: 'hello', segments: [] };
+    }
+
     try {
         const startTime = Date.now();
 
@@ -842,8 +851,8 @@ const server = net.createServer((socket) => {
 
 loadLastAssistantMessage();
 
-server.listen(8082, '0.0.0.0', () => {
-    console.log(`Mac server listening on :8082 | ${getSessionCount()} sessions`);
+server.listen(SERVER_PORT, '0.0.0.0', () => {
+    console.log(`Mac server listening on :${SERVER_PORT} | ${getSessionCount()} sessions`);
 
     initializeClaudeMonitoring();
     initializeGitDiffWatcher();
@@ -1211,7 +1220,12 @@ function countLinesInContent(content) {
 }
 
 async function sendHandshakeResponse(socket, stats) {
-    const apiKey = fs.readFileSync(path.join('private', 'secrets.txt'), 'utf8').trim();
+    let apiKey;
+    if (IS_TEST && !MANUAL_TESTING) {
+        apiKey = 'test-api-key';
+    } else {
+        apiKey = fs.readFileSync(path.join('private', 'secrets.txt'), 'utf8').trim();
+    }
 
     const previousErrors = getPreviousSessionErrors(stats.sessionNumber);
 

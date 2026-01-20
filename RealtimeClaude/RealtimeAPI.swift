@@ -159,9 +159,11 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
 
         log("Successful summary creation")
 
+        #if !IS_TEST || MANUAL_TESTING
         if audioManager.isPlaybackEnabledSubject.value {
             speakWithTTS(text: text, messageId: messageId)
         }
+        #endif
     }
 
     func stopCurrentRecording() {

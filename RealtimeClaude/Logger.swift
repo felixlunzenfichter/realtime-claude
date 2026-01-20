@@ -78,7 +78,11 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
     private var connection: NWConnection
     private let macHostname = "100.73.64.63"
+    #if IS_TEST
+    private let port: UInt16 = 9999
+    #else
     private let port: UInt16 = 8082
+    #endif
     private let tcpProcessingSendingQueue = DispatchQueue(label: "logger.tcp.processing.sending", qos: .userInitiated)
     private let tcpProcessingReceivingQueue = DispatchQueue(label: "logger.tcp.processing.receiving", qos: .userInitiated)
     private var reconnectAttempts: Int = 0
