@@ -22,7 +22,7 @@ fi
 
 # Kill only test server (port 9999), leave production (8082) alone
 echo "Restarting test server on port 9999..."
-pkill -f "IS_TEST=true" 2>/dev/null || true
+lsof -ti :9999 | xargs kill -9 2>/dev/null || true
 sleep 1
 eval "$SERVER_FLAGS SERVER_PORT=9999 node scripts/mac-server.js > /tmp/mac-server-test.log 2>&1 &"
 sleep 2
