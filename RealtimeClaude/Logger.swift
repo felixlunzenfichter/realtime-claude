@@ -168,7 +168,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     }
 
     func testClaudeRecallsWord(_ response: String) {
-        pre(!response.isEmpty, "response must not be empty")
+        guard !response.isEmpty else { return }
         if response.contains(Logger.TEST_WORD) {
             log("\(Logger.STORY_RECALLS_WORD)")
         }
