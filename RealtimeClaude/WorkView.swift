@@ -285,16 +285,18 @@ struct WorkView: View {
                         }
                     ),
                     ToggleBar.ToggleItem(
-                        color: viewModel.claudeIsActive ? .red : .green,
-                        icon: viewModel.claudeIsActive ? "pause.fill" : "play.fill",
+                        color: .red,
+                        icon: "stop.fill",
                         action: {
-                            if viewModel.claudeIsActive {
-                                viewModel.stopClaudeCode()
-                            } else {
-                                viewModel.sendContinueMessage()
-                            }
-                        },
-                        scale: claudeButtonScale
+                            viewModel.stopClaudeCode()
+                        }
+                    ),
+                    ToggleBar.ToggleItem(
+                        color: .green,
+                        icon: "play.fill",
+                        action: {
+                            viewModel.sendContinueMessage()
+                        }
                     ),
                     ToggleBar.ToggleItem(
                         color: .cyan,

@@ -355,8 +355,6 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             return
         }
 
-        debugLog(id: "ackReceived", message: "✅ [TCP] ACK received for log: \(logId)")
-
         let currentLogs = logsSubject.value
         if let logMessage = currentLogs.first(where: { $0.id == logId }) {
             let nextTestNumber = testsPassedSubject.value + 1
