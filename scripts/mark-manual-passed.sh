@@ -5,4 +5,6 @@ COMMIT_HASH=$(git rev-parse HEAD)
 
 echo "$COMMIT_HASH" > "$REPO_ROOT/.test-passed-manual"
 echo "✅ Wrote .test-passed-manual ($COMMIT_HASH)"
-echo "   Ready to push."
+echo ""
+echo "🚀 All tests passed. Pushing..."
+git push origin HEAD
