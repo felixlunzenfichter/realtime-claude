@@ -913,7 +913,11 @@ const server = net.createServer((socket) => {
     });
 
     socket.on('error', (err) => {
-        log(`Socket error (expected during redeploy): ${err.message}`, 'socket.on.error');
+        if (err.code === 'EPIPE' || err.code === 'ECONNRESET') {
+            activeSocket = null;
+        } else {
+            error(`Socket error: ${err.message}`, 'socket.on.error');
+        }
     });
 });
 
@@ -1808,9 +1812,23 @@ function sendGitDiffToiOS(force = false) {
     }
 }
 
+function readFileTail(filePath, maxBytes = 1024 * 1024) {
+    const stats = fs.statSync(filePath);
+    if (stats.size <= maxBytes) {
+        return fs.readFileSync(filePath, 'utf8');
+    }
+    const fd = fs.openSync(filePath, 'r');
+    const buffer = Buffer.alloc(maxBytes);
+    fs.readSync(fd, buffer, 0, maxBytes, stats.size - maxBytes);
+    fs.closeSync(fd);
+    const content = buffer.toString('utf8');
+    const firstNewline = content.indexOf('\n');
+    return firstNewline >= 0 ? content.slice(firstNewline + 1) : content;
+}
+
 function checkForInjectedPrompts(filePath) {
     try {
-        const fileContent = fs.readFileSync(filePath, 'utf8');
+        const fileContent = readFileTail(filePath);
         const lines = fileContent.trim().split('\n');
 
         const allUserEvents = [];
@@ -2000,11 +2018,7 @@ function checkForInjectedPrompts(filePath) {
         }
 
     } catch (err) {
-        if (err.message.includes('string longer than')) {
-            log(`File too large to parse (skipping): ${path.basename(filePath)}`, 'checkForInjectedPrompts');
-        } else {
-            error(`Error checking file ${filePath}: ${err.message}`, 'checkForInjectedPrompts');
-        }
+        error(`Error checking file ${filePath}: ${err.message}`, 'checkForInjectedPrompts');
     }
 }
 
