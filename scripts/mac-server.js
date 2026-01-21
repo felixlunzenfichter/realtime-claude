@@ -1399,7 +1399,7 @@ function handleLogMessage(socket, logData) {
 
     if (IS_TEST && logData.message && logData.message.includes('Story complete')) {
         const repoRoot = path.resolve(__dirname, '..');
-        const commitHash = require('child_process').execSync('git rev-parse HEAD', { cwd: repoRoot, encoding: 'utf8' }).trim();
+        const commitHash = require('child_process').execSync('git rev-parse HEAD', { cwd: repoRoot, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
 
         if (MANUAL_TESTING) {
             const manualMarker = path.join(repoRoot, '.test-passed-manual');
@@ -1532,8 +1532,8 @@ function getRepoPath() {
 
 function getRepoFingerprint(repoPath) {
     try {
-        const head = execSync('git rev-parse HEAD', { cwd: repoPath, encoding: 'utf8' }).trim();
-        const porcelain = execSync('git status --porcelain', { cwd: repoPath, encoding: 'utf8' });
+        const head = execSync('git rev-parse HEAD', { cwd: repoPath, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+        const porcelain = execSync('git status --porcelain', { cwd: repoPath, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
         const crypto = require('crypto');
         return crypto.createHash('md5').update(head + porcelain).digest('hex');
     } catch (err) {
