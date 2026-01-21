@@ -22,6 +22,9 @@ else
     BUILD_DIR='/tmp/build-test-auto'
 fi
 
+# Ensure required directories exist (not in git, needed at runtime)
+mkdir -p private/logs
+
 # Get iPhone ID early for terminating old app
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 IPHONE_ID=$(xcodebuild -scheme RealtimeClaude -showdestinations 2>/dev/null | grep "name:iPhone" | grep -o 'id:[^,]*' | head -1 | cut -d: -f2)
