@@ -119,6 +119,8 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
     private func checkStoryProgress(_ loggedMessage: String) {
         guard !isCheckingStory else { return }
+        guard !loggedMessage.hasPrefix("📖") else { return }
+
         isCheckingStory = true
         defer { isCheckingStory = false }
 
