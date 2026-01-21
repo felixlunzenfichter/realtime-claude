@@ -94,14 +94,13 @@
  * getPreviousSessionErrors(currentSessionNumber) → read previous session .json, filter error logs
  * logHandshakeDetails(stats)
  *
- * handleLogMessage(socket, logData) → persistLogToFile, confirmLogReception
- * handleErrorMessage(socket, logData) → reportErrorToConsole, persistLogToFile, confirmLogReception, executeDeployment if manual restart
+ * handleLogMessage(socket, logData) → persistLogToFile, sendAcknowledgment
+ * handleErrorMessage(socket, logData) → reportErrorToConsole, persistLogToFile, sendAcknowledgment, executeDeployment if manual restart
  * reportErrorToConsole(logData)
  * persistLogToFile(logData) → writeLogToFile
- * confirmLogReception(socket, logId) → sendAcknowledgment
  * getSessionCount()
  * writeLogToFile(logData) → fs.appendFileSync(currentSessionFile)
- * sendAcknowledgment(socket, logId) → activeSocket.write({type:'ack'})
+ * sendAcknowledgment(socket, logId) → socket.write({type:'ack'}) (silent, no logging)
  *
  * pendingPrompts=Map, promptCounter
  * loadLastAssistantMessage() → fs.readFileSync(lastAssistantMessageFile) | lastSentAssistantMessage=text
@@ -164,6 +163,10 @@ function error(message, functionName = 'unknown') {
             id: crypto.randomUUID()
         });
     }
+}
+
+function debugLog(message) {
+    console.log(message);
 }
 
 process.on('uncaughtException', (err) => {
@@ -1369,17 +1372,16 @@ function logHandshakeDetails(stats) {
 }
 
 function handleLogMessage(socket, logData) {
-    log(`Received log: ${logData.message}`, 'handleLogMessage');
+    debugLog(`Received log: ${logData.message}`);
     persistLogToFile(logData);
-    confirmLogReception(socket, logData.id);
+    sendAcknowledgment(socket, logData.id);
 }
 
 function handleErrorMessage(socket, logData) {
     reportErrorToConsole(logData);
     persistLogToFile(logData);
-    confirmLogReception(socket, logData.id);
+    sendAcknowledgment(socket, logData.id);
 
-    // Only restart for manual restart trigger (after confirmation)
     if (logData.message === "Manual restart triggered from log view") {
         executeDeployment();
     }
@@ -1391,10 +1393,6 @@ function reportErrorToConsole(logData) {
 
 function persistLogToFile(logData) {
     writeLogToFile(logData);
-}
-
-function confirmLogReception(socket, logId) {
-    sendAcknowledgment(socket, logId);
 }
 
 function getSessionCount() {
@@ -1416,15 +1414,9 @@ function writeLogToFile(logData) {
 
 function sendAcknowledgment(socket, logId) {
     try {
-        const ackMessage = JSON.stringify({
-            type: 'ack',
-            logId: logId
-        }) + '\n';
-
-        socket.write(ackMessage);
-        log(`Sent ACK for: ${logId.substring(0, 8)}...`, 'sendAcknowledgment');
+        socket.write(JSON.stringify({ type: 'ack', logId: logId }) + '\n');
     } catch (err) {
-        error(`Failed to send acknowledgment (continuing): ${err.message}`, 'sendAcknowledgment');
+        debugLog(`Failed to send ACK: ${err.message}`);
     }
 }
 
