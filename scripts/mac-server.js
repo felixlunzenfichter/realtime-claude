@@ -166,12 +166,12 @@ function error(message, functionName = 'unknown') {
     }
 }
 
-process.on('uncaughtException', (error) => {
-    console.error(`⚠️ Uncaught exception (continuing): ${error.stack || error}`);
+process.on('uncaughtException', (err) => {
+    error(`Uncaught exception (continuing): ${err.stack || err}`, 'uncaughtException');
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-    console.error(`⚠️ Unhandled promise rejection (continuing): ${reason}`);
+    error(`Unhandled promise rejection (continuing): ${reason}`, 'unhandledRejection');
 });
 
 function closeAllWatchers() {
@@ -191,17 +191,17 @@ function closeAllWatchers() {
         configWatcher.close();
         configWatcher = null;
     }
-    console.log('🧹 All file watchers closed');
+    log('All file watchers closed', 'closeAllWatchers');
 }
 
 process.on('SIGTERM', () => {
-    console.log('📴 Received SIGTERM, shutting down...');
+    log('Received SIGTERM, shutting down...', 'SIGTERM');
     closeAllWatchers();
     process.exit(0);
 });
 
 process.on('SIGINT', () => {
-    console.log('📴 Received SIGINT, shutting down...');
+    log('Received SIGINT, shutting down...', 'SIGINT');
     closeAllWatchers();
     process.exit(0);
 });
@@ -250,8 +250,8 @@ const haikuPriorityQueue = {
         const queuedTask = { priority, task, description };
         this.queue.push(queuedTask);
         this.queue.sort((a, b) => a.priority - b.priority);
-        console.log(`🔄 [QUEUE] Added: ${description} (priority ${priority})`);
-        console.log(`🔄 [QUEUE] Current queue size: ${this.queue.length}`);
+        log(`[QUEUE] Added: ${description} (priority ${priority})`, 'haikuPriorityQueue.add');
+        log(`[QUEUE] Current queue size: ${this.queue.length}`, 'haikuPriorityQueue.add');
 
         if (!this.isProcessing) {
             this.processNext();
@@ -261,20 +261,20 @@ const haikuPriorityQueue = {
     async processNext() {
         if (this.queue.length === 0) {
             this.isProcessing = false;
-            console.log(`🔄 [QUEUE] Empty - stopping processor`);
+            log(`[QUEUE] Empty - stopping processor`, 'haikuPriorityQueue.processNext');
             return;
         }
 
         this.isProcessing = true;
         const { priority, task, description } = this.queue.shift();
 
-        console.log(`🔄 [QUEUE] Processing: ${description} (priority ${priority})`);
-        console.log(`🔄 [QUEUE] Remaining in queue: ${this.queue.length}`);
+        log(`[QUEUE] Processing: ${description} (priority ${priority})`, 'haikuPriorityQueue.processNext');
+        log(`[QUEUE] Remaining in queue: ${this.queue.length}`, 'haikuPriorityQueue.processNext');
 
         try {
             await task();
-        } catch (error) {
-            console.error(`🔄 [QUEUE] Task failed: ${description} - ${error.message}`);
+        } catch (err) {
+            error(`[QUEUE] Task failed: ${description} - ${err.message}`, 'haikuPriorityQueue.processNext');
         }
 
         this.processNext();
@@ -283,12 +283,12 @@ const haikuPriorityQueue = {
 
 function getMessageState(messageId) {
     if (!messageId) {
-        console.log('⚠️ No messageId provided');
+        log('No messageId provided', 'getMessageState');
         return null;
     }
 
     if (!messageStates.has(messageId)) {
-        console.log(`📋 Creating new message state for ID: ${messageId}`);
+        log(`Creating new message state for ID: ${messageId}`, 'getMessageState');
         messageStates.set(messageId, {
             messageId: messageId,
             audioBuffer: Buffer.alloc(0),
@@ -313,7 +313,7 @@ function addToContext(event) {
     if (haikuContext.length > MAX_CONTEXT_EVENTS) {
         haikuContext.shift();
     }
-    console.log(`📚 Context: ${haikuContext.length} events`);
+    log(`Context: ${haikuContext.length} events`, 'addToContext');
 }
 
 function formatContextForHaiku() {
@@ -380,7 +380,7 @@ OUTPUT: Respond with valid JSON only, no markdown, no explanation:
 async function processWithHaiku(text, task, completeTranscription = null) {
     const cleanText = text.replace(/[\n\r]+/g, ' ').replace(/\s+/g, ' ').trim();
 
-    console.log(`🤖 Haiku ${task}: "${cleanText.substring(0, 60)}..."`);
+    log(`Haiku ${task}: "${cleanText.substring(0, 60)}..."`, 'processWithHaiku');
 
     const MAX_ATTEMPTS = 5;
     let attempt = 0;
@@ -389,7 +389,7 @@ async function processWithHaiku(text, task, completeTranscription = null) {
         attempt++;
         try {
             const retryNote = attempt > 1 ? ` (attempt ${attempt}/${MAX_ATTEMPTS})` : '';
-            console.log(`   Processing${retryNote}...`);
+            log(`Processing${retryNote}...`, 'processWithHaiku');
 
             const prompt = buildPrompt(text, task, completeTranscription);
 
@@ -419,7 +419,7 @@ async function processWithHaiku(text, task, completeTranscription = null) {
             try {
                 parsed = JSON.parse(cleanedResult);
             } catch (parseErr) {
-                console.log(`   ⚠️ Invalid JSON: ${cleanedResult.substring(0, 100)}`);
+                log(`Invalid JSON: ${cleanedResult.substring(0, 100)}`, 'processWithHaiku');
                 addToContext({ type: 'summary_attempt', result: cleanedResult, chars: cleanedResult.length, success: false, error: 'invalid_json' });
                 continue;
             }
@@ -428,26 +428,26 @@ async function processWithHaiku(text, task, completeTranscription = null) {
             const corrected = parsed.corrected || cleanText;
 
             if (task === 'correct_transcription') {
-                console.log(`   ✅ Corrected: "${corrected.substring(0, 50)}..."`);
+                log(`Corrected: "${corrected.substring(0, 50)}..."`, 'processWithHaiku');
                 return { corrected };
             } else {
                 if (summary.length > MAX_SUMMARY_CHARS) {
-                    console.log(`   ⚠️ Summary too long: ${summary.length} chars`);
+                    log(`Summary too long: ${summary.length} chars`, 'processWithHaiku');
                     addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: false, error: 'too_long' });
                     continue;
                 }
-                console.log(`   ✅ Summary: "${summary}" (${summary.length} chars)`);
+                log(`Summary: "${summary}" (${summary.length} chars)`, 'processWithHaiku');
                 addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: true });
                 return { summary };
             }
 
-        } catch (error) {
-            console.error(`   ❌ Haiku failed: ${error.message}`);
-            addToContext({ type: 'summary_attempt', result: error.message, chars: 0, success: false, error: 'exception' });
+        } catch (err) {
+            error(`Haiku failed: ${err.message}`, 'processWithHaiku');
+            addToContext({ type: 'summary_attempt', result: err.message, chars: 0, success: false, error: 'exception' });
         }
     }
 
-    console.log(`   ⚠️ Max attempts reached, using fallback`);
+    log(`Max attempts reached, using fallback`, 'processWithHaiku');
     if (task === 'correct_transcription') {
         return { corrected: cleanText };
     } else {
@@ -461,7 +461,7 @@ function deduplicateTranscription(newText, messageState, timestamp) {
     }
 
     if (!messageState.shortTranscription || messageState.shortTranscription.length === 0) {
-        console.log(`🔍 First transcription - adding all text: "${newText}"`);
+        log(`First transcription - adding all text: "${newText}"`, 'deduplicateTranscription');
         messageState.completeTranscription = `${timestamp} ${newText}`;
         messageState.shortTranscription = newText;
         return newText;
@@ -471,7 +471,7 @@ function deduplicateTranscription(newText, messageState, timestamp) {
     for (const word of messageState.shortTranscription.split(/\s+/)) {
         wordsSeen.add(word.toLowerCase());
     }
-    console.log(`🔍 Deduplicating "${newText}" against ${wordsSeen.size} words from accumulated text`);
+    log(`Deduplicating "${newText}" against ${wordsSeen.size} words from accumulated text`, 'deduplicateTranscription');
 
     const newWords = [];
     for (const word of newText.split(/\s+/)) {
@@ -483,7 +483,7 @@ function deduplicateTranscription(newText, messageState, timestamp) {
     const uniqueText = newWords.join(' ').trim();
 
     if (uniqueText.length > 0) {
-        console.log(`📝 Adding unique words: "${uniqueText}"`);
+        log(`Adding unique words: "${uniqueText}"`, 'deduplicateTranscription');
 
         if (messageState.completeTranscription.length > 0) {
             messageState.completeTranscription += ' ';
@@ -495,7 +495,7 @@ function deduplicateTranscription(newText, messageState, timestamp) {
         }
         messageState.shortTranscription += uniqueText;
     } else {
-        console.log(`⏭️  No unique words to add`);
+        log(`No unique words to add`, 'deduplicateTranscription');
     }
 
     return messageState.shortTranscription;
@@ -503,7 +503,7 @@ function deduplicateTranscription(newText, messageState, timestamp) {
 
 async function transcribeAudio(audioPath) {
     if (IS_TEST && !MANUAL_TESTING) {
-        console.log(`🧪 Automated testing: Skipping Whisper, returning mock "hello"`);
+        log(`Automated testing: Skipping Whisper, returning mock "hello"`, 'transcribeAudio');
         return { text: 'hello', segments: [] };
     }
 
@@ -526,14 +526,14 @@ async function transcribeAudio(audioPath) {
         const result = await response.json();
         const elapsedMs = Date.now() - startTime;
 
-        console.log(`⚡ Lightning Whisper: ${result.elapsed_ms}ms server + ${elapsedMs - result.elapsed_ms}ms network = ${elapsedMs}ms total`);
+        log(`Lightning Whisper: ${result.elapsed_ms}ms server + ${elapsedMs - result.elapsed_ms}ms network = ${elapsedMs}ms total`, 'transcribeAudio');
 
         return {
             text: result.text,
             segments: result.segments || []
         };
-    } catch (error) {
-        throw new Error(`Transcription failed: ${error.message}`);
+    } catch (err) {
+        throw new Error(`Transcription failed: ${err.message}`);
     }
 }
 
@@ -543,18 +543,18 @@ async function handleAudioMessage(socket, logData) {
     if (messageId) {
         const messageState = getMessageState(messageId);
         if (messageState && messageState.deleted) {
-            console.log(`⏭️ Skipping audio processing for deleted message: ${messageId}`);
+            log(`Skipping audio processing for deleted message: ${messageId}`, 'handleAudioMessage');
             return;
         }
     }
 
     if (isStart) {
-        console.log('🎤 Audio recording started (embedded flag)');
+        log('Audio recording started (embedded flag)', 'handleAudioMessage');
         if (!messageId) {
-            console.log('⚠️ No messageId provided for audio start');
+            log('No messageId provided for audio start', 'handleAudioMessage');
             return;
         }
-        console.log(`📋 Message ID: ${messageId}`);
+        log(`Message ID: ${messageId}`, 'handleAudioMessage');
 
         const messageState = getMessageState(messageId);
         if (!messageState) return;
@@ -567,23 +567,23 @@ async function handleAudioMessage(socket, logData) {
     }
 
     if (isEnd) {
-        console.log('🎯 AUDIO END: Setting audioEnded flag...');
+        log('AUDIO END: Setting audioEnded flag...', 'handleAudioMessage');
         const messageState = getMessageState(messageId);
         if (messageState) {
             messageState.audioEnded = true;
-            console.log('✅ audioEnded flag set to true');
+            log('audioEnded flag set to true', 'handleAudioMessage');
         }
         await triggerTranscription(messageId);
         return;
     }
 
     if (!audioData) {
-        console.log('⚠️ No audio data in message');
+        log('No audio data in message', 'handleAudioMessage');
         return;
     }
 
     if (!messageId) {
-        console.log('⚠️ No messageId provided for audio data');
+        log('No messageId provided for audio data', 'handleAudioMessage');
         return;
     }
 
@@ -604,7 +604,7 @@ async function handleAudioMessage(socket, logData) {
 
 async function triggerTranscription(messageId) {
     if (!messageId) {
-        console.log('⚠️ No messageId provided for transcription');
+        log('No messageId provided for transcription', 'triggerTranscription');
         return;
     }
 
@@ -612,12 +612,12 @@ async function triggerTranscription(messageId) {
     if (!messageState) return;
 
     if (messageState.deleted) {
-        console.log(`⏭️ Skipping transcription for deleted message: ${messageId}`);
+        log(`Skipping transcription for deleted message: ${messageId}`, 'triggerTranscription');
         return;
     }
 
     if (messageState.isTranscribing) {
-        console.log('⏳ Transcription already in progress, waiting for completion...');
+        log('Transcription already in progress, waiting for completion...', 'triggerTranscription');
         return new Promise((resolve) => {
             const checkInterval = setInterval(() => {
                 if (!messageState.isTranscribing) {
@@ -660,7 +660,7 @@ async function triggerTranscription(messageId) {
         try { fs.unlinkSync(tempWavFile); } catch {}
 
         if (text && activeSocket && messageState.isRecordingAudio) {
-            console.log(`🎤 [RAW] Raw whisper: "${text}"`);
+            log(`[RAW] Raw whisper: "${text}"`, 'triggerTranscription');
 
             const startTimeSeconds = messageState.audioBuffer.length / 16000;
             const minutes = Math.floor(startTimeSeconds / 60);
@@ -670,13 +670,13 @@ async function triggerTranscription(messageId) {
             deduplicateTranscription(text, messageState, timestamp);
 
             if (!messageState.shortTranscription || messageState.shortTranscription.trim().length === 0) {
-                console.log(`⏭️  Skipping (no unique words added)`);
+                log(`Skipping (no unique words added)`, 'triggerTranscription');
                 return;
             }
 
             if (activeSocket && messageState.isRecordingAudio) {
                 if (messageState.deleted) {
-                    console.log(`⏭️ Skipping iOS send for deleted message: ${messageId}`);
+                    log(`Skipping iOS send for deleted message: ${messageId}`, 'triggerTranscription');
                 } else {
                     const rawTranscription = {
                         messageId: messageId,
@@ -684,7 +684,7 @@ async function triggerTranscription(messageId) {
                         type: 'transcription',
                         transcription: messageState.shortTranscription
                     };
-                    console.log(`📤 SENDING TO iOS: TRANSCRIPTION "${messageState.shortTranscription}" (messageId: ${messageId})`);
+                    log(`SENDING TO iOS: TRANSCRIPTION "${messageState.shortTranscription}" (messageId: ${messageId})`, 'triggerTranscription');
                     activeSocket.write(JSON.stringify(rawTranscription) + '\n');
                 }
             }
@@ -692,22 +692,22 @@ async function triggerTranscription(messageId) {
             addToContext({ type: 'transcription', text: messageState.completeTranscription });
         }
     } catch (err) {
-        console.error(`❌ Interim transcription error: ${err.message}`);
+        error(`Interim transcription error: ${err.message}`, 'triggerTranscription');
     } finally {
         messageState.isTranscribing = false;
 
         if (messageState.audioEnded) {
-            console.log('🎯 Audio has ended - triggering final processing...');
+            log('Audio has ended - triggering final processing...', 'triggerTranscription');
             await handleAudioEnd(messageId);
         }
     }
 }
 
 async function handleAudioEnd(messageId) {
-    console.log('🎤 Audio recording stopped (embedded flag)');
+    log('Audio recording stopped (embedded flag)', 'handleAudioEnd');
 
     if (!messageId) {
-        console.log('⚠️ No messageId provided for audio end');
+        log('No messageId provided for audio end', 'handleAudioEnd');
         return;
     }
 
@@ -715,16 +715,16 @@ async function handleAudioEnd(messageId) {
     if (!messageState) return;
 
     if (messageState.deleted) {
-        console.log(`⏭️ Skipping final processing for deleted message: ${messageId}`);
+        log(`Skipping final processing for deleted message: ${messageId}`, 'handleAudioEnd');
         return;
     }
 
     messageState.isRecordingAudio = false;
 
-    console.log(`📝 Final concatenated text: "${messageState.shortTranscription}"`);
+    log(`Final concatenated text: "${messageState.shortTranscription}"`, 'handleAudioEnd');
 
     if (!messageState.shortTranscription || messageState.shortTranscription.trim().length === 0) {
-        console.log('⚠️ No concatenated text, skipping final processing');
+        log('No concatenated text, skipping final processing', 'handleAudioEnd');
         return;
     }
 
@@ -736,7 +736,7 @@ async function handleAudioEnd(messageId) {
                 type: 'transcription',
                 transcription: messageState.shortTranscription
             };
-            console.log(`📤 SENDING TO iOS: TRANSCRIPTION "${messageState.shortTranscription}" (messageId: ${messageId})`);
+            log(`SENDING TO iOS: TRANSCRIPTION "${messageState.shortTranscription}" (messageId: ${messageId})`, 'handleAudioEnd');
             activeSocket.write(JSON.stringify(rawTranscription) + '\n');
         }
 
@@ -744,20 +744,20 @@ async function handleAudioEnd(messageId) {
 
         haikuPriorityQueue.add(1, async () => {
             try {
-                console.log(`🤖 PRIORITY 1: Running Haiku correction on COMPLETE text...`);
-                console.log(`🤖 SENDING TO HAIKU: "${messageState.shortTranscription}"`);
+                log(`PRIORITY 1: Running Haiku correction on COMPLETE text...`, 'handleAudioEnd');
+                log(`SENDING TO HAIKU: "${messageState.shortTranscription}"`, 'handleAudioEnd');
 
                 const result = await processWithHaiku(messageState.shortTranscription, 'correct_transcription', messageState.completeTranscription);
 
                 const corrected = result.corrected;
 
-                console.log(`✅ Got correction from Haiku: "${corrected}"`);
+                log(`Got correction from Haiku: "${corrected}"`, 'handleAudioEnd');
 
                 messageState.prompt = corrected;
                 addToContext({ type: 'corrected', raw: messageState.completeTranscription, corrected: corrected });
 
-                console.log(`🎤 [FINAL] Raw: "${messageState.shortTranscription}"`);
-                console.log(`🎤 [FINAL] Corrected: "${corrected}"`);
+                log(`[FINAL] Raw: "${messageState.shortTranscription}"`, 'handleAudioEnd');
+                log(`[FINAL] Corrected: "${corrected}"`, 'handleAudioEnd');
 
                 if (activeSocket && !messageState.deleted) {
                     const promptMessage = {
@@ -766,39 +766,39 @@ async function handleAudioEnd(messageId) {
                         type: 'prompt',
                         prompt: corrected
                     };
-                    console.log(`📤 SENDING TO iOS: PROMPT UPDATE "${corrected}" (messageId: ${messageId})`);
+                    log(`SENDING TO iOS: PROMPT UPDATE "${corrected}" (messageId: ${messageId})`, 'handleAudioEnd');
                     activeSocket.write(JSON.stringify(promptMessage) + '\n');
                 }
 
-                console.log(`💉 Injecting corrected transcription: "${corrected}"`);
+                log(`Injecting corrected transcription: "${corrected}"`, 'handleAudioEnd');
                 if (!messageState.deleted) {
                     if (messageState.injected) {
-                        console.log('⏭️  Skipping injection - already injected for this message');
+                        log('Skipping injection - already injected for this message', 'handleAudioEnd');
                     } else {
-                        injectIntoTerminal(corrected, (success, error) => {
+                        injectIntoTerminal(corrected, (success, err) => {
                             if (success) {
-                                console.log('✅ Prompt injection successful');
+                                log('Prompt injection successful', 'handleAudioEnd');
                                 messageState.injected = true;
                             } else {
-                                console.error(`❌ Prompt injection failed: ${error}`);
+                                error(`Prompt injection failed: ${err}`, 'handleAudioEnd');
                             }
                         });
                     }
                 }
             } catch (err) {
-                console.error(`❌ Haiku correction failed: ${err.message}`);
+                error(`Haiku correction failed: ${err.message}`, 'handleAudioEnd');
             }
         }, `Prompt correction for "${messageState.shortTranscription.substring(0, 30)}..."`);
 
         haikuPriorityQueue.add(2, async () => {
             try {
-                console.log(`🤖 PRIORITY 2: Creating summary...`);
+                log(`PRIORITY 2: Creating summary...`, 'handleAudioEnd');
 
                 const result = await processWithHaiku(messageState.shortTranscription, 'create_summary');
 
                 const summary = result.summary;
 
-                console.log(`✅ Got summary from Haiku: "${summary}"`);
+                log(`Got summary from Haiku: "${summary}"`, 'handleAudioEnd');
 
                 messageState.summary = summary;
 
@@ -809,16 +809,16 @@ async function handleAudioEnd(messageId) {
                         type: 'summary',
                         summary: summary
                     };
-                    console.log(`📤 SENDING TO iOS: SUMMARY "${summary}" (messageId: ${messageId})`);
+                    log(`SENDING TO iOS: SUMMARY "${summary}" (messageId: ${messageId})`, 'handleAudioEnd');
                     activeSocket.write(JSON.stringify(summaryMessage) + '\n');
                 }
             } catch (err) {
-                console.error(`❌ Summary creation failed: ${err.message}`);
+                error(`Summary creation failed: ${err.message}`, 'handleAudioEnd');
             }
         }, `User message summary for "${messageState.shortTranscription.substring(0, 30)}..."`);
 
     } catch (err) {
-        console.error(`❌ Final transcription error: ${err.message}`);
+        error(`Final transcription error: ${err.message}`, 'handleAudioEnd');
     }
 }
 
@@ -834,23 +834,23 @@ function handleDeleteMessage(logData) {
     const messageId = logData.messageId;
 
     if (!messageId) {
-        console.log('⚠️ Delete message received without messageId');
+        log('Delete message received without messageId', 'handleDeleteMessage');
         return;
     }
 
-    console.log(`🗑️ DELETE MESSAGE: Received delete request for messageId: ${messageId}`);
+    log(`DELETE MESSAGE: Received delete request for messageId: ${messageId}`, 'handleDeleteMessage');
 
     const messageState = getMessageState(messageId);
     if (messageState) {
         messageState.deleted = true;
-        console.log(`✅ Marked message as deleted: ${messageId}`);
+        log(`Marked message as deleted: ${messageId}`, 'handleDeleteMessage');
     } else {
-        console.log(`⚠️ No message state found for messageId: ${messageId}`);
+        log(`No message state found for messageId: ${messageId}`, 'handleDeleteMessage');
     }
 }
 
 const server = net.createServer((socket) => {
-    console.log('iOS client connected');
+    log('iOS client connected', 'server');
     activeSocket = socket;
 
     const stateFile = path.join(__dirname, '..', 'private', 'claude-state.txt');
@@ -864,13 +864,13 @@ const server = net.createServer((socket) => {
         try {
             buffer += data.toString();
             buffer = processBufferedData(socket, buffer);
-        } catch (error) {
-            console.error(`⚠️ Error processing data (continuing): ${error.message}`);
+        } catch (err) {
+            error(`Error processing data (continuing): ${err.message}`, 'socket.on.data');
         }
     });
 
     socket.on('end', () => {
-        console.log('iOS client disconnected - waiting for reconnection...');
+        log('iOS client disconnected - waiting for reconnection...', 'socket.on.end');
         if (activeSocket === socket) {
             activeSocket = null;
             closeAllWatchers();
@@ -878,14 +878,14 @@ const server = net.createServer((socket) => {
     });
 
     socket.on('error', (err) => {
-        console.error(`⚠️ Socket error (continuing): ${err.message}`);
+        error(`Socket error (continuing): ${err.message}`, 'socket.on.error');
     });
 });
 
 loadLastAssistantMessage();
 
 server.listen(SERVER_PORT, '0.0.0.0', () => {
-    console.log(`Mac server listening on :${SERVER_PORT} | ${getSessionCount()} sessions`);
+    log(`Mac server listening on :${SERVER_PORT} | ${getSessionCount()} sessions`, 'server.listen');
 
     initializeClaudeMonitoring();
     initializeGitDiffWatcher();
@@ -905,8 +905,8 @@ function processBufferedData(socket, buffer) {
                 const jsonData = JSON.parse(line);
                 handleMessage(socket, jsonData);
                 messagesProcessed++;
-            } catch (error) {
-                console.error('Failed to parse JSON:', error, 'Line:', line);
+            } catch (err) {
+                error(`Failed to parse JSON: ${err.message}, Line: ${line}`, 'processBufferedData');
             }
         }
     }
@@ -954,11 +954,11 @@ function handleSpeakMessage(socket, logData) {
             error: `Summary too long: ${summary.length} chars. Max is ${MAX_SPEAK_LENGTH}. Shorten it and try again.`
         };
         socket.write(JSON.stringify(response) + '\n');
-        console.log(`❌ Speak rejected: ${summary.length} chars > ${MAX_SPEAK_LENGTH}`);
+        log(`Speak rejected: ${summary.length} chars > ${MAX_SPEAK_LENGTH}`, 'handleSpeakMessage');
         return;
     }
 
-    console.log(`🔊 Speaking: "${summary}" (full: "${(text || summary).substring(0, 50)}...")`);
+    log(`Speaking: "${summary}" (full: "${(text || summary).substring(0, 50)}...")`, 'handleSpeakMessage');
 
     if (activeSocket) {
         const messageId = crypto.randomUUID();
@@ -993,7 +993,7 @@ function isLogMessage(logData) {
 }
 
 function handleUnknownMessage(logData) {
-    console.error('Unknown message type:', logData.type);
+    error(`Unknown message type: ${logData.type}`, 'handleUnknownMessage');
 }
 
 async function handleStartMessage(socket) {
@@ -1005,10 +1005,10 @@ async function handleStartMessage(socket) {
 
 function findLatestConversationFile(dir) {
     try {
-        console.log(`🔎 Checking for conversation files in: ${dir}`);
+        log(`Checking for conversation files in: ${dir}`, 'findLatestConversationFile');
 
         if (!fs.existsSync(dir)) {
-            console.log(`📁 Directory doesn't exist: ${dir}`);
+            log(`Directory doesn't exist: ${dir}`, 'findLatestConversationFile');
             return null;
         }
 
@@ -1022,16 +1022,16 @@ function findLatestConversationFile(dir) {
             .sort((a, b) => b.mtime - a.mtime);
 
         if (files.length === 0) {
-            console.log(`❌ No conversation files found in: ${dir}`);
+            log(`No conversation files found in: ${dir}`, 'findLatestConversationFile');
             return null;
         }
 
         const latestFile = files[0];
         const modTime = new Date(latestFile.mtime).toLocaleString();
-        console.log(`✅ Found latest conversation: ${latestFile.name} (modified: ${modTime})`);
+        log(`Found latest conversation: ${latestFile.name} (modified: ${modTime})`, 'findLatestConversationFile');
         return latestFile.path;
     } catch (e) {
-        console.error(`❌ Error finding conversation file in ${dir}:`, e.message);
+        error(`Error finding conversation file in ${dir}: ${e.message}`, 'findLatestConversationFile');
         return null;
     }
 }
@@ -1039,22 +1039,22 @@ function findLatestConversationFile(dir) {
 
 function handlePromptMessage(socket, logData) {
     const { prompt, timestamp, messageId } = logData;
-    console.log(`📨 Received prompt from iOS app:`);
-    console.log(`   Prompt: "${prompt}"`);
-    console.log(`   Timestamp: ${new Date(timestamp * 1000).toLocaleString()}`);
-    console.log(`   MessageId: ${messageId}`);
+    log(`Received prompt from iOS app:`, 'handlePromptMessage');
+    log(`   Prompt: "${prompt}"`, 'handlePromptMessage');
+    log(`   Timestamp: ${new Date(timestamp * 1000).toLocaleString()}`, 'handlePromptMessage');
+    log(`   MessageId: ${messageId}`, 'handlePromptMessage');
 
     promptCounter++;
     const promptId = `${promptCounter}:`;
-    console.log(`🔖 Assigned ID: ${promptId}`);
+    log(`Assigned ID: ${promptId}`, 'handlePromptMessage');
 
     if (prompt === '[Request interrupted by user]') {
-        console.log('🛑 Detected stop signal - sending ESC instead of typing text');
+        log('Detected stop signal - sending ESC instead of typing text', 'handlePromptMessage');
 
         switchToWindow(CLAUDE_WINDOW_PATTERN, (switchSuccess, switchError) => {
             if (!switchSuccess) {
-                console.log(`⚠️ Failed to switch to Claude Code window: ${switchError}`);
-                console.log(`📝 Proceeding with interrupt anyway...`);
+                log(`Failed to switch to Claude Code window: ${switchError}`, 'handlePromptMessage');
+                log(`Proceeding with interrupt anyway...`, 'handlePromptMessage');
             }
 
             const appleScript = `tell application "Terminal"
@@ -1079,7 +1079,7 @@ end tell`;
                     timeout: 10000
                 });
 
-                console.log('✅ ESC key sent to Terminal');
+                log('ESC key sent to Terminal', 'handlePromptMessage');
 
                 const ackMessage = {
                     messageId: messageId,
@@ -1090,9 +1090,9 @@ end tell`;
                 };
 
                 socket.write(JSON.stringify(ackMessage) + '\n');
-                console.log('✅ Interrupt acknowledged to iOS!');
-            } catch (error) {
-                console.log(`❌ Failed to send ESC: ${error.message}`);
+                log('Interrupt acknowledged to iOS!', 'handlePromptMessage');
+            } catch (err) {
+                log(`Failed to send ESC: ${err.message}`, 'handlePromptMessage');
 
                 const ackMessage = {
                     messageId: messageId,
@@ -1100,7 +1100,7 @@ end tell`;
                     type: 'prompt_ack',
                     status: 'error',
                     summary: '',
-                    error: `Failed to send ESC: ${error.message}`
+                    error: `Failed to send ESC: ${err.message}`
                 };
 
                 socket.write(JSON.stringify(ackMessage) + '\n');
@@ -1119,16 +1119,16 @@ end tell`;
         timestamp: Date.now(),
         verified: false
     });
-    console.log(`📝 Added prompt to tracking (${pendingPrompts.size} total)`);
+    log(`Added prompt to tracking (${pendingPrompts.size} total)`, 'handlePromptMessage');
 
     const promptWithId = `${promptId} ${prompt}`;
-    console.log(`💉 Injecting with ID: "${promptWithId}"`);
+    log(`Injecting with ID: "${promptWithId}"`, 'handlePromptMessage');
 
     injectIntoTerminal(promptWithId, (terminalSuccess, terminalError) => {
         if (terminalSuccess) {
-            console.log('✅ Terminal automation executed successfully!');
+            log('Terminal automation executed successfully!', 'handlePromptMessage');
         } else {
-            console.log(`❌ Terminal automation failed: ${terminalError}`);
+            log(`Terminal automation failed: ${terminalError}`, 'handlePromptMessage');
 
             const ackMessage = {
                 messageId: messageId,
@@ -1141,7 +1141,7 @@ end tell`;
 
             const jsonData = JSON.stringify(ackMessage) + '\n';
             socket.write(jsonData);
-            console.log('📤 Sent Terminal failure acknowledgment');
+            log('Sent Terminal failure acknowledgment', 'handlePromptMessage');
 
             pendingPrompts.delete(promptId);
         }
@@ -1153,8 +1153,8 @@ function createNewSession() {
         currentSessionNumber = getSessionCount() + 1;
         currentSessionFile = path.join(logsDir, `${currentSessionNumber}.json`);
         fs.writeFileSync(currentSessionFile, '');
-    } catch (error) {
-        console.error(`⚠️ Failed to create session file (continuing): ${error.message}`);
+    } catch (err) {
+        error(`Failed to create session file (continuing): ${err.message}`, 'createNewSession');
     }
 }
 
@@ -1285,22 +1285,22 @@ async function sendHandshakeResponse(socket, stats) {
     sendGitDiffToiOS(true);
 
     if (previousErrors.length > 0) {
-        console.log(`📤 Sent ${previousErrors.length} previous error(s) to iOS app`);
+        log(`Sent ${previousErrors.length} previous error(s) to iOS app`, 'sendHandshakeResponse');
     }
 
     if (lastSentAssistantMessage) {
-        console.log(`📤 Handshake includes assistant message: ${lastSentAssistantMessage.substring(0, 100)}...`);
-        console.log(`📤 Summary pending...`);
+        log(`Handshake includes assistant message: ${lastSentAssistantMessage.substring(0, 100)}...`, 'sendHandshakeResponse');
+        log(`Summary pending...`, 'sendHandshakeResponse');
 
         haikuPriorityQueue.add(3, async () => {
             try {
-                console.log(`🤖 Creating handshake summary...`);
+                log(`Creating handshake summary...`, 'sendHandshakeResponse');
 
                 const result = await processWithHaiku(lastSentAssistantMessage, 'create_summary');
 
                 const summary = result.summary;
 
-                console.log(`✅ Got handshake summary from Haiku: "${summary}"`);
+                log(`Got handshake summary from Haiku: "${summary}"`, 'sendHandshakeResponse');
 
                 const summaryUpdate = JSON.stringify({
                     type: 'handshake',
@@ -1317,14 +1317,14 @@ async function sendHandshakeResponse(socket, stats) {
 
                 if (activeSocket) {
                     activeSocket.write(summaryUpdate);
-                    console.log(`📤 Handshake summary update sent: "${summary}"`);
+                    log(`Handshake summary update sent: "${summary}"`, 'sendHandshakeResponse');
                 }
-            } catch (error) {
-                console.error(`⚠️ Failed to create handshake summary: ${error.message}`);
+            } catch (err) {
+                error(`Failed to create handshake summary: ${err.message}`, 'sendHandshakeResponse');
             }
         }, `Handshake assistant summary for "${lastSentAssistantMessage.substring(0, 30)}..."`);
     } else {
-        console.log(`📤 Handshake sent with no assistant message (null)`);
+        log(`Handshake sent with no assistant message (null)`, 'sendHandshakeResponse');
     }
 }
 
@@ -1357,19 +1357,19 @@ function getPreviousSessionErrors(currentSessionNumber) {
             }));
 
         return errors;
-    } catch (error) {
-        console.error(`Failed to read previous session errors: ${error.message}`);
+    } catch (err) {
+        error(`Failed to read previous session errors: ${err.message}`, 'getPreviousSessionErrors');
         return [];
     }
 }
 
 function logHandshakeDetails(stats) {
-    console.log('Sent handshake with session number:', stats.sessionNumber);
-    console.log('Included stats - Total:', stats.totalUptime + 'ms, Today:', stats.todayUptime + 'ms, Logs:', stats.totalLogs);
+    log(`Sent handshake with session number: ${stats.sessionNumber}`, 'logHandshakeDetails');
+    log(`Included stats - Total: ${stats.totalUptime}ms, Today: ${stats.todayUptime}ms, Logs: ${stats.totalLogs}`, 'logHandshakeDetails');
 }
 
 function handleLogMessage(socket, logData) {
-    console.log('Received log:', logData.message);
+    log(`Received log: ${logData.message}`, 'handleLogMessage');
     persistLogToFile(logData);
     confirmLogReception(socket, logData.id);
 }
@@ -1386,7 +1386,7 @@ function handleErrorMessage(socket, logData) {
 }
 
 function reportErrorToConsole(logData) {
-    console.error(`🚨 ERROR: ${logData.message} [${logData.fileName}:${logData.functionName}] - test will fail`);
+    error(`${logData.message} [${logData.fileName}:${logData.functionName}]`, 'reportErrorToConsole');
 }
 
 function persistLogToFile(logData) {
@@ -1404,13 +1404,13 @@ function getSessionCount() {
 
 function writeLogToFile(logData) {
     if (!currentSessionFile) {
-        console.error('⚠️ No active session file!');
+        console.error('No active session file!');
         return;
     }
     try {
         fs.appendFileSync(currentSessionFile, JSON.stringify(logData) + '\n');
-    } catch (error) {
-        console.error(`⚠️ Failed to write log (continuing): ${error.message}`);
+    } catch (err) {
+        console.error(`Failed to write log (continuing): ${err.message}`);
     }
 }
 
@@ -1422,9 +1422,9 @@ function sendAcknowledgment(socket, logId) {
         }) + '\n';
 
         socket.write(ackMessage);
-        console.log(`📨 Sent ACK for: ${logId.substring(0, 8)}...`);
-    } catch (error) {
-        console.error(`⚠️ Failed to send acknowledgment (continuing): ${error.message}`);
+        log(`Sent ACK for: ${logId.substring(0, 8)}...`, 'sendAcknowledgment');
+    } catch (err) {
+        error(`Failed to send acknowledgment (continuing): ${err.message}`, 'sendAcknowledgment');
     }
 }
 
@@ -1435,20 +1435,20 @@ function loadLastAssistantMessage() {
     try {
         if (fs.existsSync(lastAssistantMessageFile)) {
             lastSentAssistantMessage = fs.readFileSync(lastAssistantMessageFile, 'utf8');
-            console.log(`📋 Loaded last assistant message from disk: ${lastSentAssistantMessage.substring(0, 80)}...`);
+            log(`Loaded last assistant message from disk: ${lastSentAssistantMessage.substring(0, 80)}...`, 'loadLastAssistantMessage');
         } else {
-            console.log('📋 No previous assistant message found');
+            log('No previous assistant message found', 'loadLastAssistantMessage');
         }
-    } catch (error) {
-        console.error(`⚠️ Failed to load last assistant message: ${error.message}`);
+    } catch (err) {
+        error(`Failed to load last assistant message: ${err.message}`, 'loadLastAssistantMessage');
     }
 }
 
 function saveLastAssistantMessage(message) {
     try {
         fs.writeFileSync(lastAssistantMessageFile, message, 'utf8');
-    } catch (error) {
-        console.error(`⚠️ Failed to save last assistant message: ${error.message}`);
+    } catch (err) {
+        error(`Failed to save last assistant message: ${err.message}`, 'saveLastAssistantMessage');
     }
 }
 
@@ -1456,10 +1456,10 @@ function initializeClaudeMonitoring() {
     const claudeProjectsPath = path.join(process.env.HOME, '.claude', 'projects');
     const stateFile = path.join(__dirname, '..', 'private', 'claude-state.txt');
 
-    console.log(`🔍 Initializing Claude monitoring...`);
-    console.log(`   📁 Projects path: ${claudeProjectsPath}`);
-    console.log(`   📄 State file: ${stateFile}`);
-    console.log(`   📄 State file exists: ${fs.existsSync(stateFile)}`);
+    log(`Initializing Claude monitoring...`, 'initializeClaudeMonitoring');
+    log(`   Projects path: ${claudeProjectsPath}`, 'initializeClaudeMonitoring');
+    log(`   State file: ${stateFile}`, 'initializeClaudeMonitoring');
+    log(`   State file exists: ${fs.existsSync(stateFile)}`, 'initializeClaudeMonitoring');
 
     stateWatcher = chokidar.watch(stateFile, {
         persistent: true,
@@ -1467,23 +1467,23 @@ function initializeClaudeMonitoring() {
     });
 
     stateWatcher.on('add', (filePath) => {
-        console.log(`📂 [STATE] File added: ${filePath}`);
-        console.log(`   ✅ Calling readClaudeState`);
+        log(`[STATE] File added: ${filePath}`, 'initializeClaudeMonitoring');
+        log(`   Calling readClaudeState`, 'initializeClaudeMonitoring');
         readClaudeState(filePath);
     });
 
     stateWatcher.on('change', (filePath) => {
-        console.log(`📝 [STATE] File changed: ${filePath}`);
-        console.log(`   ✅ Calling readClaudeState`);
+        log(`[STATE] File changed: ${filePath}`, 'initializeClaudeMonitoring');
+        log(`   Calling readClaudeState`, 'initializeClaudeMonitoring');
         readClaudeState(filePath);
     });
 
-    stateWatcher.on('error', (error) => {
-        console.error('❌ [STATE] Watcher error:', error);
+    stateWatcher.on('error', (err) => {
+        error(`[STATE] Watcher error: ${err}`, 'initializeClaudeMonitoring');
     });
 
     stateWatcher.on('ready', () => {
-        console.log(`✅ [STATE] State watcher active on ${stateFile}`);
+        log(`[STATE] State watcher active on ${stateFile}`, 'initializeClaudeMonitoring');
     });
 
     conversationWatcher = chokidar.watch(claudeProjectsPath, {
@@ -1500,17 +1500,17 @@ function initializeClaudeMonitoring() {
     conversationWatcher.on('change', (filePath) => {
         if (filePath.endsWith('.jsonl')) {
             const conversationId = path.basename(filePath, '.jsonl');
-            console.log(`📝 [CONVERSATION] conversationId=${conversationId}`);
+            log(`[CONVERSATION] conversationId=${conversationId}`, 'initializeClaudeMonitoring');
             checkForInjectedPrompts(filePath);
         }
     });
 
-    conversationWatcher.on('error', (error) => {
-        console.error('❌ [CONVERSATION] Watcher error:', error);
+    conversationWatcher.on('error', (err) => {
+        error(`[CONVERSATION] Watcher error: ${err}`, 'initializeClaudeMonitoring');
     });
 
     conversationWatcher.on('ready', () => {
-        console.log(`✅ [CONVERSATION] Conversation watcher active on ${claudeProjectsPath}`);
+        log(`[CONVERSATION] Conversation watcher active on ${claudeProjectsPath}`, 'initializeClaudeMonitoring');
     });
 }
 
@@ -1520,7 +1520,7 @@ function getRepoPath() {
             return fs.readFileSync(REPO_CONFIG_PATH, 'utf8').trim();
         }
     } catch (err) {
-        console.error(`⚠️ Failed to read repo config: ${err.message}`);
+        error(`Failed to read repo config: ${err.message}`, 'getRepoPath');
     }
     return null;
 }
@@ -1582,9 +1582,9 @@ function writeColumnsJson(hash, columns) {
     };
     try {
         fs.writeFileSync(COLUMNS_JSON_PATH, JSON.stringify(data, null, 2));
-        console.log(`📝 Wrote ${columns.length} columns to ${COLUMNS_JSON_PATH}`);
+        log(`Wrote ${columns.length} columns to ${COLUMNS_JSON_PATH}`, 'writeColumnsJson');
     } catch (err) {
-        console.error(`⚠️ Failed to write columns JSON: ${err.message}`);
+        error(`Failed to write columns JSON: ${err.message}`, 'writeColumnsJson');
     }
 }
 
@@ -1595,7 +1595,7 @@ function startRepoWatcher(repoPath) {
     if (gitDiffWatcher) {
         gitDiffWatcher.close();
         gitDiffWatcher = null;
-        console.log(`🔄 Closed previous repo watcher`);
+        log(`Closed previous repo watcher`, 'startRepoWatcher');
     }
 
     currentWatchedRepo = repoPath;
@@ -1629,12 +1629,12 @@ function startRepoWatcher(repoPath) {
         }, 500);
     });
 
-    gitDiffWatcher.on('error', (error) => {
-        console.error('❌ Git diff watcher error:', error);
+    gitDiffWatcher.on('error', (err) => {
+        error(`Git diff watcher error: ${err}`, 'startRepoWatcher');
     });
 
     gitDiffWatcher.on('ready', () => {
-        console.log(`✅ Git diff monitoring active on ${repoPath}`);
+        log(`Git diff monitoring active on ${repoPath}`, 'startRepoWatcher');
         sendGitDiffToiOS();
     });
 }
@@ -1644,7 +1644,7 @@ function initializeGitDiffWatcher() {
     if (repoPath) {
         startRepoWatcher(repoPath);
     } else {
-        console.log(`⚠️ No repo configured yet. Waiting for ${REPO_CONFIG_PATH}`);
+        log(`No repo configured yet. Waiting for ${REPO_CONFIG_PATH}`, 'initializeGitDiffWatcher');
     }
 
     configWatcher = chokidar.watch(REPO_CONFIG_PATH, {
@@ -1655,7 +1655,7 @@ function initializeGitDiffWatcher() {
     configWatcher.on('change', () => {
         const newRepoPath = getRepoPath();
         if (newRepoPath && newRepoPath !== currentWatchedRepo) {
-            console.log(`🔄 Config changed: switching to ${newRepoPath}`);
+            log(`Config changed: switching to ${newRepoPath}`, 'initializeGitDiffWatcher');
             startRepoWatcher(newRepoPath);
         }
     });
@@ -1663,12 +1663,12 @@ function initializeGitDiffWatcher() {
     configWatcher.on('add', () => {
         const newRepoPath = getRepoPath();
         if (newRepoPath && !currentWatchedRepo) {
-            console.log(`📁 Config created: watching ${newRepoPath}`);
+            log(`Config created: watching ${newRepoPath}`, 'initializeGitDiffWatcher');
             startRepoWatcher(newRepoPath);
         }
     });
 
-    console.log(`👀 Watching config file: ${REPO_CONFIG_PATH}`);
+    log(`Watching config file: ${REPO_CONFIG_PATH}`, 'initializeGitDiffWatcher');
 }
 
 
@@ -1676,13 +1676,13 @@ function readClaudeState(filePath) {
     try {
         const fileContent = fs.readFileSync(filePath, 'utf8').trim();
         if (!fileContent) {
-            console.log(`⚠️ State file is empty`);
+            log(`State file is empty`, 'readClaudeState');
             return;
         }
 
         const lines = fileContent.split('\n').filter(line => line.trim());
         if (lines.length === 0) {
-            console.log(`⚠️ State file has no valid lines`);
+            log(`State file has no valid lines`, 'readClaudeState');
             return;
         }
 
@@ -1690,14 +1690,14 @@ function readClaudeState(filePath) {
         const parts = lastLine.split('|');
 
         if (parts.length !== 2) {
-            console.log(`⚠️ Invalid state line format: ${lastLine}`);
+            log(`Invalid state line format: ${lastLine}`, 'readClaudeState');
             return;
         }
 
         const [state, timestampStr] = parts;
         const timestamp = parseInt(timestampStr, 10);
 
-        console.log(`🔍 readClaudeState: "${state}" at ${timestamp}`);
+        log(`readClaudeState: "${state}" at ${timestamp}`, 'readClaudeState');
 
         if (state === 'stopped' || state === 'finished') {
             claudeIsActive = false;
@@ -1711,22 +1711,22 @@ function readClaudeState(filePath) {
                 };
                 activeSocket.write(JSON.stringify(stateMessage) + '\n');
                 lastActivitySentTime = Date.now();
-                console.log(`📤 Sent idle state to iOS (from "${state}")`);
+                log(`Sent idle state to iOS (from "${state}")`, 'readClaudeState');
             } else {
-                console.log(`   ⚠️ No active socket - cannot send state to iOS`);
+                log(`No active socket - cannot send state to iOS`, 'readClaudeState');
             }
         } else {
-            console.log(`   ⚠️ Unknown state: "${state}"`);
+            log(`Unknown state: "${state}"`, 'readClaudeState');
         }
-    } catch (error) {
-        console.error(`❌ Error reading Claude state: ${error.message}`);
+    } catch (err) {
+        error(`Error reading Claude state: ${err.message}`, 'readClaudeState');
     }
 }
 
 function sendGitDiffToiOS(force = false) {
     const repoPath = getRepoPath();
     if (!repoPath) {
-        console.log(`⚠️ No repo configured, skipping git diff`);
+        log(`No repo configured, skipping git diff`, 'sendGitDiffToiOS');
         return;
     }
 
@@ -1770,10 +1770,10 @@ function sendGitDiffToiOS(force = false) {
             const jsonData = JSON.stringify(diffMessage) + '\n';
             activeSocket.write(jsonData);
 
-            console.log(`📤 Sent git diff to iOS: ${columns.length} columns${force ? ' (forced during handshake)' : ''}`);
+            log(`Sent git diff to iOS: ${columns.length} columns${force ? ' (forced during handshake)' : ''}`, 'sendGitDiffToiOS');
         }
-    } catch (error) {
-        console.log(`⚠️ Failed to get git diff: ${error.message}`);
+    } catch (err) {
+        log(`Failed to get git diff: ${err.message}`, 'sendGitDiffToiOS');
     } finally {
         try { fs.unlinkSync(outputFile); } catch {}
     }
@@ -1865,9 +1865,9 @@ function checkForInjectedPrompts(filePath) {
                 };
                 activeSocket.write(JSON.stringify(stateMessage) + '\n');
                 lastActivitySentTime = now;
-                console.log(`📤 Sent claude_state isActive=${isActive} (stop_reason: ${latestAssistant.stopReason})`);
+                log(`Sent claude_state isActive=${isActive} (stop_reason: ${latestAssistant.stopReason})`, 'checkForInjectedPrompts');
             } else {
-                console.log(`⏭️  Skipping claude_state (debounced - stop_reason: ${latestAssistant.stopReason})`);
+                log(`Skipping claude_state (debounced - stop_reason: ${latestAssistant.stopReason})`, 'checkForInjectedPrompts');
             }
         }
 
@@ -1881,7 +1881,7 @@ function checkForInjectedPrompts(filePath) {
             if (lastUserEvent.text.includes('interrupted by user') ||
                 lastUserEvent.text.includes('Request interrupted by user')) {
 
-                console.log(`🛑 Detected interrupt message in last user message: "${lastUserEvent.text.substring(0, 80)}..."`);
+                log(`Detected interrupt message in last user message: "${lastUserEvent.text.substring(0, 80)}..."`, 'checkForInjectedPrompts');
 
                 if (activeSocket) {
                     const stateMessage = {
@@ -1892,15 +1892,15 @@ function checkForInjectedPrompts(filePath) {
                     };
                     activeSocket.write(JSON.stringify(stateMessage) + '\n');
                     lastActivitySentTime = Date.now();
-                    console.log(`📤 Sent idle state to iOS (from interrupt detection)`);
+                    log(`Sent idle state to iOS (from interrupt detection)`, 'checkForInjectedPrompts');
                 }
             }
         }
 
         for (const [promptId, data] of pendingPrompts.entries()) {
             if (!data.verified) {
-                console.log(`🔍 Checking pending prompt ID: ${promptId}`);
-                console.log(`   Original prompt: "${data.originalPrompt.substring(0, 60)}..."`);
+                log(`Checking pending prompt ID: ${promptId}`, 'checkForInjectedPrompts');
+                log(`   Original prompt: "${data.originalPrompt.substring(0, 60)}..."`, 'checkForInjectedPrompts');
 
                 let matchedIndex = -1;
                 let matchedEvent = null;
@@ -1914,23 +1914,22 @@ function checkForInjectedPrompts(filePath) {
                 }
 
                 if (matchedEvent) {
-                    console.log(`✅ MATCH FOUND in message [${matchedIndex + 1}] of last 5 user messages!`);
-                    console.log(`   Found ID: ${promptId}`);
-                    console.log(`   Message preview: "${matchedEvent.text.substring(0, 80).replace(/\n/g, ' ')}..."`);
-                    console.log('📍 Found in conversation events:', path.basename(filePath));
+                    log(`MATCH FOUND in message [${matchedIndex + 1}] of last 5 user messages!`, 'checkForInjectedPrompts');
+                    log(`   Found ID: ${promptId}`, 'checkForInjectedPrompts');
+                    log(`   Message preview: "${matchedEvent.text.substring(0, 80).replace(/\n/g, ' ')}..."`, 'checkForInjectedPrompts');
+                    log(`Found in conversation events: ${path.basename(filePath)}`, 'checkForInjectedPrompts');
 
                     data.verified = true;
                     data.verifiedAt = Date.now();
 
                     if (activeSocket) {
-                        // Summarize the user's prompt and send with ack
                         sendPromptAckWithSummary(data.originalPrompt, data.messageId);
                     }
 
                     pendingPrompts.delete(promptId);
                 } else {
-                    console.log(`❌ ID ${promptId} NOT FOUND in last 5 user messages`);
-                    console.log(`   Prompt may not have appeared in conversation yet`);
+                    log(`ID ${promptId} NOT FOUND in last 5 user messages`, 'checkForInjectedPrompts');
+                    log(`   Prompt may not have appeared in conversation yet`, 'checkForInjectedPrompts');
                 }
             }
         }
@@ -1939,13 +1938,13 @@ function checkForInjectedPrompts(filePath) {
         const pendingCount = pendingPrompts.size - verifiedCount;
 
         if (pendingCount > 0) {
-            console.log(`⏳ Pending prompts:`);
+            log(`Pending prompts:`, 'checkForInjectedPrompts');
             let index = 1;
             for (const [promptId, data] of pendingPrompts.entries()) {
                 if (!data.verified) {
-                    console.log(`   [${index}] ID: ${promptId}`);
-                    console.log(`       Prompt: "${data.originalPrompt.substring(0, 100)}..."`);
-                    console.log(`       Age: ${Math.round((Date.now() - data.timestamp) / 1000)}s`);
+                    log(`   [${index}] ID: ${promptId}`, 'checkForInjectedPrompts');
+                    log(`       Prompt: "${data.originalPrompt.substring(0, 100)}..."`, 'checkForInjectedPrompts');
+                    log(`       Age: ${Math.round((Date.now() - data.timestamp) / 1000)}s`, 'checkForInjectedPrompts');
                     index++;
                 }
             }
@@ -1959,22 +1958,20 @@ function checkForInjectedPrompts(filePath) {
             const looksLikeJSON = latestAssistant.text.trim().startsWith('```json');
 
             if (looksLikeJSON) {
-                console.log(`⏭️  Ignoring assistant message - looks like JSON/summary response`);
-                console.log(`   Filtered content: "${latestAssistant.text}"`);
+                log(`Ignoring assistant message - looks like JSON/summary response`, 'checkForInjectedPrompts');
+                log(`   Filtered content: "${latestAssistant.text}"`, 'checkForInjectedPrompts');
             } else if (latestAssistant.text !== lastSentAssistantMessage) {
-                console.log(`📨 New assistant message detected: "${latestAssistant.text.substring(0, 80)}..."`);
+                log(`New assistant message detected: "${latestAssistant.text.substring(0, 80)}..."`, 'checkForInjectedPrompts');
 
-                // Save IMMEDIATELY to prevent duplicate sends (before async summarization)
                 lastSentAssistantMessage = latestAssistant.text;
                 saveLastAssistantMessage(latestAssistant.text);
 
-                // Summarize and send to iOS
                 sendAssistantMessageToiOS(latestAssistant.text);
             }
         }
 
     } catch (err) {
-        console.error(`❌ Error checking file ${filePath}:`, err.message);
+        error(`Error checking file ${filePath}: ${err.message}`, 'checkForInjectedPrompts');
     }
 }
 
@@ -1984,13 +1981,13 @@ async function sendPromptAckWithSummary(originalPrompt, messageId) {
     const jsonMatch = originalPrompt.match(/\{\s*"summary"\s*:\s*"([^"]*)"\s*\}/);
     if (jsonMatch) {
         extractedSummary = jsonMatch[1];
-        console.log(`✅ Extracted embedded summary from user prompt: "${extractedSummary}"`);
+        log(`Extracted embedded summary from user prompt: "${extractedSummary}"`, 'sendPromptAckWithSummary');
     }
 
-    console.log('✅ Prompt verified in conversation');
+    log('Prompt verified in conversation', 'sendPromptAckWithSummary');
 
     if (extractedSummary) {
-        console.log('✅ Using embedded summary - sending immediately');
+        log('Using embedded summary - sending immediately', 'sendPromptAckWithSummary');
 
         const summaryMessage = {
             messageId: messageId,
@@ -2000,22 +1997,22 @@ async function sendPromptAckWithSummary(originalPrompt, messageId) {
         };
 
         activeSocket.write(JSON.stringify(summaryMessage) + '\n');
-        console.log(`📤 Sent summary to iOS: "${extractedSummary}"`);
+        log(`Sent summary to iOS: "${extractedSummary}"`, 'sendPromptAckWithSummary');
         addToContext({ type: 'user_message', text: originalPrompt, summary: extractedSummary });
         return;
     }
 
-    console.log('⏳ Queueing Haiku for summary generation...');
+    log('Queueing Haiku for summary generation...', 'sendPromptAckWithSummary');
 
     haikuPriorityQueue.add(2, async () => {
         try {
-            console.log(`🤖 Creating prompt summary...`);
+            log(`Creating prompt summary...`, 'sendPromptAckWithSummary');
 
             const result = await processWithHaiku(originalPrompt, 'create_summary');
 
             const summary = result.summary;
 
-            console.log(`✅ Got prompt summary from Haiku: "${summary}"`);
+            log(`Got prompt summary from Haiku: "${summary}"`, 'sendPromptAckWithSummary');
 
             addToContext({ type: 'user_message', text: originalPrompt, summary: summary });
 
@@ -2028,10 +2025,10 @@ async function sendPromptAckWithSummary(originalPrompt, messageId) {
 
             if (activeSocket) {
                 activeSocket.write(JSON.stringify(summaryMessage) + '\n');
-                console.log(`📤 Sent summary to iOS: "${summary}"`);
+                log(`Sent summary to iOS: "${summary}"`, 'sendPromptAckWithSummary');
             }
-        } catch (error) {
-            console.error(`❌ Failed to create prompt summary: ${error.message}`);
+        } catch (err) {
+            error(`Failed to create prompt summary: ${err.message}`, 'sendPromptAckWithSummary');
             addToContext({ type: 'user_message', text: originalPrompt, summary: null });
         }
     }, `User prompt summary for "${originalPrompt.substring(0, 30)}..."`);
@@ -2039,7 +2036,7 @@ async function sendPromptAckWithSummary(originalPrompt, messageId) {
 
 async function sendAssistantMessageToiOS(text) {
     if (!activeSocket) {
-        console.log('   ⚠️ No iOS client connected - skipping');
+        log('No iOS client connected - skipping', 'sendAssistantMessageToiOS');
         return;
     }
 
@@ -2047,7 +2044,7 @@ async function sendAssistantMessageToiOS(text) {
         const cachedEntry = assistantSummaryCache.find(entry => entry.text === text);
 
         if (cachedEntry) {
-            console.log(`⏭️  Message already in cache - already processed and sent, skipping`);
+            log(`Message already in cache - already processed and sent, skipping`, 'sendAssistantMessageToiOS');
             return;
         }
 
@@ -2066,19 +2063,19 @@ async function sendAssistantMessageToiOS(text) {
         };
 
         activeSocket.write(JSON.stringify(assistantMessage) + '\n');
-        console.log(`✅ Assistant message sent to iOS: "${text.substring(0, 80)}..."`);
+        log(`Assistant message sent to iOS: "${text.substring(0, 80)}..."`, 'sendAssistantMessageToiOS');
 
-        console.log('⏳ Assistant message queued for summary generation...');
+        log('Assistant message queued for summary generation...', 'sendAssistantMessageToiOS');
 
         haikuPriorityQueue.add(3, async () => {
             try {
-                console.log(`🤖 Creating assistant message summary...`);
+                log(`Creating assistant message summary...`, 'sendAssistantMessageToiOS');
 
                 const result = await processWithHaiku(text, 'create_summary');
 
                 const summary = result.summary;
 
-                console.log(`✅ Created new summary: "${summary}"`);
+                log(`Created new summary: "${summary}"`, 'sendAssistantMessageToiOS');
 
                 const cacheEntry = assistantSummaryCache.find(entry => entry.text === text);
                 if (cacheEntry) {
@@ -2097,14 +2094,14 @@ async function sendAssistantMessageToiOS(text) {
 
                 if (activeSocket) {
                     activeSocket.write(JSON.stringify(summaryUpdate) + '\n');
-                    console.log(`✅ Summary update sent: "${summary}"`);
+                    log(`Summary update sent: "${summary}"`, 'sendAssistantMessageToiOS');
                 }
-            } catch (error) {
-                console.error(`❌ Failed to summarize assistant message: ${error.message}`);
+            } catch (err) {
+                error(`Failed to summarize assistant message: ${err.message}`, 'sendAssistantMessageToiOS');
             }
         }, `Assistant message summary for "${text.substring(0, 30)}..."`);
-    } catch (error) {
-        console.error(`❌ Failed to send assistant message: ${error.message}`);
+    } catch (err) {
+        error(`Failed to send assistant message: ${err.message}`, 'sendAssistantMessageToiOS');
     }
 }
 
@@ -2121,7 +2118,7 @@ function executeDeployment() {
 
         const result = fs.readFileSync(outputFile, 'utf8').trim();
         if (result) {
-            console.log('⚠️ Deployment already in progress, skipping duplicate restart');
+            log('Deployment already in progress, skipping duplicate restart', 'executeDeployment');
             return;
         }
     } catch (error) {
@@ -2129,7 +2126,7 @@ function executeDeployment() {
         try { fs.unlinkSync(outputFile); } catch {}
     }
 
-    console.log('🚀 Executing deployment in scripts window...');
+    log('Executing deployment in scripts window...', 'executeDeployment');
 
     const scriptOutputFile = path.join(os.tmpdir(), `deploy-out-${Date.now()}-${process.pid}.txt`);
 
@@ -2140,16 +2137,16 @@ function executeDeployment() {
             timeout: 1000
         });
 
-        console.log('✅ Deployment process spawned and detached');
-    } catch (error) {
-        console.error(`❌ Failed to spawn deployment: ${error.message}`);
+        log('Deployment process spawned and detached', 'executeDeployment');
+    } catch (err) {
+        error(`Failed to spawn deployment: ${err.message}`, 'executeDeployment');
     } finally {
         try { fs.unlinkSync(scriptOutputFile); } catch {}
     }
 }
 
 function switchToWindow(windowNamePattern, callback) {
-    console.log(`🪟 Switching to Terminal window containing: "${windowNamePattern}"`);
+    log(`Switching to Terminal window containing: "${windowNamePattern}"`, 'switchToWindow');
 
     const appleScript = `tell application "Terminal"
     activate
@@ -2177,15 +2174,15 @@ end tell`;
         const result = fs.readFileSync(outputFile, 'utf8').trim();
 
         if (result.includes('error:')) {
-            console.log(`   ❌ ${result}`);
+            log(`   ${result}`, 'switchToWindow');
             callback(false, result);
         } else {
-            console.log(`   ✅ ${result}`);
+            log(`   ${result}`, 'switchToWindow');
             callback(true);
         }
-    } catch (error) {
-        console.log(`   ❌ Failed to switch window: ${error.message}`);
-        callback(false, error.message);
+    } catch (err) {
+        log(`   Failed to switch window: ${err.message}`, 'switchToWindow');
+        callback(false, err.message);
     } finally {
         try { fs.unlinkSync(scriptFile); } catch {}
         try { fs.unlinkSync(outputFile); } catch {}
@@ -2197,12 +2194,12 @@ function injectIntoTerminal(prompt, callback) {
         .replace(/"/g, '')
         .replace(/'/g, '');
 
-    console.log(`🔤 Injecting prompt into Terminal: "${escapedPrompt}"`);
+    log(`Injecting prompt into Terminal: "${escapedPrompt}"`, 'injectIntoTerminal');
 
     switchToWindow(CLAUDE_WINDOW_PATTERN, (switchSuccess, switchError) => {
         if (!switchSuccess) {
-            console.log(`⚠️ Failed to switch to Claude Code window: ${switchError}`);
-            console.log(`📝 Proceeding with injection anyway...`);
+            log(`Failed to switch to Claude Code window: ${switchError}`, 'injectIntoTerminal');
+            log(`Proceeding with injection anyway...`, 'injectIntoTerminal');
         }
 
         const appleScript = `tell application "Terminal"
@@ -2229,7 +2226,7 @@ tell application "System Events"
     end tell
 end tell`;
 
-        console.log('🍎 Executing enhanced AppleScript for macOS 26 Tahoe...');
+        log('Executing enhanced AppleScript for macOS 26 Tahoe...', 'injectIntoTerminal');
 
         const os = require('os');
         const scriptFile = path.join(os.tmpdir(), `applescript-${Date.now()}-${process.pid}.scpt`);
@@ -2245,18 +2242,18 @@ end tell`;
 
             const result = fs.readFileSync(outputFile, 'utf8').trim();
 
-            console.log('📝 AppleScript result:');
+            log('AppleScript result:', 'injectIntoTerminal');
             if (result.includes('error:')) {
-                console.log(`   Output: ${result}`);
+                log(`   Output: ${result}`, 'injectIntoTerminal');
                 callback(false, result);
             } else {
-                console.log(`   Success: ${result}`);
+                log(`   Success: ${result}`, 'injectIntoTerminal');
                 callback(true);
             }
-        } catch (error) {
-            console.log(`   Error: ${error.message}`);
-            console.log(`   Note: Ensure Terminal has Accessibility permissions in System Settings`);
-            callback(false, `AppleScript error: ${error.message}`);
+        } catch (err) {
+            log(`   Error: ${err.message}`, 'injectIntoTerminal');
+            log(`   Note: Ensure Terminal has Accessibility permissions in System Settings`, 'injectIntoTerminal');
+            callback(false, `AppleScript error: ${err.message}`);
         } finally {
             try { fs.unlinkSync(scriptFile); } catch {}
             try { fs.unlinkSync(outputFile); } catch {}
