@@ -261,6 +261,7 @@ const MAX_SUMMARY_CACHE_SIZE = 5;
 
 let haikuContext = [];
 
+const HAIKU_TMUX_SESSION = 'haiku-conversation';
 let haikuConversationId = null;
 
 let conversationWatcher = null;
@@ -269,18 +270,32 @@ let gitDiffWatcher = null;
 const messageStates = new Map();
 
 
+
 // ============================================
 // HAIKU CONVERSATION CONTRACTS (Design by Contract)
 // ============================================
 
+function tmuxSessionExists() {
+    try {
+        execSync(`tmux has-session -t ${HAIKU_TMUX_SESSION} 2>/dev/null`, {
+            stdio: ['pipe', 'pipe', 'pipe']
+        });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 function invariantHaikuConversation(currentId) {
+    if (currentId !== HAIKU_TMUX_SESSION) {
+        error(`INV: Haiku request using wrong session. Expected ${HAIKU_TMUX_SESSION}, got ${currentId}`, 'invariantHaikuConversation');
+    }
     if (haikuConversationId !== null && currentId !== haikuConversationId) {
-        error(`INV: Haiku request using different conversation. Expected ${haikuConversationId}, got ${currentId}`, 'invariantHaikuConversation');
+        error(`INV: Haiku conversation ID changed. Expected ${haikuConversationId}, got ${currentId}`, 'invariantHaikuConversation');
     }
 }
 
 function preconditionProcessWithHaiku(text, task) {
-    invariantHaikuConversation(haikuConversationId);
     if (!text || text.trim() === '') {
         error('PRE: processWithHaiku text is empty', 'preconditionProcessWithHaiku');
     }
@@ -296,12 +311,16 @@ function postconditionProcessWithHaiku(result, task, conversationId) {
     if (task === 'create_summary' && (!result || !result.summary)) {
         error('POST: processWithHaiku summary has no summary field', 'postconditionProcessWithHaiku');
     }
+    if (conversationId !== HAIKU_TMUX_SESSION) {
+        error(`POST: processWithHaiku returned wrong session. Expected ${HAIKU_TMUX_SESSION}, got ${conversationId}`, 'postconditionProcessWithHaiku');
+    }
     if (haikuConversationId === null && conversationId) {
         haikuConversationId = conversationId;
-        log(`Haiku conversation ID set: ${haikuConversationId}`, 'postconditionProcessWithHaiku');
+        log(`Haiku tmux session verified: ${haikuConversationId}`, 'postconditionProcessWithHaiku');
     }
     invariantHaikuConversation(conversationId);
 }
+
 
 
 const haikuPriorityQueue = {
