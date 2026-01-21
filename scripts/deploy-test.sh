@@ -57,3 +57,15 @@ xcrun devicectl device process launch --terminate-existing --device "$IPHONE_ID"
 
 echo "✅ TEST DEPLOYMENT COMPLETE"
 echo "📊 Watch logs: tail -f /tmp/mac-server-test.log"
+
+# Write test-passed marker with current commit hash
+REPO_ROOT=$(git rev-parse --show-toplevel)
+COMMIT_HASH=$(git rev-parse HEAD)
+
+if [ "$1" = "--manual" ]; then
+    echo "$COMMIT_HASH" > "$REPO_ROOT/.test-passed-manual"
+    echo "✅ Wrote .test-passed-manual ($COMMIT_HASH)"
+else
+    echo "$COMMIT_HASH" > "$REPO_ROOT/.test-passed-automated"
+    echo "✅ Wrote .test-passed-automated ($COMMIT_HASH)"
+fi

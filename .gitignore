@@ -10,3 +10,7 @@ RealtimeClaude.xcodeproj/xcuserdata
 # Model files and virtual environments
 mlx_models/
 whisper-venv-312/
+
+# Test pass markers
+.test-passed-automated
+.test-passed-manual
