@@ -11,6 +11,21 @@ update_status() {
     echo "$1"
 }
 
+wait_for_marker() {
+    local marker_file="$1"
+    local expected_hash="$2"
+
+    while true; do
+        if [ -f "$marker_file" ]; then
+            local marker_hash=$(cat "$marker_file")
+            if [ "$marker_hash" = "$expected_hash" ]; then
+                return 0
+            fi
+        fi
+        fswatch -1 --event Created --event Updated "$REPO_ROOT" >/dev/null 2>&1
+    done
+}
+
 echo ""
 update_status "📋 STARTED: Running tests"
 echo ""
@@ -30,16 +45,8 @@ fi
 
 echo ""
 update_status "⏳ WAITING_AUTOMATED"
-while true; do
-    if [ -f "$AUTOMATED_MARKER" ]; then
-        MARKER_HASH=$(cat "$AUTOMATED_MARKER")
-        if [ "$MARKER_HASH" = "$COMMIT_HASH" ]; then
-            update_status "✅ AUTOMATED_PASSED"
-            break
-        fi
-    fi
-    sleep 1
-done
+wait_for_marker "$AUTOMATED_MARKER" "$COMMIT_HASH"
+update_status "✅ AUTOMATED_PASSED"
 
 echo ""
 update_status "👤 DEPLOYING_MANUAL"
@@ -59,7 +66,7 @@ while true; do
             break
         fi
     fi
-    sleep 1
+    fswatch -1 --event Created --event Updated --event Removed "$REPO_ROOT" >/dev/null 2>&1
 done
 
 echo ""
