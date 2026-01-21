@@ -1,8 +1,34 @@
-const { exec } = require("child_process");
-const util = require("util");
+const { spawn } = require("child_process");
 const fs = require("fs");
 
-const execAsync = util.promisify(exec);
+function execSafe(command) {
+    return new Promise(function(resolve, reject) {
+        var child = spawn("/bin/sh", ["-c", command], {
+            stdio: ["pipe", "pipe", "pipe"],
+            detached: true,
+            env: Object.assign({}, process.env)
+        });
+        child.unref();
+        var stdout = "";
+        var stderr = "";
+        child.stdout.on("data", function(data) { stdout += data; });
+        child.stderr.on("data", function(data) { stderr += data; });
+        child.on("close", function(code) {
+            if (code === 0) {
+                resolve({ stdout: stdout, stderr: stderr });
+            } else {
+                var err = new Error("Command failed with code " + code + ": " + stderr);
+                err.code = code;
+                err.stdout = stdout;
+                err.stderr = stderr;
+                reject(err);
+            }
+        });
+        child.on("error", function(err) {
+            reject(err);
+        });
+    });
+}
 
 const TMUX_SESSION_NAME = "haiku-conversation";
 const POLL_INTERVAL_MS = 300;
@@ -56,7 +82,7 @@ async function postconditionSendPrompt(response) {
 
 async function sessionExists() {
     try {
-        await execAsync("tmux has-session -t " + TMUX_SESSION_NAME + " 2>/dev/null");
+        await execSafe("tmux has-session -t " + TMUX_SESSION_NAME + " 2>/dev/null");
         return true;
     } catch (e) {
         return false;
@@ -70,9 +96,9 @@ async function createSession() {
     }
 
     log("Creating new tmux session", "createSession");
-    await execAsync("tmux new-session -d -s " + TMUX_SESSION_NAME + " -x 200 -y 50");
+    await execSafe("tmux new-session -d -s " + TMUX_SESSION_NAME + " -x 200 -y 50");
 
-    await execAsync("tmux send-keys -t " + TMUX_SESSION_NAME + " 'cd /tmp && claude --model haiku --dangerously-skip-permissions' Enter");
+    await execSafe("tmux send-keys -t " + TMUX_SESSION_NAME + " 'cd /tmp && claude --model haiku --dangerously-skip-permissions' Enter");
 
     var ready = false;
     var startTime = Date.now();
@@ -96,7 +122,7 @@ async function createSession() {
 
 async function capturePane() {
     try {
-        var result = await execAsync("tmux capture-pane -t " + TMUX_SESSION_NAME + " -p -S -500");
+        var result = await execSafe("tmux capture-pane -t " + TMUX_SESSION_NAME + " -p -S -500");
         return result.stdout;
     } catch (e) {
         return "";
@@ -107,14 +133,14 @@ async function sendKeys(text) {
     var tempFile = "/tmp/haiku-prompt-" + process.pid + ".txt";
     fs.writeFileSync(tempFile, text);
 
-    await execAsync("tmux load-buffer " + tempFile);
-    await execAsync("tmux paste-buffer -t " + TMUX_SESSION_NAME);
+    await execSafe("tmux load-buffer " + tempFile);
+    await execSafe("tmux paste-buffer -t " + TMUX_SESSION_NAME);
 
     try { fs.unlinkSync(tempFile); } catch (e) {}
 }
 
 async function sendEnter() {
-    await execAsync("tmux send-keys -t " + TMUX_SESSION_NAME + " Enter");
+    await execSafe("tmux send-keys -t " + TMUX_SESSION_NAME + " Enter");
 }
 
 function isThinkingIndicator(text) {
@@ -231,7 +257,7 @@ async function sendPromptAndWaitForResponse(prompt) {
 
 async function killSession() {
     if (await sessionExists()) {
-        await execAsync("tmux kill-session -t " + TMUX_SESSION_NAME);
+        await execSafe("tmux kill-session -t " + TMUX_SESSION_NAME);
         log("Session killed", "killSession");
     }
 }
