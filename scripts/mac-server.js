@@ -238,6 +238,7 @@ const WHISPER_SERVER_URL = 'http://localhost:5050';
 let currentSessionFile = null;
 let currentSessionNumber = 0;
 let activeSocket = null;
+let lastSentAssistantMessage = null;
 
 let lastDiffSent = null;
 let lastDiffHash = null;
