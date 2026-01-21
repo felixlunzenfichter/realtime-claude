@@ -47,8 +47,9 @@ if ! lsof -i :9999 | grep LISTEN > /dev/null; then
 fi
 echo "✅ Test server running on 9999"
 
-# Build with appropriate flags
+# Clean and build with appropriate flags
 echo "Building with flags: $SWIFT_FLAGS"
+rm -rf /tmp/build-test
 
 xcodebuild -scheme RealtimeClaude -project RealtimeClaude.xcodeproj \
     -destination "id=$IPHONE_ID" \
