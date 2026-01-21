@@ -1319,16 +1319,13 @@ function handleLogMessage(socket, logData) {
         let commitHash = '';
 
         try {
-            const headPath = path.join(repoRoot, '.git', 'HEAD');
-            const headContent = fs.readFileSync(headPath, 'utf8').trim();
-            if (headContent.startsWith('ref: ')) {
-                const refPath = path.join(repoRoot, '.git', headContent.slice(5));
-                commitHash = fs.readFileSync(refPath, 'utf8').trim();
-            } else {
-                commitHash = headContent;
-            }
+            commitHash = require('child_process').execSync('git rev-parse HEAD', { 
+                encoding: 'utf8', 
+                stdio: ['pipe', 'pipe', 'pipe'],
+                cwd: repoRoot 
+            }).trim();
         } catch (gitErr) {
-            log(`Failed to read git HEAD: ${gitErr.message}`, 'handleLogMessage');
+            log(`Failed to get git HEAD: ${gitErr.message}`, 'handleLogMessage');
             return;
         }
 
