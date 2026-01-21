@@ -913,7 +913,7 @@ const server = net.createServer((socket) => {
     });
 
     socket.on('error', (err) => {
-        error(`Socket error (continuing): ${err.message}`, 'socket.on.error');
+        log(`Socket error (expected during redeploy): ${err.message}`, 'socket.on.error');
     });
 });
 
@@ -2000,7 +2000,11 @@ function checkForInjectedPrompts(filePath) {
         }
 
     } catch (err) {
-        error(`Error checking file ${filePath}: ${err.message}`, 'checkForInjectedPrompts');
+        if (err.message.includes('string longer than')) {
+            log(`File too large to parse (skipping): ${path.basename(filePath)}`, 'checkForInjectedPrompts');
+        } else {
+            error(`Error checking file ${filePath}: ${err.message}`, 'checkForInjectedPrompts');
+        }
     }
 }
 
