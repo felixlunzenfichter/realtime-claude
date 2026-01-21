@@ -177,7 +177,7 @@ function error(message, functionName = 'unknown') {
         const marker = MANUAL_TESTING
             ? path.join(repoRoot, '.test-passed-manual')
             : path.join(repoRoot, '.test-passed-automated');
-        fs.writeFileSync(marker, 'ERROR');
+        fs.writeFileSync(marker, `ERROR|mac-server.js|${functionName}|${message}`);
         console.error('🚨 ERROR in test mode: Wrote ERROR to marker. Tests failed.');
     }
 }
@@ -1352,7 +1352,7 @@ function handleErrorMessage(socket, logData) {
         const marker = MANUAL_TESTING
             ? path.join(repoRoot, '.test-passed-manual')
             : path.join(repoRoot, '.test-passed-automated');
-        fs.writeFileSync(marker, 'ERROR');
+        fs.writeFileSync(marker, `ERROR|${logData.fileName}|${logData.functionName}|${logData.message}`);
         console.error('🚨 iOS ERROR in test mode: Wrote ERROR to marker. Tests failed.');
     }
 
