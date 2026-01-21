@@ -69,3 +69,5 @@ else
     echo "$COMMIT_HASH" > "$REPO_ROOT/.test-passed-automated"
     echo "✅ Wrote .test-passed-automated ($COMMIT_HASH)"
 fi
+
+echo ""
