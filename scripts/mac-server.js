@@ -457,14 +457,14 @@ async function processWithHaiku(text, task, completeTranscription = null) {
 
             const prompt = buildPrompt(text, task, completeTranscription);
 
-            const result = await new Promise((resolve, reject) => {
+            const { result, sessionId } = await new Promise((resolve, reject) => {
                 const worker = new Worker(path.join(__dirname, 'haiku-worker.js'), {
-                    workerData: { prompt, task }
+                    workerData: { prompt, task, sessionId: haikuConversationId }
                 });
 
                 worker.on('message', (msg) => {
                     if (msg.success) {
-                        resolve(msg.result);
+                        resolve({ result: msg.result, sessionId: msg.sessionId });
                     } else {
                         reject(new Error(msg.error));
                     }
@@ -493,7 +493,7 @@ async function processWithHaiku(text, task, completeTranscription = null) {
 
             if (task === 'correct_transcription') {
                 const result = { corrected };
-                postconditionProcessWithHaiku(result, task, null);
+                postconditionProcessWithHaiku(result, task, sessionId);
                 log(`Corrected: "${corrected.substring(0, 50)}..."`, 'processWithHaiku');
                 return result;
             } else {
@@ -505,7 +505,7 @@ async function processWithHaiku(text, task, completeTranscription = null) {
                 log(`Summary: "${summary}" (${summary.length} chars)`, 'processWithHaiku');
                 addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: true });
                 const result = { summary };
-                postconditionProcessWithHaiku(result, task, null);
+                postconditionProcessWithHaiku(result, task, sessionId);
                 return result;
             }
 

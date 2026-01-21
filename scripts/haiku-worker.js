@@ -2,26 +2,32 @@ const { parentPort, workerData } = require('worker_threads');
 const { execSync } = require('child_process');
 const fs = require('fs');
 
-const { prompt, task } = workerData;
+const { prompt, task, sessionId } = workerData;
 
 try {
-    const inputFile = `/tmp/haiku-worker-${Date.now()}.txt`;
-    const outputFile = `/tmp/haiku-worker-${Date.now()}-out.txt`;
+    const timestamp = Date.now();
+    const inputFile = `/tmp/haiku-worker-${timestamp}.txt`;
+    const outputFile = `/tmp/haiku-worker-${timestamp}-out.txt`;
 
     fs.writeFileSync(inputFile, prompt);
 
-    execSync(`cat "${inputFile}" | claude --model haiku --print - > "${outputFile}" 2>&1`, {
+    const sessionFlag = sessionId ? `--session-id ${sessionId}` : '';
+    execSync(`cat "${inputFile}" | claude --model haiku --print --output-format json ${sessionFlag} - > "${outputFile}" 2>&1`, {
         stdio: 'ignore',
         shell: '/bin/bash',
         timeout: 30000
     });
 
-    const result = fs.readFileSync(outputFile, 'utf8').trim();
+    const rawOutput = fs.readFileSync(outputFile, 'utf8').trim();
 
     fs.unlinkSync(inputFile);
     fs.unlinkSync(outputFile);
 
-    parentPort.postMessage({ success: true, result });
+    const jsonResponse = JSON.parse(rawOutput);
+    const result = jsonResponse.result;
+    const returnedSessionId = jsonResponse.session_id;
+
+    parentPort.postMessage({ success: true, result, sessionId: returnedSessionId });
 } catch (error) {
     parentPort.postMessage({ success: false, error: error.message });
 }
