@@ -10,6 +10,49 @@ fi
 
 cd "$REPO_PATH" || exit 1
 
+# Active agents (sessions modified in last 5 min)
+echo "=== ACTIVE AGENTS ==="
+python3 << 'PYTHON' 2>/dev/null
+import json, os, time
+
+now = time.time()
+cutoff = now - 300  # 5 minutes
+
+agents = []
+
+for proj_dir in os.listdir(os.path.expanduser("~/.claude/projects")):
+    index_path = os.path.expanduser(f"~/.claude/projects/{proj_dir}/sessions-index.json")
+    if os.path.exists(index_path):
+        try:
+            with open(index_path) as f:
+                data = json.load(f)
+            for entry in data.get("entries", []):
+                mtime = entry.get("fileMtime", 0) / 1000
+                if mtime > cutoff:
+                    branch = entry.get("gitBranch", "unknown")
+                    prompt = entry.get("firstPrompt", "")[:60].replace("\n", " ")
+                    ago = int(now - mtime)
+                    agents.append((ago, branch, prompt))
+        except:
+            pass
+
+if agents:
+    for ago, branch, prompt in sorted(agents):
+        mins = ago // 60
+        secs = ago % 60
+        time_str = f"{mins}m{secs:02d}s" if mins else f"{secs}s"
+        print(f"{time_str:>6} │ {branch:15} │ {prompt}...")
+else:
+    print("(none)")
+PYTHON
+echo ""
+
+# Git tree with branches and commits
+echo "=== GIT TREE ==="
+git log --graph --pretty=format:'%h %ad%d %s' --date=format:'%b %d %H:%M' --abbrev-commit --all
+echo ""
+echo ""
+
 # Branch status with ahead/behind count
 echo "=== Branch Status ==="
 repo_name=$(basename -s .git "$(git config --get remote.origin.url)" 2>/dev/null || basename "$(pwd)")

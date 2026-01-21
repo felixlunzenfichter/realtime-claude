@@ -25,12 +25,14 @@ Always debug mode, always direct install. This is our tool.
 
 ## TDD Development
 
-**STORY.md is LOCKED. If tests fail, fix the code, not the spec.**
+**Story tests are LOCKED. If tests fail, fix the code, not the spec.**
 
 The story is the contract. Agents fix code to match the story, never the reverse.
 
+Story tests live in the iOS app.
+
 Each task = 3 commits:
-1. Write test (test file is located in: scripts/test-system.js)
+1. Write test
 2. Make test pass (minimal code only, ignore refactoring rules)
 3. Refactor & clean up (apply refactoring rules)
 
