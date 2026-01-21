@@ -1195,9 +1195,7 @@ function countLinesInContent(content) {
 
 async function sendHandshakeResponse(socket, stats) {
     let apiKey;
-    if (IS_TEST && !MANUAL_TESTING) {
-        apiKey = 'test-api-key';
-    } else if (MANUAL_TESTING) {
+    if (IS_TEST) {
         apiKey = fs.readFileSync('/Users/felixlunzenfichter/Documents/realtime-claude/private/secrets.txt', 'utf8').trim();
     } else {
         apiKey = fs.readFileSync(path.join('private', 'secrets.txt'), 'utf8').trim();
