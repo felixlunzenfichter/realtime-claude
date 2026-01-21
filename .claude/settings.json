@@ -3,7 +3,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|Bash|WebFetch|WebSearch",
+        "matcher": "Edit|Write|Bash|WebFetch|WebSearch|Task",
         "hooks": [
           {
             "type": "command",
