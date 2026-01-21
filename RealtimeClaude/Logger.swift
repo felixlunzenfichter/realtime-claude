@@ -90,20 +90,34 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
     #if IS_TEST
     private static let TEST_WORD = "MOONLIGHT"
-    private static let STORY_HANDSHAKE = "Successful handshake"
-    private static let STORY_REMEMBER = "Remember \(TEST_WORD)"
-    private static let STORY_CLAUDE_RESPONDS = "Claude responds"
-    private static let STORY_ASK_WORD = "What word did I ask you to remember?"
-    private static let STORY_RECALLS_WORD = "✓ RECALL_VERIFIED: \(TEST_WORD)"
+
+    private static let TEST_0_MARKER = "✓ TEST[0] PASSED: handshake"
+    private static let TEST_1_MARKER = "✓ TEST[1] PASSED: claude_responds"
+    private static let TEST_2_MARKER = "✓ TEST[2] PASSED: recall_verified"
 
     private let STORY: [(command: String?, result: String)] = [
-        (nil, Logger.STORY_HANDSHAKE),
-        (Logger.STORY_REMEMBER, Logger.STORY_CLAUDE_RESPONDS),
-        (Logger.STORY_ASK_WORD, Logger.STORY_RECALLS_WORD)
+        (nil, Logger.TEST_0_MARKER),
+        ("Remember \(TEST_WORD)", Logger.TEST_1_MARKER),
+        ("What word did I ask you to remember?", Logger.TEST_2_MARKER)
     ]
 
     private var storyIndex = 0
     private var isCheckingStory = false
+
+    func testHandshakePassed() {
+        log(Logger.TEST_0_MARKER)
+    }
+
+    func testClaudeRespondsPassed() {
+        log(Logger.TEST_1_MARKER)
+    }
+
+    func testRecallVerified(_ response: String) {
+        guard !response.isEmpty else { return }
+        if response.uppercased().contains(Logger.TEST_WORD) {
+            log(Logger.TEST_2_MARKER)
+        }
+    }
 
     private func pre(_ condition: Bool, _ message: String) {
         if !condition { error("PRE: \(message)") }
@@ -165,19 +179,10 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     }
     #endif
 
-    func testClaudeResponds() {
-        log("\(Logger.STORY_CLAUDE_RESPONDS)")
-    }
-
-    func testClaudeRecallsWord(_ response: String) {
-        guard !response.isEmpty else { return }
-        if response.uppercased().contains(Logger.TEST_WORD) {
-            log(Logger.STORY_RECALLS_WORD)
-        }
-    }
     #else
-    func testClaudeResponds() {}
-    func testClaudeRecallsWord(_ response: String) {}
+    func testHandshakePassed() {}
+    func testClaudeRespondsPassed() {}
+    func testRecallVerified(_ response: String) {}
     #endif
 
     private var isConnectionReady: Bool = false {
@@ -535,6 +540,10 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         sessionStatsSubject.send(sessionStats)
 
         log("Successful handshake: Session #\(sessionNumber), Total: \(totalUptime)ms, Today: \(todayUptime)ms, Logs: \(totalLogs)")
+
+        #if IS_TEST
+        testHandshakePassed()
+        #endif
     }
 
     private func handleTranscriptionMessage(_ jsonData: [String: Any]) {
@@ -607,8 +616,10 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         realtimeAPI.updatePrompt(messageId: messageId, text: prompt)
         realtimeAPI.updateSummary(messageId: messageId, text: summary)
 
-        testClaudeResponds()
-        testClaudeRecallsWord(prompt)
+        #if IS_TEST
+        testClaudeRespondsPassed()
+        testRecallVerified(prompt)
+        #endif
     }
 
     private func handleCodeDiffMessage(_ jsonData: [String: Any]) {
