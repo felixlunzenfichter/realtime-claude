@@ -20,6 +20,19 @@ else
     SERVER_FLAGS='IS_TEST=true'
 fi
 
+# Get iPhone ID early for terminating old app
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+IPHONE_ID=$(xcodebuild -scheme RealtimeClaude -showdestinations 2>/dev/null | grep "name:iPhone" | grep -o 'id:[^,]*' | head -1 | cut -d: -f2)
+
+if [ -z "$IPHONE_ID" ]; then
+    echo "❌ No iPhone found"
+    exit 1
+fi
+
+# Terminate old iOS app FIRST to prevent stale errors
+echo "Terminating old iOS app..."
+xcrun devicectl device process terminate --device "$IPHONE_ID" ch.felix.realtimeClaude 2>/dev/null || true
+
 # Kill only test server (port 9999), leave production (8082) alone
 echo "Restarting test server on port 9999..."
 lsof -ti :9999 | xargs kill -9 2>/dev/null || true
@@ -36,13 +49,6 @@ echo "✅ Test server running on 9999"
 
 # Build with appropriate flags
 echo "Building with flags: $SWIFT_FLAGS"
-export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-IPHONE_ID=$(xcodebuild -scheme RealtimeClaude -showdestinations 2>/dev/null | grep "name:iPhone" | grep -o 'id:[^,]*' | head -1 | cut -d: -f2)
-
-if [ -z "$IPHONE_ID" ]; then
-    echo "❌ No iPhone found"
-    exit 1
-fi
 
 xcodebuild -scheme RealtimeClaude -project RealtimeClaude.xcodeproj \
     -destination "id=$IPHONE_ID" \

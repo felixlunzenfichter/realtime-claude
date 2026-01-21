@@ -92,9 +92,9 @@ struct ToggleBar: View {
                     VStack(spacing: 5) {
                         if let icon = item.icon {
                             Image(systemName: icon)
-                                .font(.system(size: 30, weight: .semibold))
+                                .font(.system(size: 24, weight: .semibold))
                                 .foregroundColor(item.color)
-                                .frame(width: 30, height: 30)
+                                .frame(width: 24, height: 24)
                                 .padding(5)
                         }
 
