@@ -18,7 +18,6 @@
  * - {type:'assistant', messageId, timestamp, prompt, summary} → assistant message from conversation
  * - {type:'speak_result', success:bool, error?:str} → speak validation result
  * - {type:'prompt_ack', messageId, timestamp, status, summary, error?} → prompt received/verified
- * - {type:'claude_state', state:str, isActive:bool, timestamp} → claude active/idle
  * - {type:'code_diff', diff:str, timestamp} → git diff output
  * - {type:'ack', logId} → log received confirmation
  *
@@ -34,7 +33,6 @@
  *
  * lastDiffSent, diffDebounceTimer
  *
- * claudeIsActive, lastActivitySentTime
  *
  * MAX_AUDIO_DURATION=10, MAX_AUDIO_BYTES
  *
@@ -65,7 +63,7 @@
  * isAudioMessage, isDeleteMessage, isStartMessage, isPromptMessage, isSpeakMessage, isErrorMessage, isLogMessage
  * handleDeleteMessage({messageId}) → messageState.deleted=true
  *
- * server=net.createServer → activeSocket=socket, readClaudeState, processBufferedData
+ * server=net.createServer → activeSocket=socket, processBufferedData
  * loadLastAssistantMessage()
  * server.listen(8082) → initializeClaudeMonitoring, initializeGitDiffWatcher
  * processBufferedData(socket, buffer) → JSON.parse lines, handleMessage
@@ -106,11 +104,10 @@
  * loadLastAssistantMessage() → fs.readFileSync(lastAssistantMessageFile) | lastSentAssistantMessage=text
  * saveLastAssistantMessage(message) → fs.writeFileSync
  *
- * initializeClaudeMonitoring() → chokidar.watch(claude-state.txt), chokidar.watch(claudeProjectsPath) | stateWatcher.on(add/change→readClaudeState), conversationWatcher.on(change→checkForInjectedPrompts)
+ * initializeClaudeMonitoring() → chokidar.watch(claudeProjectsPath) | conversationWatcher.on(change→checkForInjectedPrompts)
  * initializeGitDiffWatcher() → chokidar.watch(repoPath), watcher.on(all→sendGitDiffToiOS debounced 500ms)
- * readClaudeState(filePath) → parse state|timestamp, activeSocket.write({type:'claude_state', state:'idle'}) if stopped/finished | claudeIsActive=false
  * sendGitDiffToiOS(force?) → execSync(get-diff.sh), activeSocket.write({type:'code_diff'}) | lastDiffSent=diff
- * checkForInjectedPrompts(filePath) → parse .jsonl, find user/assistant events, detect interrupts, verify pendingPrompts, sendPromptAckWithSummary, sendAssistantMessageToiOS | activeSocket.write(claude_state), lastSentAssistantMessage=text
+ * checkForInjectedPrompts(filePath) → parse .jsonl, find user/assistant events, verify pendingPrompts, sendPromptAckWithSummary, sendAssistantMessageToiOS | lastSentAssistantMessage=text
  * sendPromptAckWithSummary(originalPrompt, messageId) → extract embedded summary or haikuPriorityQueue.add(summary priority=2), activeSocket.write({type:'summary'}), addToContext
  * sendAssistantMessageToiOS(text) → assistantSummaryCache check, activeSocket.write({type:'assistant'}) | assistantSummaryCache.push/shift
  *
@@ -210,10 +207,6 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 function closeAllWatchers() {
-    if (stateWatcher) {
-        stateWatcher.close();
-        stateWatcher = null;
-    }
     if (conversationWatcher) {
         conversationWatcher.close();
         conversationWatcher = null;
@@ -255,8 +248,6 @@ let diffDebounceTimer = null;
 const COLUMNS_JSON_PATH = path.join(require('os').homedir(), '.git-diff-columns.json');
 const REPO_CONFIG_PATH = path.join(require('os').homedir(), '.watched-repo');
 
-let claudeIsActive = false;
-let lastActivitySentTime = 0;
 
 const MAX_AUDIO_DURATION = 10;
 const MAX_AUDIO_BYTES = MAX_AUDIO_DURATION * 16000 * 4;
@@ -270,7 +261,6 @@ const MAX_SUMMARY_CACHE_SIZE = 5;
 
 let haikuContext = [];
 
-let stateWatcher = null;
 let conversationWatcher = null;
 let gitDiffWatcher = null;
 
@@ -888,11 +878,6 @@ const server = net.createServer((socket) => {
     log('iOS client connected', 'server');
     activeSocket = socket;
 
-    const stateFile = path.join(__dirname, '..', 'private', 'claude-state.txt');
-    if (fs.existsSync(stateFile)) {
-        readClaudeState(stateFile);
-    }
-
     let buffer = '';
 
     socket.on('data', (data) => {
@@ -1487,37 +1472,9 @@ function saveLastAssistantMessage(message) {
 
 function initializeClaudeMonitoring() {
     const claudeProjectsPath = path.join(process.env.HOME, '.claude', 'projects');
-    const stateFile = path.join(__dirname, '..', 'private', 'claude-state.txt');
 
     log(`Initializing Claude monitoring...`, 'initializeClaudeMonitoring');
     log(`   Projects path: ${claudeProjectsPath}`, 'initializeClaudeMonitoring');
-    log(`   State file: ${stateFile}`, 'initializeClaudeMonitoring');
-    log(`   State file exists: ${fs.existsSync(stateFile)}`, 'initializeClaudeMonitoring');
-
-    stateWatcher = chokidar.watch(stateFile, {
-        persistent: true,
-        ignoreInitial: false
-    });
-
-    stateWatcher.on('add', (filePath) => {
-        log(`[STATE] File added: ${filePath}`, 'initializeClaudeMonitoring');
-        log(`   Calling readClaudeState`, 'initializeClaudeMonitoring');
-        readClaudeState(filePath);
-    });
-
-    stateWatcher.on('change', (filePath) => {
-        log(`[STATE] File changed: ${filePath}`, 'initializeClaudeMonitoring');
-        log(`   Calling readClaudeState`, 'initializeClaudeMonitoring');
-        readClaudeState(filePath);
-    });
-
-    stateWatcher.on('error', (err) => {
-        error(`[STATE] Watcher error: ${err}`, 'initializeClaudeMonitoring');
-    });
-
-    stateWatcher.on('ready', () => {
-        log(`[STATE] State watcher active on ${stateFile}`, 'initializeClaudeMonitoring');
-    });
 
     conversationWatcher = chokidar.watch(claudeProjectsPath, {
         persistent: true,
@@ -1705,56 +1662,6 @@ function initializeGitDiffWatcher() {
 }
 
 
-function readClaudeState(filePath) {
-    try {
-        const fileContent = fs.readFileSync(filePath, 'utf8').trim();
-        if (!fileContent) {
-            log(`State file is empty`, 'readClaudeState');
-            return;
-        }
-
-        const lines = fileContent.split('\n').filter(line => line.trim());
-        if (lines.length === 0) {
-            log(`State file has no valid lines`, 'readClaudeState');
-            return;
-        }
-
-        const lastLine = lines[lines.length - 1];
-        const parts = lastLine.split('|');
-
-        if (parts.length !== 2) {
-            log(`Invalid state line format: ${lastLine}`, 'readClaudeState');
-            return;
-        }
-
-        const [state, timestampStr] = parts;
-        const timestamp = parseInt(timestampStr, 10);
-
-        log(`readClaudeState: "${state}" at ${timestamp}`, 'readClaudeState');
-
-        if (state === 'stopped' || state === 'finished') {
-            claudeIsActive = false;
-
-            if (activeSocket) {
-                const stateMessage = {
-                    type: 'claude_state',
-                    state: 'idle',
-                    isActive: false,
-                    timestamp: Date.now()
-                };
-                activeSocket.write(JSON.stringify(stateMessage) + '\n');
-                lastActivitySentTime = Date.now();
-                log(`Sent idle state to iOS (from "${state}")`, 'readClaudeState');
-            } else {
-                log(`No active socket - cannot send state to iOS`, 'readClaudeState');
-            }
-        } else {
-            log(`Unknown state: "${state}"`, 'readClaudeState');
-        }
-    } catch (err) {
-        error(`Error reading Claude state: ${err.message}`, 'readClaudeState');
-    }
-}
 
 function sendGitDiffToiOS(force = false) {
     const repoPath = getRepoPath();
@@ -1833,7 +1740,6 @@ function checkForInjectedPrompts(filePath) {
 
         const allUserEvents = [];
         const allAssistantEvents = [];
-        let hasConversationActivity = false;
 
         for (const line of lines) {
             try {
@@ -1843,8 +1749,6 @@ function checkForInjectedPrompts(filePath) {
                     event.message &&
                     event.message.role === 'user' &&
                     event.message.content) {
-
-                    hasConversationActivity = true;
 
                     if (typeof event.message.content === 'string') {
                         allUserEvents.push({
@@ -1871,7 +1775,6 @@ function checkForInjectedPrompts(filePath) {
                     event.message.role === 'assistant' &&
                     event.message.content) {
 
-                    hasConversationActivity = true;
                     const stopReason = event.message.stop_reason;
 
                     if (typeof event.message.content === 'string') {
@@ -1900,49 +1803,7 @@ function checkForInjectedPrompts(filePath) {
             }
         }
 
-        if (hasConversationActivity && activeSocket && allAssistantEvents.length > 0) {
-            const now = Date.now();
-            const latestAssistant = allAssistantEvents[allAssistantEvents.length - 1];
-            const isActive = latestAssistant.stopReason === null || latestAssistant.stopReason === 'tool_use';
-
-            if (now - lastActivitySentTime > 3000) {
-                const stateMessage = {
-                    type: 'claude_state',
-                    isActive: isActive
-                };
-                activeSocket.write(JSON.stringify(stateMessage) + '\n');
-                lastActivitySentTime = now;
-                log(`Sent claude_state isActive=${isActive} (stop_reason: ${latestAssistant.stopReason})`, 'checkForInjectedPrompts');
-            } else {
-                log(`Skipping claude_state (debounced - stop_reason: ${latestAssistant.stopReason})`, 'checkForInjectedPrompts');
-            }
-        }
-
         const userEvents = allUserEvents.slice(-5);
-
-        const lastMessage = userEvents.length > 0 ? userEvents[userEvents.length - 1].text.substring(0, 100).replace(/\n/g, ' ') : 'none';
-
-        if (allUserEvents.length > 0) {
-            const lastUserEvent = allUserEvents[allUserEvents.length - 1];
-
-            if (lastUserEvent.text.includes('interrupted by user') ||
-                lastUserEvent.text.includes('Request interrupted by user')) {
-
-                log(`Detected interrupt message in last user message: "${lastUserEvent.text.substring(0, 80)}..."`, 'checkForInjectedPrompts');
-
-                if (activeSocket) {
-                    const stateMessage = {
-                        type: 'claude_state',
-                        state: 'idle',
-                        isActive: false,
-                        timestamp: Date.now()
-                    };
-                    activeSocket.write(JSON.stringify(stateMessage) + '\n');
-                    lastActivitySentTime = Date.now();
-                    log(`Sent idle state to iOS (from interrupt detection)`, 'checkForInjectedPrompts');
-                }
-            }
-        }
 
         for (const [promptId, data] of pendingPrompts.entries()) {
             if (!data.verified) {
