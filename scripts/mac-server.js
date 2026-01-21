@@ -123,6 +123,7 @@ const crypto = require('crypto');
 
 const IS_TEST = process.env.IS_TEST === 'true';
 const MANUAL_TESTING = process.env.MANUAL_TESTING === 'true';
+const useRealAudio = !IS_TEST || MANUAL_TESTING;
 const SERVER_PORT = parseInt(process.env.SERVER_PORT, 10) || 8082;
 let testFailed = false;
 
@@ -172,11 +173,11 @@ function error(message, functionName = 'unknown') {
     }
     if (IS_TEST && !testFailed) {
         testFailed = true;
-        const repoRoot = path.resolve(__dirname, '..');
+        const repoRoot = execSync('git rev-parse --show-toplevel', {encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe']}).trim();
         const marker = MANUAL_TESTING
             ? path.join(repoRoot, '.test-passed-manual')
             : path.join(repoRoot, '.test-passed-automated');
-        fs.writeFileSync(marker, 'ERROR');
+        fs.writeFileSync(marker, `ERROR|mac-server.js|${functionName}|${message}`);
         console.error('🚨 ERROR in test mode: Wrote ERROR to marker. Tests failed.');
     }
 }
@@ -238,6 +239,7 @@ const WHISPER_SERVER_URL = 'http://localhost:5050';
 let currentSessionFile = null;
 let currentSessionNumber = 0;
 let activeSocket = null;
+let lastSentAssistantMessage = null;
 
 let lastDiffSent = null;
 let lastDiffHash = null;
@@ -524,7 +526,7 @@ function deduplicateTranscription(newText, messageState, timestamp) {
 }
 
 async function transcribeAudio(audioPath) {
-    if (IS_TEST && !MANUAL_TESTING) {
+    if (!useRealAudio) {
         log(`Automated testing: Skipping Whisper, returning mock "hello"`, 'transcribeAudio');
         return { text: 'hello', segments: [] };
     }
@@ -1313,22 +1315,52 @@ function handleLogMessage(socket, logData) {
     sendAcknowledgment(socket, logData.id);
 
     if (IS_TEST && !testFailed && logData.message && logData.message.includes('Story complete')) {
-        const repoRoot = path.resolve(__dirname, '..');
+        const repoRoot = path.dirname(__dirname);
+        log(`[DEBUG] repoRoot = ${repoRoot}`, 'handleLogMessage');
+        
         let commitHash = '';
-
         try {
-            const headPath = path.join(repoRoot, '.git', 'HEAD');
-            const headContent = fs.readFileSync(headPath, 'utf8').trim();
+            const gitPath = path.join(repoRoot, '.git');
+            let gitDir;
+            
+            const gitStat = fs.statSync(gitPath);
+            if (gitStat.isFile()) {
+                const gitFileContent = fs.readFileSync(gitPath, 'utf8').trim();
+                gitDir = gitFileContent.replace('gitdir: ', '');
+                log(`[DEBUG] Worktree detected, gitDir = ${gitDir}`, 'handleLogMessage');
+            } else {
+                gitDir = gitPath;
+                log(`[DEBUG] Main repo detected, gitDir = ${gitDir}`, 'handleLogMessage');
+            }
+            
+            const headPath = path.join(gitDir, 'HEAD');
+            let headContent = fs.readFileSync(headPath, 'utf8').trim();
+            log(`[DEBUG] HEAD content = ${headContent}`, 'handleLogMessage');
+            
             if (headContent.startsWith('ref: ')) {
-                const refPath = path.join(repoRoot, '.git', headContent.slice(5));
+                let refPath = path.join(gitDir, headContent.slice(5));
+                log(`[DEBUG] Trying ref at ${refPath}`, 'handleLogMessage');
+                
+                if (!fs.existsSync(refPath)) {
+                    const commondirPath = path.join(gitDir, 'commondir');
+                    if (fs.existsSync(commondirPath)) {
+                        const commondir = fs.readFileSync(commondirPath, 'utf8').trim();
+                        const resolvedCommondir = path.resolve(gitDir, commondir);
+                        refPath = path.join(resolvedCommondir, headContent.slice(5));
+                        log(`[DEBUG] Ref not found, trying commondir: ${refPath}`, 'handleLogMessage');
+                    }
+                }
+                
                 commitHash = fs.readFileSync(refPath, 'utf8').trim();
             } else {
                 commitHash = headContent;
             }
+            log(`[DEBUG] commitHash = ${commitHash}`, 'handleLogMessage');
         } catch (gitErr) {
-            log(`Failed to read git HEAD: ${gitErr.message}`, 'handleLogMessage');
+            log(`Failed to get git HEAD: ${gitErr.message}`, 'handleLogMessage');
             return;
         }
+        log(`[DEBUG] Writing marker to ${repoRoot}`, 'handleLogMessage');
 
         if (MANUAL_TESTING) {
             const manualMarker = path.join(repoRoot, '.test-passed-manual');
@@ -1349,11 +1381,11 @@ function handleErrorMessage(socket, logData) {
 
     if (IS_TEST && !testFailed) {
         testFailed = true;
-        const repoRoot = path.resolve(__dirname, '..');
+        const repoRoot = execSync('git rev-parse --show-toplevel', {encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe']}).trim();
         const marker = MANUAL_TESTING
             ? path.join(repoRoot, '.test-passed-manual')
             : path.join(repoRoot, '.test-passed-automated');
-        fs.writeFileSync(marker, 'ERROR');
+        fs.writeFileSync(marker, `ERROR|${logData.fileName}|${logData.functionName}|${logData.message}`);
         console.error('🚨 iOS ERROR in test mode: Wrote ERROR to marker. Tests failed.');
     }
 
