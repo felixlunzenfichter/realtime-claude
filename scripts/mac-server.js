@@ -6,7 +6,6 @@
  * - {type:'audio', audioData:base64, isStart:bool, isEnd:bool, messageId:str} → voice input
  * - {type:'delete', messageId:str} → user deleted message
  * - {type:'prompt', prompt:str, timestamp:num, messageId:str} → typed/manual prompt
- * - {type:'speak', text:str, summary:str} → assistant response to be spoken
  * - {type:'log', message:str, fileName:str, functionName:str} → info log
  * - {type:'error', message:str, fileName:str, functionName:str} → error log
  *
@@ -16,8 +15,6 @@
  * - {type:'prompt', messageId, timestamp, prompt} → corrected/final prompt
  * - {type:'summary', messageId, timestamp, summary} → user/assistant message summary
  * - {type:'assistant', messageId, timestamp, prompt, summary} → assistant message from conversation
- * - {type:'speak_result', success:bool, error?:str} → speak validation result
- * - {type:'prompt_ack', messageId, timestamp, status, summary, error?} → prompt received/verified
  * - {type:'code_diff', diff:str, timestamp} → git diff output
  * - {type:'ack', logId} → log received confirmation
  *
@@ -60,7 +57,7 @@
  * triggerTranscription(messageId) → ffmpeg, transcribeAudio, deduplicateTranscription, activeSocket.write(transcription) | messageState.isTranscribing=true/false, handleAudioEnd if audioEnded
  * handleAudioEnd(messageId) → activeSocket.write(final transcription), haikuPriorityQueue.add(correction priority=1), haikuPriorityQueue.add(summary priority=2), injectIntoTerminal | messageState.isRecordingAudio=false
  *
- * isAudioMessage, isDeleteMessage, isStartMessage, isPromptMessage, isSpeakMessage, isErrorMessage, isLogMessage
+ * isAudioMessage, isDeleteMessage, isStartMessage, isPromptMessage, isErrorMessage, isLogMessage
  * handleDeleteMessage({messageId}) → messageState.deleted=true
  *
  * server=net.createServer → activeSocket=socket, processBufferedData
@@ -69,8 +66,6 @@
  * processBufferedData(socket, buffer) → JSON.parse lines, handleMessage
  * handleMessage(socket, logData) → route to handlers
  *
- * isSpeakMessage
- * handleSpeakMessage(socket, {text, summary}) → validate length, activeSocket.write(assistant message)
  * isStartMessage, isPromptMessage, isErrorMessage, isLogMessage
  * handleUnknownMessage(logData)
  * handleStartMessage(socket) → createNewSession, gatherSessionStatistics, sendHandshakeResponse, logHandshakeDetails
@@ -943,8 +938,6 @@ async function handleMessage(socket, logData) {
         handleStartMessage(socket);
     } else if (isPromptMessage(logData)) {
         handlePromptMessage(socket, logData);
-    } else if (isSpeakMessage(logData)) {
-        handleSpeakMessage(socket, logData);
     } else if (isAudioMessage(logData)) {
         await handleAudioMessage(socket, logData);
     } else if (isDeleteMessage(logData)) {
@@ -956,48 +949,6 @@ async function handleMessage(socket, logData) {
     } else {
         handleUnknownMessage(logData);
     }
-}
-
-function isSpeakMessage(logData) {
-    return logData.type === 'speak';
-}
-
-function handleSpeakMessage(socket, logData) {
-    const { text, summary } = logData;
-
-    if (!summary) {
-        const response = { type: 'speak_result', success: false, error: 'No summary provided' };
-        socket.write(JSON.stringify(response) + '\n');
-        return;
-    }
-
-    if (summary.length > MAX_SPEAK_LENGTH) {
-        const response = {
-            type: 'speak_result',
-            success: false,
-            error: `Summary too long: ${summary.length} chars. Max is ${MAX_SPEAK_LENGTH}. Shorten it and try again.`
-        };
-        socket.write(JSON.stringify(response) + '\n');
-        log(`Speak rejected: ${summary.length} chars > ${MAX_SPEAK_LENGTH}`, 'handleSpeakMessage');
-        return;
-    }
-
-    log(`Speaking: "${summary}" (full: "${(text || summary).substring(0, 50)}...")`, 'handleSpeakMessage');
-
-    if (activeSocket) {
-        const messageId = crypto.randomUUID();
-        const assistantMessage = {
-            messageId: messageId,
-            timestamp: Date.now(),
-            type: 'assistant',
-            prompt: text || summary,
-            summary: summary
-        };
-        activeSocket.write(JSON.stringify(assistantMessage) + '\n');
-    }
-
-    const response = { type: 'speak_result', success: true };
-    socket.write(JSON.stringify(response) + '\n');
 }
 
 function isStartMessage(logData) {
@@ -1104,30 +1055,8 @@ end tell`;
                 });
 
                 log('ESC key sent to Terminal', 'handlePromptMessage');
-
-                const ackMessage = {
-                    messageId: messageId,
-                    timestamp: Date.now(),
-                    type: 'prompt_ack',
-                    status: 'success',
-                    summary: ''
-                };
-
-                socket.write(JSON.stringify(ackMessage) + '\n');
-                log('Interrupt acknowledged to iOS!', 'handlePromptMessage');
             } catch (err) {
                 log(`Failed to send ESC: ${err.message}`, 'handlePromptMessage');
-
-                const ackMessage = {
-                    messageId: messageId,
-                    timestamp: Date.now(),
-                    type: 'prompt_ack',
-                    status: 'error',
-                    summary: '',
-                    error: `Failed to send ESC: ${err.message}`
-                };
-
-                socket.write(JSON.stringify(ackMessage) + '\n');
             } finally {
                 try { fs.unlinkSync(scriptFile); } catch {}
                 try { fs.unlinkSync(outputFile); } catch {}
@@ -1153,20 +1082,6 @@ end tell`;
             log('Terminal automation executed successfully!', 'handlePromptMessage');
         } else {
             log(`Terminal automation failed: ${terminalError}`, 'handlePromptMessage');
-
-            const ackMessage = {
-                messageId: messageId,
-                timestamp: Date.now(),
-                type: 'prompt_ack',
-                status: 'error',
-                summary: '',
-                error: `Terminal automation failed: ${terminalError}`
-            };
-
-            const jsonData = JSON.stringify(ackMessage) + '\n';
-            socket.write(jsonData);
-            log('Sent Terminal failure acknowledgment', 'handlePromptMessage');
-
             pendingPrompts.delete(promptId);
         }
     });
