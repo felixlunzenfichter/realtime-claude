@@ -171,11 +171,11 @@ function error(message, functionName = 'unknown') {
     }
     if (IS_TEST) {
         const repoRoot = path.resolve(__dirname, '..');
-        const automatedMarker = path.join(repoRoot, '.test-passed-automated');
-        const manualMarker = path.join(repoRoot, '.test-passed-manual');
-        if (fs.existsSync(automatedMarker)) fs.unlinkSync(automatedMarker);
-        if (fs.existsSync(manualMarker)) fs.unlinkSync(manualMarker);
-        console.error('🚨 ERROR in test mode: Deleted test markers. Tests failed.');
+        const marker = MANUAL_TESTING
+            ? path.join(repoRoot, '.test-passed-manual')
+            : path.join(repoRoot, '.test-passed-automated');
+        fs.writeFileSync(marker, 'ERROR');
+        console.error('🚨 ERROR in test mode: Wrote ERROR to marker. Tests failed.');
     }
 }
 
@@ -1349,11 +1349,11 @@ function handleErrorMessage(socket, logData) {
 
     if (IS_TEST) {
         const repoRoot = path.resolve(__dirname, '..');
-        const automatedMarker = path.join(repoRoot, '.test-passed-automated');
-        const manualMarker = path.join(repoRoot, '.test-passed-manual');
-        if (fs.existsSync(automatedMarker)) fs.unlinkSync(automatedMarker);
-        if (fs.existsSync(manualMarker)) fs.unlinkSync(manualMarker);
-        console.error('🚨 iOS ERROR in test mode: Deleted test markers. Tests failed.');
+        const marker = MANUAL_TESTING
+            ? path.join(repoRoot, '.test-passed-manual')
+            : path.join(repoRoot, '.test-passed-automated');
+        fs.writeFileSync(marker, 'ERROR');
+        console.error('🚨 iOS ERROR in test mode: Wrote ERROR to marker. Tests failed.');
     }
 
     if (logData.message === "Manual restart triggered from log view") {

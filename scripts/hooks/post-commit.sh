@@ -17,8 +17,11 @@ wait_for_marker() {
 
     while true; do
         if [ -f "$marker_file" ]; then
-            local marker_hash=$(cat "$marker_file")
-            if [ "$marker_hash" = "$expected_hash" ]; then
+            local marker_content=$(cat "$marker_file")
+            if [ "$marker_content" = "ERROR" ]; then
+                return 1
+            fi
+            if [ "$marker_content" = "$expected_hash" ]; then
                 return 0
             fi
         fi
@@ -45,7 +48,10 @@ fi
 
 echo ""
 update_status "⏳ WAITING_AUTOMATED"
-wait_for_marker "$AUTOMATED_MARKER" "$COMMIT_HASH"
+if ! wait_for_marker "$AUTOMATED_MARKER" "$COMMIT_HASH"; then
+    update_status "❌ FAILED: Automated test error"
+    exit 1
+fi
 update_status "✅ AUTOMATED_PASSED"
 
 echo ""
@@ -54,7 +60,10 @@ update_status "👤 DEPLOYING_MANUAL"
 
 echo ""
 update_status "⏳ WAITING_MANUAL"
-wait_for_marker "$MANUAL_MARKER" "$COMMIT_HASH"
+if ! wait_for_marker "$MANUAL_MARKER" "$COMMIT_HASH"; then
+    update_status "❌ FAILED: Manual test error"
+    exit 1
+fi
 update_status "✅ MANUAL_PASSED"
 
 echo ""
