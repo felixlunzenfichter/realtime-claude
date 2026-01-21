@@ -67,6 +67,14 @@ struct RealtimeClaudeApp: App {
 
                             log("📱 Screen: \(Int(screenWidth))x\(Int(screenHeight)), top safe area: \(Int(safeTop)), bottom safe area: \(Int(safeBottom))")
 
+                            #if MANUAL_TESTING
+                            log("🧪 Mode: MANUAL_TESTING (real audio, TTS enabled)")
+                            #elseif IS_TEST
+                            log("🤖 Mode: IS_TEST (mock audio, TTS disabled)")
+                            #else
+                            log("🚀 Mode: PRODUCTION")
+                            #endif
+
                             viewModel.isInitialized = true
                         }
                 }
