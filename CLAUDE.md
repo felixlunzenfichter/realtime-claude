@@ -23,26 +23,57 @@
 
 Always debug mode, always direct install. This is our tool.
 
-## Branch Protection
+## The Gatekeeper
 
-**`development` branch is protected. All changes require PRs.**
+**The dream: code flows like water through gates. Each gate tests. Only proven code passes.**
 
 ```
-test-branch (worktree)              development (protected)
-──────────────────────              ───────────────────────
-./scripts/deploy-test.sh            ./scripts/deploy-in-window.sh
-Port 9999 → iPhone                  Port 8082 → iPad
-
-Tests pass? → git push → gh pr create → merge on GitHub → /deploy
+┌─────────────────────────────────────────────────────────────────────┐
+│                         THE FLOW                                    │
+│                                                                     │
+│   git commit                                                        │
+│       │                                                             │
+│       ▼                                                             │
+│   ┌─────────────────┐                                               │
+│   │   PRE-COMMIT    │  "Are you on a feature branch?"               │
+│   │   (gate 1)      │  development/main → BLOCKED                   │
+│   └────────┬────────┘                                               │
+│            │ ✓                                                      │
+│            ▼                                                        │
+│   ┌─────────────────┐                                               │
+│   │   POST-COMMIT   │  Orchestrates the test dance:                 │
+│   │   (gate 2)      │                                               │
+│   │                 │  1. Deploy automated test → iPhone            │
+│   │                 │  2. App runs STORY automatically              │
+│   │                 │  3. "Story complete" → write marker           │
+│   │                 │  4. Deploy manual test → iPhone               │
+│   │                 │  5. User speaks, app responds                 │
+│   │                 │  6. "Story complete" → write marker           │
+│   │                 │  7. Both pass? → AUTO PUSH                    │
+│   └────────┬────────┘                                               │
+│            │ ✓ ✓                                                    │
+│            ▼                                                        │
+│   ┌─────────────────┐                                               │
+│   │   PRE-PUSH      │  "Do markers exist with correct hash?"        │
+│   │   (gate 3)      │  Safety net (rarely needed)                   │
+│   └────────┬────────┘                                               │
+│            │ ✓                                                      │
+│            ▼                                                        │
+│       git push → PR → merge → /deploy                               │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-**Protection enforced by:**
-- GitHub: PRs required, force push blocked, deletion blocked, enforce_admins
-- Local: Pre-commit hook blocks commits to development/main
+**The contract:** Any `error()` call deletes markers → tests fail → push blocked.
+
+**The markers:**
+- `.test-passed-automated` - written when automated STORY completes
+- `.test-passed-manual` - written when manual STORY completes
+- Both must contain current commit hash
 
 **Skills:**
-- `/deploy` - Production deploy to iPad
-- `/deploy-test` - Test deploy to iPhone
+- `/deploy` - Production deploy to iPad (port 8082)
+- `/deploy-test` - Test deploy to iPhone (port 9999)
 - `/crash-logs` - Analyze crash logs
 
 ## TDD Development
@@ -364,3 +395,25 @@ grep "Longest matching substring" /tmp/mac-server-output.log | tail -20
 ```bash
 tail -f /tmp/mac-server-output.log | grep -E "(🎤|📝|📤|DEBUG)"
 ```
+
+### Common Errors & Fixes
+
+**EBADF Error in execSync**
+
+```
+Error: spawnSync /bin/sh EBADF
+```
+
+**Cause:** Node's `execSync` inherits file descriptors from parent. When called during TCP socket activity, inherited socket FDs can be in bad state.
+
+**Fix:** Add explicit `stdio` option to prevent FD inheritance:
+
+```javascript
+// BAD - inherits socket FDs, causes EBADF
+execSync('git rev-parse HEAD', { encoding: 'utf8' })
+
+// GOOD - uses pipes, no FD inheritance
+execSync('git rev-parse HEAD', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] })
+```
+
+**Where to apply:** All `execSync` calls in mac-server.js that run during socket handling.

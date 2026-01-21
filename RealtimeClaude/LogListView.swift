@@ -23,7 +23,6 @@ class LogListViewModel {
     var transmittedLogIds: [String] = []
     var uptimeToday: Int = 0
     var uptimeTotal: Int = 0
-    var previousRunFailed: Bool = false
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -123,7 +122,6 @@ class LogListViewModel {
             self.uptimeToday = stats.todayUptime
             self.totalLogs = stats.totalLogs
             self.totalTests = stats.totalTests
-            self.previousRunFailed = stats.previousRunFailed
         }
 
         setupSubscription(logger.testsPassedSubject) { self.successfulTests = $0 }
@@ -279,7 +277,7 @@ struct LogListView: View {
                                 Text("Tests")
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
-                                if viewModel.previousRunFailed {
+                                if viewModel.errorLogsCount > 0 {
                                     Text("✗")
                                         .font(.system(size: 20))
                                         .fontWeight(.bold)
@@ -375,7 +373,7 @@ struct LogListView: View {
                             Text("Tests")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                            if viewModel.previousRunFailed {
+                            if viewModel.errorLogsCount > 0 {
                                 Text("✗")
                                     .font(.system(size: 28))
                                     .fontWeight(.bold)
