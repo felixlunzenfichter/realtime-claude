@@ -63,8 +63,9 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 COMMIT_HASH=$(git rev-parse HEAD)
 
 if [ "$1" = "--manual" ]; then
-    echo "$COMMIT_HASH" > "$REPO_ROOT/.test-passed-manual"
-    echo "✅ Wrote .test-passed-manual ($COMMIT_HASH)"
+    echo ""
+    echo "🎤 Manual test deployed. Speak and verify the app works."
+    echo "   When verified, run: ./scripts/mark-manual-passed.sh"
 else
     echo "$COMMIT_HASH" > "$REPO_ROOT/.test-passed-automated"
     echo "✅ Wrote .test-passed-automated ($COMMIT_HASH)"
