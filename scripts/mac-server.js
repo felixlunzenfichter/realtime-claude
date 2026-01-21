@@ -124,6 +124,7 @@ const crypto = require('crypto');
 const IS_TEST = process.env.IS_TEST === 'true';
 const MANUAL_TESTING = process.env.MANUAL_TESTING === 'true';
 const SERVER_PORT = parseInt(process.env.SERVER_PORT, 10) || 8082;
+let testFailed = false;
 
 // ============================================
 // UNIFIED LOGGING (writes to same file as iOS)
@@ -169,7 +170,8 @@ function error(message, functionName = 'unknown') {
             id: crypto.randomUUID()
         });
     }
-    if (IS_TEST) {
+    if (IS_TEST && !testFailed) {
+        testFailed = true;
         const repoRoot = path.resolve(__dirname, '..');
         const marker = MANUAL_TESTING
             ? path.join(repoRoot, '.test-passed-manual')
@@ -1312,7 +1314,7 @@ function handleLogMessage(socket, logData) {
     persistLogToFile(logData);
     sendAcknowledgment(socket, logData.id);
 
-    if (IS_TEST && logData.message && logData.message.includes('Story complete')) {
+    if (IS_TEST && !testFailed && logData.message && logData.message.includes('Story complete')) {
         const repoRoot = path.resolve(__dirname, '..');
         let commitHash = '';
 
@@ -1347,7 +1349,8 @@ function handleErrorMessage(socket, logData) {
     persistLogToFile(logData);
     sendAcknowledgment(socket, logData.id);
 
-    if (IS_TEST) {
+    if (IS_TEST && !testFailed) {
+        testFailed = true;
         const repoRoot = path.resolve(__dirname, '..');
         const marker = MANUAL_TESTING
             ? path.join(repoRoot, '.test-passed-manual')
