@@ -14,15 +14,20 @@ update_status() {
 wait_for_marker() {
     local marker_file="$1"
     local expected_hash="$2"
+    local check_automated_exists="$3"
 
     while true; do
+        if [ "$check_automated_exists" = "true" ] && [ ! -f "$AUTOMATED_MARKER" ]; then
+            update_status "❌ FAILED: Automated marker deleted (error occurred)"
+            exit 1
+        fi
         if [ -f "$marker_file" ]; then
             local marker_hash=$(cat "$marker_file")
             if [ "$marker_hash" = "$expected_hash" ]; then
                 return 0
             fi
         fi
-        fswatch -1 --event Created --event Updated "$REPO_ROOT" >/dev/null 2>&1
+        fswatch -1 --event Created --event Updated --event Removed "$REPO_ROOT" >/dev/null 2>&1
     done
 }
 
@@ -54,20 +59,8 @@ update_status "👤 DEPLOYING_MANUAL"
 
 echo ""
 update_status "⏳ WAITING_MANUAL"
-while true; do
-    if [ ! -f "$AUTOMATED_MARKER" ]; then
-        update_status "❌ FAILED: Automated marker deleted (error occurred)"
-        exit 1
-    fi
-    if [ -f "$MANUAL_MARKER" ]; then
-        MARKER_HASH=$(cat "$MANUAL_MARKER")
-        if [ "$MARKER_HASH" = "$COMMIT_HASH" ]; then
-            update_status "✅ MANUAL_PASSED"
-            break
-        fi
-    fi
-    fswatch -1 --event Created --event Updated --event Removed "$REPO_ROOT" >/dev/null 2>&1
-done
+wait_for_marker "$MANUAL_MARKER" "$COMMIT_HASH" "true"
+update_status "✅ MANUAL_PASSED"
 
 echo ""
 update_status "🚀 PUSHING"
