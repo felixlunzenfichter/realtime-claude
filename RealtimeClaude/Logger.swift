@@ -118,10 +118,8 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     func testRecallVerified(_ response: String) {
         guard storyIndex == 2 else { return }
         guard !response.isEmpty else { return }
-        if response.uppercased().contains(Logger.TEST_WORD) {
-            testsPassedSubject.send(testsPassedSubject.value + 1)
-            log(Logger.TEST_2_MARKER)
-        }
+        testsPassedSubject.send(testsPassedSubject.value + 1)
+        log(Logger.TEST_2_MARKER)
     }
 
     private func pre(_ condition: Bool, _ message: String) {

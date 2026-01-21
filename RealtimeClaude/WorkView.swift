@@ -108,7 +108,7 @@ struct ToggleBar: View {
                     }
                     .padding(10)
                     .glassEffect(.regular.tint(item.color.opacity(item.isOn?.wrappedValue == true ? 0.5 : 0.1)).interactive(), in: .capsule)
-                    .padding(10)
+                    .padding(2)
                     .scaleEffect(item.scale)
                 }
             }
