@@ -17,7 +17,11 @@ var ACTUAL_SCREEN_WIDTH: CGFloat {
 @Observable
 class ViewModel {
     var isInitialized: Bool = false
+    #if IS_TEST
+    var showLogs: Bool = true
+    #else
     var showLogs: Bool = false
+    #endif
     var showDiff: Bool = false
     var workViewModel = WorkViewModel()
     var logListViewModel = LogListViewModel()
