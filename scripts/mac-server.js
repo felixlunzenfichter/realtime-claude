@@ -1338,8 +1338,19 @@ function handleLogMessage(socket, logData) {
             log(`[DEBUG] HEAD content = ${headContent}`, 'handleLogMessage');
             
             if (headContent.startsWith('ref: ')) {
-                const refPath = path.join(gitDir, headContent.slice(5));
-                log(`[DEBUG] Reading ref from ${refPath}`, 'handleLogMessage');
+                let refPath = path.join(gitDir, headContent.slice(5));
+                log(`[DEBUG] Trying ref at ${refPath}`, 'handleLogMessage');
+                
+                if (!fs.existsSync(refPath)) {
+                    const commondirPath = path.join(gitDir, 'commondir');
+                    if (fs.existsSync(commondirPath)) {
+                        const commondir = fs.readFileSync(commondirPath, 'utf8').trim();
+                        const resolvedCommondir = path.resolve(gitDir, commondir);
+                        refPath = path.join(resolvedCommondir, headContent.slice(5));
+                        log(`[DEBUG] Ref not found, trying commondir: ${refPath}`, 'handleLogMessage');
+                    }
+                }
+                
                 commitHash = fs.readFileSync(refPath, 'utf8').trim();
             } else {
                 commitHash = headContent;
