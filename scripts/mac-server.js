@@ -261,8 +261,6 @@ const MAX_SUMMARY_CACHE_SIZE = 5;
 
 let haikuContext = [];
 
-const HAIKU_TMUX_SESSION = 'haiku-conversation';
-let haikuConversationId = null;
 let haikuRequestInFlight = false;
 
 let conversationWatcher = null;
@@ -276,33 +274,7 @@ const messageStates = new Map();
 // HAIKU CONVERSATION CONTRACTS (Design by Contract)
 // ============================================
 
-function tmuxSessionExists() {
-    try {
-        execSync(`tmux has-session -t ${HAIKU_TMUX_SESSION} 2>/dev/null`, {
-            stdio: ['pipe', 'pipe', 'pipe']
-        });
-        return true;
-    } catch {
-        return false;
-    }
-}
-
-function invariantHaikuConversation(currentId) {
-    if (!currentId) {
-        error('INV: Haiku conversation ID is null/undefined', 'invariantHaikuConversation');
-        return;
-    }
-    if (currentId !== HAIKU_TMUX_SESSION) {
-        error(`INV: Haiku request using wrong session. Expected ${HAIKU_TMUX_SESSION}, got ${currentId}`, 'invariantHaikuConversation');
-    }
-    if (haikuConversationId !== null && currentId !== haikuConversationId) {
-        error(`INV: Haiku conversation ID changed. Expected ${haikuConversationId}, got ${currentId}`, 'invariantHaikuConversation');
-    }
-    log(`INV: Haiku conversation OK - sessionId=${currentId}`, 'invariantHaikuConversation');
-}
-
 function preconditionProcessWithHaiku(text, task) {
-    invariantHaikuConversation(haikuConversationId);
     if (!text || text.trim() === '') {
         error('PRE: text is empty', 'preconditionProcessWithHaiku');
     }
@@ -318,7 +290,7 @@ function preconditionProcessWithHaiku(text, task) {
     log(`PRE: processWithHaiku OK - task=${task}, textLen=${text.length}`, 'preconditionProcessWithHaiku');
 }
 
-function postconditionProcessWithHaiku(result, task, sessionId) {
+function postconditionProcessWithHaiku(result, task) {
     if (!result) {
         error('POST: result is null/undefined', 'postconditionProcessWithHaiku');
     }
@@ -331,11 +303,6 @@ function postconditionProcessWithHaiku(result, task, sessionId) {
     if (task === 'create_summary' && result.summary && result.summary.length > 50) {
         error(`POST: summary too long: ${result.summary.length}`, 'postconditionProcessWithHaiku');
     }
-    if (haikuConversationId === null && sessionId) {
-        haikuConversationId = sessionId;
-        log(`POST: Haiku conversation ID set: ${haikuConversationId}`, 'postconditionProcessWithHaiku');
-    }
-    invariantHaikuConversation(sessionId);
     log(`POST: processWithHaiku OK - task=${task}`, 'postconditionProcessWithHaiku');
 }
 
@@ -359,24 +326,21 @@ function postconditionBuildPrompt(prompt, task) {
     log(`POST: buildPrompt OK - promptLen=${prompt.length}`, 'postconditionBuildPrompt');
 }
 
-function preconditionHaikuWorker(prompt, task, sessionId) {
+function preconditionHaikuWorker(prompt, task) {
     if (!prompt || prompt.trim() === '') {
         error('PRE: haikuWorker prompt is empty', 'preconditionHaikuWorker');
     }
     if (!['correct_transcription', 'create_summary'].includes(task)) {
         error(`PRE: haikuWorker invalid task: ${task}`, 'preconditionHaikuWorker');
     }
-    log(`PRE: haikuWorker OK - task=${task}, sessionId=${sessionId || 'new'}`, 'preconditionHaikuWorker');
+    log(`PRE: haikuWorker OK - task=${task}`, 'preconditionHaikuWorker');
 }
 
-function postconditionHaikuWorker(result, sessionId) {
+function postconditionHaikuWorker(result) {
     if (!result) {
         error('POST: haikuWorker returned null result', 'postconditionHaikuWorker');
     }
-    if (!sessionId) {
-        error('POST: haikuWorker returned no sessionId', 'postconditionHaikuWorker');
-    }
-    log(`POST: haikuWorker OK - resultLen=${result ? result.length : 0}, sessionId=${sessionId}`, 'postconditionHaikuWorker');
+    log(`POST: haikuWorker OK - resultLen=${result ? result.length : 0}`, 'postconditionHaikuWorker');
 }
 
 function preconditionParseHaikuResponse(rawResponse, task) {
@@ -570,17 +534,17 @@ async function processWithHaiku(text, task, completeTranscription = null) {
             log(`Processing${retryNote}...`, 'processWithHaiku');
 
             const prompt = buildPrompt(text, task, completeTranscription);
-            preconditionHaikuWorker(prompt, task, haikuConversationId);
+            preconditionHaikuWorker(prompt, task);
 
-            const { result, sessionId } = await new Promise((resolve, reject) => {
+            const { result } = await new Promise((resolve, reject) => {
                 const worker = new Worker(path.join(__dirname, 'haiku-worker.js'), {
-                    workerData: { prompt, task, sessionId: haikuConversationId }
+                    workerData: { prompt, task }
                 });
 
                 worker.on('message', (msg) => {
                     if (msg.success) {
-                        postconditionHaikuWorker(msg.result, msg.sessionId);
-                        resolve({ result: msg.result, sessionId: msg.sessionId });
+                        postconditionHaikuWorker(msg.result);
+                        resolve({ result: msg.result });
                     } else {
                         reject(new Error(msg.error));
                     }
@@ -611,7 +575,7 @@ async function processWithHaiku(text, task, completeTranscription = null) {
 
             if (task === 'correct_transcription') {
                 const result = { corrected };
-                postconditionProcessWithHaiku(result, task, sessionId);
+                postconditionProcessWithHaiku(result, task);
                 haikuRequestInFlight = false;
                 invariantHaikuRequestInFlight(false);
                 log(`Corrected: "${corrected.substring(0, 50)}..." - inFlight=false`, 'processWithHaiku');
@@ -625,7 +589,7 @@ async function processWithHaiku(text, task, completeTranscription = null) {
                 log(`Summary: "${summary}" (${summary.length} chars)`, 'processWithHaiku');
                 addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: true });
                 const result = { summary };
-                postconditionProcessWithHaiku(result, task, sessionId);
+                postconditionProcessWithHaiku(result, task);
                 haikuRequestInFlight = false;
                 invariantHaikuRequestInFlight(false);
                 log(`Summary complete - inFlight=false`, 'processWithHaiku');
