@@ -1399,7 +1399,21 @@ function handleLogMessage(socket, logData) {
 
     if (IS_TEST && logData.message && logData.message.includes('Story complete')) {
         const repoRoot = path.resolve(__dirname, '..');
-        const commitHash = require('child_process').execSync('git rev-parse HEAD', { cwd: repoRoot, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+        let commitHash = '';
+
+        try {
+            const headPath = path.join(repoRoot, '.git', 'HEAD');
+            const headContent = fs.readFileSync(headPath, 'utf8').trim();
+            if (headContent.startsWith('ref: ')) {
+                const refPath = path.join(repoRoot, '.git', headContent.slice(5));
+                commitHash = fs.readFileSync(refPath, 'utf8').trim();
+            } else {
+                commitHash = headContent;
+            }
+        } catch (gitErr) {
+            log(`Failed to read git HEAD: ${gitErr.message}`, 'handleLogMessage');
+            return;
+        }
 
         if (MANUAL_TESTING) {
             const manualMarker = path.join(repoRoot, '.test-passed-manual');

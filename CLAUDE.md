@@ -364,3 +364,25 @@ grep "Longest matching substring" /tmp/mac-server-output.log | tail -20
 ```bash
 tail -f /tmp/mac-server-output.log | grep -E "(🎤|📝|📤|DEBUG)"
 ```
+
+### Common Errors & Fixes
+
+**EBADF Error in execSync**
+
+```
+Error: spawnSync /bin/sh EBADF
+```
+
+**Cause:** Node's `execSync` inherits file descriptors from parent. When called during TCP socket activity, inherited socket FDs can be in bad state.
+
+**Fix:** Add explicit `stdio` option to prevent FD inheritance:
+
+```javascript
+// BAD - inherits socket FDs, causes EBADF
+execSync('git rev-parse HEAD', { encoding: 'utf8' })
+
+// GOOD - uses pipes, no FD inheritance
+execSync('git rev-parse HEAD', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] })
+```
+
+**Where to apply:** All `execSync` calls in mac-server.js that run during socket handling.
