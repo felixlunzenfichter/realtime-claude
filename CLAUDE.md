@@ -23,6 +23,28 @@
 
 Always debug mode, always direct install. This is our tool.
 
+## Branch Protection
+
+**`development` branch is protected. All changes require PRs.**
+
+```
+test-branch (worktree)              development (protected)
+──────────────────────              ───────────────────────
+./scripts/deploy-test.sh            ./scripts/deploy-in-window.sh
+Port 9999 → iPhone                  Port 8082 → iPad
+
+Tests pass? → git push → gh pr create → merge on GitHub → /deploy
+```
+
+**Protection enforced by:**
+- GitHub: PRs required, force push blocked, deletion blocked, enforce_admins
+- Local: Pre-commit hook blocks commits to development/main
+
+**Skills:**
+- `/deploy` - Production deploy to iPad
+- `/deploy-test` - Test deploy to iPhone
+- `/crash-logs` - Analyze crash logs
+
 ## TDD Development
 
 **Story tests are LOCKED. If tests fail, fix the code, not the spec.**
@@ -35,6 +57,8 @@ Each task = 3 commits:
 1. Write test
 2. Make test pass (minimal code only, ignore refactoring rules)
 3. Refactor & clean up (apply refactoring rules)
+
+Then: push, create PR, merge, deploy.
 
 ### Implementation Rules (Step 2)
 - Focus on making test pass quickly
