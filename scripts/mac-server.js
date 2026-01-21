@@ -128,10 +128,43 @@ const chokidar = require('chokidar');
 const FormData = require('form-data');
 const fetch = require('node-fetch');
 const { Worker } = require('worker_threads');
+const crypto = require('crypto');
 
 const IS_TEST = process.env.IS_TEST === 'true';
 const MANUAL_TESTING = process.env.MANUAL_TESTING === 'true';
 const SERVER_PORT = parseInt(process.env.SERVER_PORT, 10) || 8082;
+
+// ============================================
+// UNIFIED LOGGING (writes to same file as iOS)
+// ============================================
+
+function log(message, functionName = 'unknown') {
+    console.log(message);
+    if (currentSessionFile) {
+        writeLogToFile({
+            type: { log: {} },
+            message: message,
+            fileName: 'mac-server.js',
+            functionName: functionName,
+            timestamp: new Date().toISOString(),
+            id: crypto.randomUUID()
+        });
+    }
+}
+
+function error(message, functionName = 'unknown') {
+    console.error(`🚨 ERROR: ${message} - test will fail`);
+    if (currentSessionFile) {
+        writeLogToFile({
+            type: { error: {} },
+            message: message,
+            fileName: 'mac-server.js',
+            functionName: functionName,
+            timestamp: new Date().toISOString(),
+            id: crypto.randomUUID()
+        });
+    }
+}
 
 process.on('uncaughtException', (error) => {
     console.error(`⚠️ Uncaught exception (continuing): ${error.stack || error}`);
