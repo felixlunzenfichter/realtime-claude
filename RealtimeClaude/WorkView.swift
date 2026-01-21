@@ -96,6 +96,7 @@ struct ToggleBar: View {
                                 .font(.system(size: 24, weight: .semibold))
                                 .foregroundColor(item.color)
                                 .frame(width: 24, height: 24)
+                                .padding(5)
                         }
 
                         if let text = item.text {
