@@ -1,5 +1,17 @@
 # Global Claude Code Instructions
 
+## BRANCH PROTECTION
+
+**`development` is protected. No direct commits.**
+
+```
+Workflow: worktree → test → push → PR → merge → deploy
+Skills:   /deploy-test (iPhone)  /deploy (iPad)  /crash-logs
+```
+
+Local pre-commit hook blocks commits to development/main.
+GitHub blocks direct push. PRs required.
+
 ## MAIN AGENT = COORDINATOR ONLY
 
 **Zero tolerance. Main context is sacred.**
