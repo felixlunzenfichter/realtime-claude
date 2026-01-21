@@ -1396,6 +1396,21 @@ function handleLogMessage(socket, logData) {
     printReceivedLog(logData);
     persistLogToFile(logData);
     sendAcknowledgment(socket, logData.id);
+
+    if (IS_TEST && logData.message && logData.message.includes('Story complete')) {
+        const repoRoot = path.resolve(__dirname, '..');
+        const commitHash = require('child_process').execSync('git rev-parse HEAD', { cwd: repoRoot, encoding: 'utf8' }).trim();
+
+        if (MANUAL_TESTING) {
+            const manualMarker = path.join(repoRoot, '.test-passed-manual');
+            fs.writeFileSync(manualMarker, commitHash);
+            log(`Wrote .test-passed-manual (${commitHash})`, 'handleLogMessage');
+        } else {
+            const automatedMarker = path.join(repoRoot, '.test-passed-automated');
+            fs.writeFileSync(automatedMarker, commitHash);
+            log(`Wrote .test-passed-automated (${commitHash})`, 'handleLogMessage');
+        }
+    }
 }
 
 function handleErrorMessage(socket, logData) {
