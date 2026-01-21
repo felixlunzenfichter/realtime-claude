@@ -137,29 +137,43 @@ const SERVER_PORT = parseInt(process.env.SERVER_PORT, 10) || 8082;
 // UNIFIED LOGGING (writes to same file as iOS)
 // ============================================
 
+function formatTime(isoString) {
+    const d = new Date(isoString);
+    return d.toTimeString().slice(0, 8);
+}
+
+function formatLogLine(type, timestamp, fileName, functionName, message) {
+    const time = formatTime(timestamp);
+    const system = fileName.includes('mac-server') ? 'MAC' : 'iOS';
+    const typeStr = type === 'error' ? '🚨 ERROR' : 'LOG';
+    return `${time} | ${typeStr} | ${system} | ${fileName} | ${functionName} | ${message}`;
+}
+
 function log(message, functionName = 'unknown') {
-    console.log(message);
+    const timestamp = new Date().toISOString();
+    console.log(formatLogLine('log', timestamp, 'mac-server.js', functionName, message));
     if (currentSessionFile) {
         writeLogToFile({
             type: { log: {} },
             message: message,
             fileName: 'mac-server.js',
             functionName: functionName,
-            timestamp: new Date().toISOString(),
+            timestamp: timestamp,
             id: crypto.randomUUID()
         });
     }
 }
 
 function error(message, functionName = 'unknown') {
-    console.error(`🚨 ERROR: ${message} - test will fail`);
+    const timestamp = new Date().toISOString();
+    console.error(formatLogLine('error', timestamp, 'mac-server.js', functionName, message));
     if (currentSessionFile) {
         writeLogToFile({
             type: { error: {} },
             message: message,
             fileName: 'mac-server.js',
             functionName: functionName,
-            timestamp: new Date().toISOString(),
+            timestamp: timestamp,
             id: crypto.randomUUID()
         });
     }
@@ -167,6 +181,16 @@ function error(message, functionName = 'unknown') {
 
 function debugLog(message) {
     console.log(message);
+}
+
+function printReceivedLog(logData) {
+    const type = logData.type?.error ? 'error' : 'log';
+    const line = formatLogLine(type, logData.timestamp, logData.fileName, logData.functionName, logData.message);
+    if (type === 'error') {
+        console.error(line);
+    } else {
+        console.log(line);
+    }
 }
 
 process.on('uncaughtException', (err) => {
@@ -1372,23 +1396,19 @@ function logHandshakeDetails(stats) {
 }
 
 function handleLogMessage(socket, logData) {
-    debugLog(`Received log: ${logData.message}`);
+    printReceivedLog(logData);
     persistLogToFile(logData);
     sendAcknowledgment(socket, logData.id);
 }
 
 function handleErrorMessage(socket, logData) {
-    reportErrorToConsole(logData);
+    printReceivedLog(logData);
     persistLogToFile(logData);
     sendAcknowledgment(socket, logData.id);
 
     if (logData.message === "Manual restart triggered from log view") {
         executeDeployment();
     }
-}
-
-function reportErrorToConsole(logData) {
-    error(`${logData.message} [${logData.fileName}:${logData.functionName}]`, 'reportErrorToConsole');
 }
 
 function persistLogToFile(logData) {
