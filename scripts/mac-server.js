@@ -177,6 +177,14 @@ function error(message, functionName = 'unknown') {
             id: crypto.randomUUID()
         });
     }
+    if (IS_TEST) {
+        const repoRoot = path.resolve(__dirname, '..');
+        const automatedMarker = path.join(repoRoot, '.test-passed-automated');
+        const manualMarker = path.join(repoRoot, '.test-passed-manual');
+        if (fs.existsSync(automatedMarker)) fs.unlinkSync(automatedMarker);
+        if (fs.existsSync(manualMarker)) fs.unlinkSync(manualMarker);
+        console.error('🚨 ERROR in test mode: Deleted test markers. Tests failed.');
+    }
 }
 
 function debugLog(message) {
@@ -1405,6 +1413,15 @@ function handleErrorMessage(socket, logData) {
     printReceivedLog(logData);
     persistLogToFile(logData);
     sendAcknowledgment(socket, logData.id);
+
+    if (IS_TEST) {
+        const repoRoot = path.resolve(__dirname, '..');
+        const automatedMarker = path.join(repoRoot, '.test-passed-automated');
+        const manualMarker = path.join(repoRoot, '.test-passed-manual');
+        if (fs.existsSync(automatedMarker)) fs.unlinkSync(automatedMarker);
+        if (fs.existsSync(manualMarker)) fs.unlinkSync(manualMarker);
+        console.error('🚨 iOS ERROR in test mode: Deleted test markers. Tests failed.');
+    }
 
     if (logData.message === "Manual restart triggered from log view") {
         executeDeployment();
