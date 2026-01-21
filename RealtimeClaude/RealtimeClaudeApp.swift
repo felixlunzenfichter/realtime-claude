@@ -67,12 +67,14 @@ struct RealtimeClaudeApp: App {
 
                             log("📱 Screen: \(Int(screenWidth))x\(Int(screenHeight)), top safe area: \(Int(safeTop)), bottom safe area: \(Int(safeBottom))")
 
-                            #if MANUAL_TESTING
+                            #if MANUAL_TESTING && IS_TEST
                             log("🧪 Flags: IS_TEST=true MANUAL_TESTING=true")
-                            #elseif IS_TEST
+                            #elseif IS_TEST && !MANUAL_TESTING
                             log("🤖 Flags: IS_TEST=true MANUAL_TESTING=false")
-                            #else
+                            #elseif !IS_TEST && !MANUAL_TESTING
                             log("🚀 Flags: IS_TEST=false MANUAL_TESTING=false")
+                            #else
+                            error("Unexpected flag combination")
                             #endif
 
                             viewModel.isInitialized = true
