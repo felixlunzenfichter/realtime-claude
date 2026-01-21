@@ -1,258 +1,244 @@
-const { exec, spawn } = require("child_process");
+const { exec } = require("child_process");
 const util = require("util");
 const fs = require("fs");
 
 const execAsync = util.promisify(exec);
 
 const TMUX_SESSION_NAME = "haiku-conversation";
-const RESPONSE_MARKER_START = "___HAIKU_RESPONSE_START___";
-const RESPONSE_MARKER_END = "___HAIKU_RESPONSE_END___";
-const OUTPUT_FILE = "/tmp/haiku-tmux-output.txt";
-const POLL_INTERVAL_MS = 100;
-const MAX_WAIT_MS = 30000;
+const POLL_INTERVAL_MS = 300;
+const MAX_WAIT_MS = 60000;
 
-function log(message, functionName = "unknown") {
-    console.log(`[haiku-tmux] ${functionName}: ${message}`);
+function log(message, functionName) {
+    console.log("[haiku-tmux] " + functionName + ": " + message);
 }
 
-function error(message, functionName = "unknown") {
-    console.error(`[haiku-tmux] ERROR ${functionName}: ${message}`);
+function error(message, functionName) {
+    console.error("[haiku-tmux] ERROR " + functionName + ": " + message);
 }
 
 async function invariantTmuxSession() {
-    const exists = await sessionExists();
+    var exists = await sessionExists();
     if (!exists) {
-        error(`INV: tmux session "${TMUX_SESSION_NAME}" does not exist`, "invariantTmuxSession");
-        throw new Error(`INV: tmux session "${TMUX_SESSION_NAME}" does not exist`);
+        error("INV: tmux session does not exist", "invariantTmuxSession");
+        throw new Error("INV: tmux session does not exist");
     }
-    log(`INV: tmux session OK - exists=true`, "invariantTmuxSession");
 }
 
 async function preconditionSendPrompt(prompt) {
     if (!prompt) {
         error("PRE: prompt is null/undefined", "preconditionSendPrompt");
-        throw new Error("PRE: sendPrompt prompt is null");
+        throw new Error("PRE: prompt is null");
     }
     if (prompt.trim() === "") {
         error("PRE: prompt is empty string", "preconditionSendPrompt");
-        throw new Error("PRE: sendPrompt prompt is empty");
+        throw new Error("PRE: prompt is empty");
     }
     if (prompt.length > 50000) {
-        error(`PRE: prompt too long: ${prompt.length}`, "preconditionSendPrompt");
-        throw new Error("PRE: sendPrompt prompt too long");
+        error("PRE: prompt too long: " + prompt.length, "preconditionSendPrompt");
+        throw new Error("PRE: prompt too long");
     }
     await invariantTmuxSession();
-    log(`PRE: sendPrompt OK - promptLen=${prompt.length}`, "preconditionSendPrompt");
+    log("PRE: sendPrompt OK - promptLen=" + prompt.length, "preconditionSendPrompt");
 }
 
 async function postconditionSendPrompt(response) {
     if (!response) {
         error("POST: response is null/undefined", "postconditionSendPrompt");
-        throw new Error("POST: sendPrompt returned null response");
+        throw new Error("POST: response is null");
     }
     if (response.trim() === "") {
         error("POST: response is empty string", "postconditionSendPrompt");
-        throw new Error("POST: sendPrompt returned empty response");
+        throw new Error("POST: response is empty");
     }
     await invariantTmuxSession();
-    log(`POST: sendPrompt OK - responseLen=${response.length}`, "postconditionSendPrompt");
-}
-
-function preconditionCreateSession() {
-    log("PRE: createSession starting", "preconditionCreateSession");
-}
-
-async function postconditionCreateSession() {
-    const exists = await sessionExists();
-    if (!exists) {
-        error("POST: session was not created", "postconditionCreateSession");
-        throw new Error("POST: createSession failed to create session");
-    }
-    log("POST: createSession OK - session exists", "postconditionCreateSession");
-}
-
-async function preconditionSendKeys(text) {
-    if (!text) {
-        error("PRE: text is null/undefined", "preconditionSendKeys");
-        throw new Error("PRE: sendKeys text is null");
-    }
-    await invariantTmuxSession();
-    log(`PRE: sendKeys OK - textLen=${text.length}`, "preconditionSendKeys");
-}
-
-async function postconditionSendKeys() {
-    await invariantTmuxSession();
-    log("POST: sendKeys OK - keys sent", "postconditionSendKeys");
-}
-
-async function preconditionCapturePane() {
-    await invariantTmuxSession();
-    log("PRE: capturePane OK", "preconditionCapturePane");
-}
-
-function postconditionCapturePane(output) {
-    if (output === null || output === undefined) {
-        error("POST: capturePane returned null", "postconditionCapturePane");
-    }
-    log(`POST: capturePane OK - outputLen=${output ? output.length : 0}`, "postconditionCapturePane");
+    log("POST: sendPrompt OK - responseLen=" + response.length, "postconditionSendPrompt");
 }
 
 async function sessionExists() {
     try {
-        await execAsync(`tmux has-session -t ${TMUX_SESSION_NAME} 2>/dev/null`);
-        log("sessionExists: true", "sessionExists");
+        await execAsync("tmux has-session -t " + TMUX_SESSION_NAME + " 2>/dev/null");
         return true;
-    } catch {
-        log("sessionExists: false", "sessionExists");
+    } catch (e) {
         return false;
     }
 }
 
 async function createSession() {
-    preconditionCreateSession();
-
     if (await sessionExists()) {
-        log("Session already exists, skipping creation", "createSession");
+        log("Session already exists", "createSession");
         return;
     }
 
-    log("Creating new tmux session...", "createSession");
-    await execAsync(`tmux new-session -d -s ${TMUX_SESSION_NAME} -x 200 -y 50`);
-    log("Tmux session created", "createSession");
+    log("Creating new tmux session", "createSession");
+    await execAsync("tmux new-session -d -s " + TMUX_SESSION_NAME + " -x 200 -y 50");
 
-    log("Starting claude CLI in session...", "createSession");
-    await execAsync(`tmux send-keys -t ${TMUX_SESSION_NAME} "claude --model haiku --verbose" Enter`);
+    await execAsync("tmux send-keys -t " + TMUX_SESSION_NAME + " 'cd /tmp && claude --model haiku --dangerously-skip-permissions' Enter");
 
-    let ready = false;
-    const startTime = Date.now();
-    let pollCount = 0;
-    while (!ready && (Date.now() - startTime) < 10000) {
-        pollCount++;
-        const output = await capturePane();
-        if (output.includes(">") || output.includes("Claude")) {
+    var ready = false;
+    var startTime = Date.now();
+    while (!ready && (Date.now() - startTime) < 25000) {
+        var output = await capturePane();
+        if (output.includes("bypass") || output.includes("shortcuts")) {
             ready = true;
-            log(`Claude CLI ready after ${pollCount} polls`, "createSession");
+            log("Claude CLI ready", "createSession");
         } else {
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise(function(resolve) { setTimeout(resolve, 500); });
         }
     }
 
     if (!ready) {
-        error(`Claude CLI did not start within timeout after ${pollCount} polls`, "createSession");
+        error("Claude CLI did not start within timeout", "createSession");
         throw new Error("Claude CLI did not start within timeout");
     }
 
-    await postconditionCreateSession();
+    await new Promise(function(resolve) { setTimeout(resolve, 1000); });
 }
 
 async function capturePane() {
     try {
-        await preconditionCapturePane();
-        const { stdout } = await execAsync(`tmux capture-pane -t ${TMUX_SESSION_NAME} -p -S -1000`);
-        postconditionCapturePane(stdout);
-        return stdout;
-    } catch (err) {
-        error(`capturePane failed: ${err.message}`, "capturePane");
+        var result = await execAsync("tmux capture-pane -t " + TMUX_SESSION_NAME + " -p -S -500");
+        return result.stdout;
+    } catch (e) {
         return "";
     }
 }
 
 async function sendKeys(text) {
-    await preconditionSendKeys(text);
+    var tempFile = "/tmp/haiku-prompt-" + process.pid + ".txt";
+    fs.writeFileSync(tempFile, text);
 
-    const escaped = text
-        .replace(/\\/g, "\\\\")
-        .replace(/"/g, "\\\"")
-        .replace(/\$/g, "\\$")
-        .replace(/\`/g, "\\\`");
+    await execAsync("tmux load-buffer " + tempFile);
+    await execAsync("tmux paste-buffer -t " + TMUX_SESSION_NAME);
 
-    await execAsync(`tmux send-keys -t ${TMUX_SESSION_NAME} "${escaped}"`);
-
-    await postconditionSendKeys();
+    try { fs.unlinkSync(tempFile); } catch (e) {}
 }
 
 async function sendEnter() {
-    await invariantTmuxSession();
-    log("Sending Enter key", "sendEnter");
-    await execAsync(`tmux send-keys -t ${TMUX_SESSION_NAME} Enter`);
-    log("Enter key sent", "sendEnter");
+    await execAsync("tmux send-keys -t " + TMUX_SESSION_NAME + " Enter");
+}
+
+function isThinkingIndicator(text) {
+    var thinkingPatterns = [
+        "Doodling", "Levitating", "Synthesizing", "Pondering",
+        "Thinking", "thinking", "interrupt", "esc to"
+    ];
+    for (var i = 0; i < thinkingPatterns.length; i++) {
+        if (text.includes(thinkingPatterns[i])) return true;
+    }
+    return false;
+}
+
+function extractResponseFromPane(paneContent, promptText) {
+    var lines = paneContent.split("\n");
+    var promptStart = promptText.substring(0, 40).trim();
+
+    var promptLineIdx = -1;
+    for (var i = lines.length - 1; i >= 0; i--) {
+        if (lines[i].includes(promptStart)) {
+            promptLineIdx = i;
+            break;
+        }
+    }
+
+    if (promptLineIdx === -1) {
+        return null;
+    }
+
+    var responseLines = [];
+    var inResponse = false;
+
+    for (var i = promptLineIdx + 1; i < lines.length; i++) {
+        var line = lines[i];
+        var trimmedLine = line.trim();
+
+        if (trimmedLine.length === 0) continue;
+
+        if (trimmedLine.includes("\u276F") && !inResponse) continue;
+
+        if (trimmedLine.startsWith("\u23FA")) {
+            inResponse = true;
+            var responsePart = trimmedLine.replace(/^\u23FA\s*/, "").trim();
+            if (responsePart.length > 0 && !isThinkingIndicator(responsePart)) {
+                responseLines.push(responsePart);
+            }
+            continue;
+        }
+
+        if (inResponse) {
+            if (trimmedLine.startsWith("\u276F") || trimmedLine.includes("send") || trimmedLine.includes("bypass")) {
+                break;
+            }
+            if (!isThinkingIndicator(trimmedLine) && !trimmedLine.startsWith("\u2500")) {
+                responseLines.push(trimmedLine);
+            }
+        }
+    }
+
+    var response = responseLines.join("\n").trim();
+
+    if (response.length > 10 && !isThinkingIndicator(response)) {
+        return response;
+    }
+
+    return null;
 }
 
 async function sendPromptAndWaitForResponse(prompt) {
     await preconditionSendPrompt(prompt);
-    log(`Starting prompt processing - promptLen=${prompt.length}`, "sendPromptAndWaitForResponse");
+    log("Starting - promptLen=" + prompt.length, "sendPromptAndWaitForResponse");
 
-    const wrappedPrompt = `Please wrap your ENTIRE response between these exact markers (include them in your output):
-${RESPONSE_MARKER_START}
-<your response here>
-${RESPONSE_MARKER_END}
-
-Now process this:
-${prompt}`;
-
-    log(`Wrapped prompt created - wrappedLen=${wrappedPrompt.length}`, "sendPromptAndWaitForResponse");
-
-    const paneBefore = await capturePane();
-    const linesBefore = paneBefore.split("\n").length;
-    log(`Pane state before: ${linesBefore} lines`, "sendPromptAndWaitForResponse");
-
-    await sendKeys(wrappedPrompt);
+    await sendKeys(prompt);
     await sendEnter();
     log("Prompt sent, waiting for response...", "sendPromptAndWaitForResponse");
 
-    const startTime = Date.now();
-    let response = null;
-    let pollCount = 0;
+    var startTime = Date.now();
+    var response = null;
+    var lastPaneLength = 0;
+    var stableCount = 0;
 
     while ((Date.now() - startTime) < MAX_WAIT_MS) {
-        await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
-        pollCount++;
+        await new Promise(function(resolve) { setTimeout(resolve, POLL_INTERVAL_MS); });
 
-        const paneContent = await capturePane();
+        var paneContent = await capturePane();
 
-        const startIdx = paneContent.lastIndexOf(RESPONSE_MARKER_START);
-        const endIdx = paneContent.lastIndexOf(RESPONSE_MARKER_END);
+        response = extractResponseFromPane(paneContent, prompt);
 
-        if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-            response = paneContent
-                .substring(startIdx + RESPONSE_MARKER_START.length, endIdx)
-                .trim();
-            log(`Response found after ${pollCount} polls, ${Date.now() - startTime}ms`, "sendPromptAndWaitForResponse");
-            break;
-        }
-
-        if (pollCount % 50 === 0) {
-            log(`Still waiting... ${pollCount} polls, ${Date.now() - startTime}ms`, "sendPromptAndWaitForResponse");
+        if (response && response.length > 20) {
+            if (paneContent.length === lastPaneLength) {
+                stableCount++;
+                if (stableCount >= 3) {
+                    log("Response stable (" + response.length + " chars)", "sendPromptAndWaitForResponse");
+                    break;
+                }
+            } else {
+                stableCount = 0;
+                lastPaneLength = paneContent.length;
+            }
+        } else {
+            stableCount = 0;
+            lastPaneLength = paneContent.length;
         }
     }
 
-    if (!response) {
-        error(`Timeout after ${pollCount} polls, ${MAX_WAIT_MS}ms`, "sendPromptAndWaitForResponse");
-        throw new Error("Timeout waiting for Haiku response");
+    if (!response || response.length < 10) {
+        error("No valid response found", "sendPromptAndWaitForResponse");
+        throw new Error("Timeout waiting for response");
     }
 
     await postconditionSendPrompt(response);
-    log(`Response complete - responseLen=${response.length}`, "sendPromptAndWaitForResponse");
     return response;
 }
 
 async function killSession() {
-    log("killSession called", "killSession");
     if (await sessionExists()) {
-        await execAsync(`tmux kill-session -t ${TMUX_SESSION_NAME}`);
+        await execAsync("tmux kill-session -t " + TMUX_SESSION_NAME);
         log("Session killed", "killSession");
-    } else {
-        log("No session to kill", "killSession");
     }
 }
 
 async function ensureSession() {
-    log("ensureSession called", "ensureSession");
     if (!(await sessionExists())) {
-        log("Session does not exist, creating...", "ensureSession");
         await createSession();
-    } else {
-        log("Session already exists", "ensureSession");
     }
 }
 
