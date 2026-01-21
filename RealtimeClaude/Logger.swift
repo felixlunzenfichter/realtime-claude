@@ -94,7 +94,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     private static let STORY_REMEMBER = "Remember \(TEST_WORD)"
     private static let STORY_CLAUDE_RESPONDS = "Claude responds"
     private static let STORY_ASK_WORD = "What word did I ask you to remember?"
-    private static let STORY_RECALLS_WORD = TEST_WORD
+    private static let STORY_RECALLS_WORD = "✓ RECALL_VERIFIED: \(TEST_WORD)"
 
     private let STORY: [(command: String?, result: String)] = [
         (nil, Logger.STORY_HANDSHAKE),
@@ -171,8 +171,8 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
     func testClaudeRecallsWord(_ response: String) {
         guard !response.isEmpty else { return }
-        if response.contains(Logger.TEST_WORD) {
-            log("\(Logger.STORY_RECALLS_WORD)")
+        if response.uppercased().contains(Logger.TEST_WORD) {
+            log(Logger.STORY_RECALLS_WORD)
         }
     }
     #else
