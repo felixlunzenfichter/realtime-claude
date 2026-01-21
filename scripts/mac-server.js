@@ -233,6 +233,7 @@ process.on('SIGINT', () => {
 });
 
 const logsDir = path.join('private', 'logs');
+fs.mkdirSync(logsDir, { recursive: true });
 const lastAssistantMessageFile = path.join('private', 'last-assistant-message.txt');
 const CLAUDE_WINDOW_PATTERN = 'claude --dangerously-skip-permissions';
 const WHISPER_SERVER_URL = 'http://localhost:5050';
