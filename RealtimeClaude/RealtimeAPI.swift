@@ -144,20 +144,27 @@ private class RealtimeAPI: @unchecked Sendable, RealtimeAPIProtocol {
 
         var currentContext = conversationContextSubject.value
 
-        guard let index = currentContext.firstIndex(where: { $0.id == messageId }) else {
-            error("Message with ID \(messageId.uuidString) NOT FOUND in updateSummary")
-            return
+        if let index = currentContext.firstIndex(where: { $0.id == messageId }) {
+            currentContext[index].summary = text
+            currentContext[index].timestamp = Date()
+            conversationContextSubject.send(currentContext)
+
+            if currentContext[index].role == "user" {
+                claudeIsActiveSubject.send(true)
+            }
+
+            log("Updated summary for existing message \(messageId.uuidString)")
+        } else {
+            let newMessage = ConversationMessage(
+                id: messageId,
+                prompt: "",
+                role: "assistant",
+                summary: text
+            )
+            currentContext.insert(newMessage, at: 0)
+            conversationContextSubject.send(currentContext)
+            log("Created new assistant message from summary \(messageId.uuidString)")
         }
-
-        currentContext[index].summary = text
-        currentContext[index].timestamp = Date()
-        conversationContextSubject.send(currentContext)
-
-        if currentContext[index].role == "user" {
-            claudeIsActiveSubject.send(true)
-        }
-
-        log("Successful summary creation")
 
         #if !IS_TEST || MANUAL_TESTING
         if audioManager.isPlaybackEnabledSubject.value {
