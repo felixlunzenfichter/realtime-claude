@@ -11,6 +11,14 @@ fi
 
 # Read tool input from stdin
 INPUT=$(cat)
+
+# Sub-agents (transcript filename starts with "agent-") are allowed everything
+TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // empty')
+TRANSCRIPT_FILENAME=$(basename "$TRANSCRIPT_PATH" 2>/dev/null)
+if [[ "$TRANSCRIPT_FILENAME" == agent-* ]]; then
+  exit 0
+fi
+
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')
 
 # Task tool: only allow if run_in_background is true
