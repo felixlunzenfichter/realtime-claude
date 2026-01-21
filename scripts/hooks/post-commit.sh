@@ -10,16 +10,30 @@ echo ""
 cd "$REPO_ROOT"
 ./scripts/deploy-test.sh
 
-if [ $? -eq 0 ]; then
-    echo ""
-    echo "📋 Automated tests passed. Deploying manual test build..."
-    echo ""
-    ./scripts/deploy-test.sh --manual
-    echo ""
-    echo "📋 Manual test deployed. Verify the app works."
-    echo "   Then: ./scripts/mark-manual-passed.sh"
-    echo "   Then: git push"
-else
+if [ $? -ne 0 ]; then
     echo ""
     echo "❌ Automated tests failed. Fix and commit again."
+    exit 1
+fi
+
+echo ""
+echo "📋 Automated tests passed. Deploying manual test build..."
+echo ""
+./scripts/deploy-test.sh --manual
+
+echo ""
+echo "🎤 Manual test deployed. Verify the app works."
+echo ""
+read -p "Did manual test pass? (y/n): " answer
+
+if [ "$answer" = "y" ] || [ "$answer" = "Y" ]; then
+    echo "$COMMIT_HASH" > "$REPO_ROOT/.test-passed-manual"
+    echo "✅ Wrote .test-passed-manual ($COMMIT_HASH)"
+    echo ""
+    echo "🚀 All tests passed. Pushing..."
+    git push origin HEAD
+else
+    echo "❌ Manual test failed. Fix and commit again."
+    rm -f "$REPO_ROOT/.test-passed-automated"
+    rm -f "$REPO_ROOT/.test-passed-manual"
 fi
