@@ -123,6 +123,7 @@ const crypto = require('crypto');
 
 const IS_TEST = process.env.IS_TEST === 'true';
 const MANUAL_TESTING = process.env.MANUAL_TESTING === 'true';
+const useRealAudio = !IS_TEST || MANUAL_TESTING;
 const SERVER_PORT = parseInt(process.env.SERVER_PORT, 10) || 8082;
 let testFailed = false;
 
@@ -525,7 +526,7 @@ function deduplicateTranscription(newText, messageState, timestamp) {
 }
 
 async function transcribeAudio(audioPath) {
-    if (IS_TEST && !MANUAL_TESTING) {
+    if (!useRealAudio) {
         log(`Automated testing: Skipping Whisper, returning mock "hello"`, 'transcribeAudio');
         return { text: 'hello', segments: [] };
     }
