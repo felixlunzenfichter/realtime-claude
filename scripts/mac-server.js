@@ -1315,7 +1315,10 @@ function handleLogMessage(socket, logData) {
     sendAcknowledgment(socket, logData.id);
 
     if (IS_TEST && !testFailed && logData.message && logData.message.includes('Story complete')) {
+        log(`[DEBUG] process.cwd() = ${process.cwd()}`, 'handleLogMessage');
+        log(`[DEBUG] __dirname = ${__dirname}`, 'handleLogMessage');
         const repoRoot = execSync('git rev-parse --show-toplevel', {encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe']}).trim();
+        log(`[DEBUG] repoRoot from git = ${repoRoot}`, 'handleLogMessage');
         let commitHash = '';
 
         try {
@@ -1324,10 +1327,12 @@ function handleLogMessage(socket, logData) {
                 stdio: ['pipe', 'pipe', 'pipe'],
                 cwd: repoRoot 
             }).trim();
+            log(`[DEBUG] commitHash = ${commitHash}`, 'handleLogMessage');
         } catch (gitErr) {
             log(`Failed to get git HEAD: ${gitErr.message}`, 'handleLogMessage');
             return;
         }
+        log(`[DEBUG] Writing marker to ${repoRoot}`, 'handleLogMessage');
 
         if (MANUAL_TESTING) {
             const manualMarker = path.join(repoRoot, '.test-passed-manual');
