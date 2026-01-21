@@ -1,13 +1,11 @@
 #!/bin/bash
 
-# Hook: PreToolUse - blocks Edit/Write unless in a worktree
-# Main repo has .git as directory, worktree has .git as file
+# Hook: PreToolUse - blocks heavy tools in main repo
+# Main agent = coordinator only. Work happens in worktrees via background agents.
 # Exit code 2 = block, message to stderr
 
-# Check if .git is a directory (main repo) or file (worktree)
 if [ -d "$CLAUDE_PROJECT_DIR/.git" ]; then
-  # Main repo - block edits with exit code 2
-  echo "BLOCKED: Cannot edit in main repo. Create worktree first: git worktree add ../worktrees/feature -b feature" >&2
+  echo "BLOCKED: Main agent is coordinator only. Use Task tool to spawn background agent in worktree." >&2
   exit 2
 fi
 
