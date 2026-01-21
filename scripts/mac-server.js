@@ -173,7 +173,7 @@ function error(message, functionName = 'unknown') {
     }
     if (IS_TEST && !testFailed) {
         testFailed = true;
-        const repoRoot = path.resolve(__dirname, '..');
+        const repoRoot = execSync('git rev-parse --show-toplevel', {encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe']}).trim();
         const marker = MANUAL_TESTING
             ? path.join(repoRoot, '.test-passed-manual')
             : path.join(repoRoot, '.test-passed-automated');
@@ -1315,7 +1315,7 @@ function handleLogMessage(socket, logData) {
     sendAcknowledgment(socket, logData.id);
 
     if (IS_TEST && !testFailed && logData.message && logData.message.includes('Story complete')) {
-        const repoRoot = path.resolve(__dirname, '..');
+        const repoRoot = execSync('git rev-parse --show-toplevel', {encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe']}).trim();
         let commitHash = '';
 
         try {
@@ -1348,7 +1348,7 @@ function handleErrorMessage(socket, logData) {
 
     if (IS_TEST && !testFailed) {
         testFailed = true;
-        const repoRoot = path.resolve(__dirname, '..');
+        const repoRoot = execSync('git rev-parse --show-toplevel', {encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe']}).trim();
         const marker = MANUAL_TESTING
             ? path.join(repoRoot, '.test-passed-manual')
             : path.join(repoRoot, '.test-passed-automated');
