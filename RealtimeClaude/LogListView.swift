@@ -849,23 +849,6 @@ struct DiffView: View {
                         }
                     }
                     .frame(height: ACTUAL_SCREEN_HEIGHT)
-                    .onChange(of: viewModel.scrollToLineIndex) { _, newIndex in
-                        guard let index = newIndex else { return }
-                        viewModel.highlightedLineIndex = index
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                proxy.scrollTo(index, anchor: .center)
-                            }
-                        }
-                    }
-                    .onAppear {
-                        guard let index = viewModel.scrollToLineIndex else { return }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                proxy.scrollTo(index, anchor: .center)
-                            }
-                        }
-                    }
                 }
             }
 
