@@ -60,7 +60,7 @@ function createSession() {
         if (output.includes('>') || output.includes('Claude')) {
             ready = true;
         } else {
-            execSync('sleep 0.5');
+            execSync('sleep 0.5', { stdio: ['pipe', 'pipe', 'pipe'] });
         }
     }
 
