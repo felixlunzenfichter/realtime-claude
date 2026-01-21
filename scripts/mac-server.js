@@ -1316,23 +1316,31 @@ function handleLogMessage(socket, logData) {
 
     if (IS_TEST && !testFailed && logData.message && logData.message.includes('Story complete')) {
         const repoRoot = path.dirname(__dirname);
-        log(`[DEBUG] repoRoot from __dirname = ${repoRoot}`, 'handleLogMessage');
+        log(`[DEBUG] repoRoot = ${repoRoot}`, 'handleLogMessage');
         
         let commitHash = '';
         try {
-            const gitHeadPath = path.join(repoRoot, '.git', 'HEAD');
-            let headContent = fs.readFileSync(gitHeadPath, 'utf8').trim();
+            const gitPath = path.join(repoRoot, '.git');
+            let gitDir;
+            
+            const gitStat = fs.statSync(gitPath);
+            if (gitStat.isFile()) {
+                const gitFileContent = fs.readFileSync(gitPath, 'utf8').trim();
+                gitDir = gitFileContent.replace('gitdir: ', '');
+                log(`[DEBUG] Worktree detected, gitDir = ${gitDir}`, 'handleLogMessage');
+            } else {
+                gitDir = gitPath;
+                log(`[DEBUG] Main repo detected, gitDir = ${gitDir}`, 'handleLogMessage');
+            }
+            
+            const headPath = path.join(gitDir, 'HEAD');
+            let headContent = fs.readFileSync(headPath, 'utf8').trim();
+            log(`[DEBUG] HEAD content = ${headContent}`, 'handleLogMessage');
             
             if (headContent.startsWith('ref: ')) {
-                const refPath = path.join(repoRoot, '.git', headContent.slice(5));
-                if (fs.existsSync(refPath)) {
-                    commitHash = fs.readFileSync(refPath, 'utf8').trim();
-                } else {
-                    const gitDir = fs.readFileSync(path.join(repoRoot, '.git'), 'utf8').trim();
-                    const actualGitDir = gitDir.replace('gitdir: ', '');
-                    const actualRefPath = path.join(actualGitDir, headContent.slice(5));
-                    commitHash = fs.readFileSync(actualRefPath, 'utf8').trim();
-                }
+                const refPath = path.join(gitDir, headContent.slice(5));
+                log(`[DEBUG] Reading ref from ${refPath}`, 'handleLogMessage');
+                commitHash = fs.readFileSync(refPath, 'utf8').trim();
             } else {
                 commitHash = headContent;
             }
