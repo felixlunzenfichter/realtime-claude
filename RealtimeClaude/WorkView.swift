@@ -83,9 +83,10 @@ struct ToggleBar: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 0) {
             ForEach(items.indices, id: \.self) { index in
                 let item = items[index]
+                Spacer()
                 Button {
                     item.action()
                 } label: {
@@ -95,7 +96,6 @@ struct ToggleBar: View {
                                 .font(.system(size: 24, weight: .semibold))
                                 .foregroundColor(item.color)
                                 .frame(width: 24, height: 24)
-                                .padding(5)
                         }
 
                         if let text = item.text {
@@ -108,10 +108,10 @@ struct ToggleBar: View {
                     }
                     .padding(10)
                     .glassEffect(.regular.tint(item.color.opacity(item.isOn?.wrappedValue == true ? 0.5 : 0.1)).interactive(), in: .capsule)
-                    .padding(2)
                     .scaleEffect(item.scale)
                 }
             }
+            Spacer()
         }
         .frame(height: height)
     }
