@@ -1,15 +1,15 @@
-const { parentPort, workerData } = require('worker_threads');
+const { parentPort, workerData } = require("worker_threads");
 const {
     TMUX_SESSION_NAME,
     ensureSession,
     sendPromptAndWaitForResponse
-} = require('./haiku-tmux.js');
+} = require("./haiku-tmux.js");
 
 const { prompt, task } = workerData;
 
 async function main() {
     try {
-        ensureSession();
+        await ensureSession();
 
         const response = await sendPromptAndWaitForResponse(prompt);
 
