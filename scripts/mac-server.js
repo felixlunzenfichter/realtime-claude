@@ -263,6 +263,7 @@ let haikuContext = [];
 
 const HAIKU_TMUX_SESSION = 'haiku-conversation';
 let haikuConversationId = null;
+let haikuRequestInFlight = false;
 
 let conversationWatcher = null;
 let gitDiffWatcher = null;
@@ -287,38 +288,122 @@ function tmuxSessionExists() {
 }
 
 function invariantHaikuConversation(currentId) {
+    if (!currentId) {
+        error('INV: Haiku conversation ID is null/undefined', 'invariantHaikuConversation');
+        return;
+    }
     if (currentId !== HAIKU_TMUX_SESSION) {
         error(`INV: Haiku request using wrong session. Expected ${HAIKU_TMUX_SESSION}, got ${currentId}`, 'invariantHaikuConversation');
     }
     if (haikuConversationId !== null && currentId !== haikuConversationId) {
         error(`INV: Haiku conversation ID changed. Expected ${haikuConversationId}, got ${currentId}`, 'invariantHaikuConversation');
     }
+    log(`INV: Haiku conversation OK - sessionId=${currentId}`, 'invariantHaikuConversation');
 }
 
 function preconditionProcessWithHaiku(text, task) {
+    invariantHaikuConversation(haikuConversationId);
     if (!text || text.trim() === '') {
-        error('PRE: processWithHaiku text is empty', 'preconditionProcessWithHaiku');
+        error('PRE: text is empty', 'preconditionProcessWithHaiku');
     }
     if (!['correct_transcription', 'create_summary'].includes(task)) {
-        error(`PRE: processWithHaiku invalid task: ${task}`, 'preconditionProcessWithHaiku');
+        error(`PRE: invalid task: ${task}`, 'preconditionProcessWithHaiku');
     }
+    if (text.length > 10000) {
+        error(`PRE: text too long: ${text.length}`, 'preconditionProcessWithHaiku');
+    }
+    if (haikuRequestInFlight) {
+        error('PRE: another Haiku request already in flight', 'preconditionProcessWithHaiku');
+    }
+    log(`PRE: processWithHaiku OK - task=${task}, textLen=${text.length}`, 'preconditionProcessWithHaiku');
 }
 
-function postconditionProcessWithHaiku(result, task, conversationId) {
-    if (task === 'correct_transcription' && (!result || !result.corrected)) {
-        error('POST: processWithHaiku correction has no corrected field', 'postconditionProcessWithHaiku');
+function postconditionProcessWithHaiku(result, task, sessionId) {
+    if (!result) {
+        error('POST: result is null/undefined', 'postconditionProcessWithHaiku');
     }
-    if (task === 'create_summary' && (!result || !result.summary)) {
-        error('POST: processWithHaiku summary has no summary field', 'postconditionProcessWithHaiku');
+    if (task === 'correct_transcription' && !result.corrected) {
+        error('POST: correction missing corrected field', 'postconditionProcessWithHaiku');
     }
-    if (conversationId !== HAIKU_TMUX_SESSION) {
-        error(`POST: processWithHaiku returned wrong session. Expected ${HAIKU_TMUX_SESSION}, got ${conversationId}`, 'postconditionProcessWithHaiku');
+    if (task === 'create_summary' && !result.summary) {
+        error('POST: summary missing summary field', 'postconditionProcessWithHaiku');
     }
-    if (haikuConversationId === null && conversationId) {
-        haikuConversationId = conversationId;
-        log(`Haiku tmux session verified: ${haikuConversationId}`, 'postconditionProcessWithHaiku');
+    if (task === 'create_summary' && result.summary && result.summary.length > 50) {
+        error(`POST: summary too long: ${result.summary.length}`, 'postconditionProcessWithHaiku');
     }
-    invariantHaikuConversation(conversationId);
+    if (haikuConversationId === null && sessionId) {
+        haikuConversationId = sessionId;
+        log(`POST: Haiku conversation ID set: ${haikuConversationId}`, 'postconditionProcessWithHaiku');
+    }
+    invariantHaikuConversation(sessionId);
+    log(`POST: processWithHaiku OK - task=${task}`, 'postconditionProcessWithHaiku');
+}
+
+function preconditionBuildPrompt(text, task) {
+    if (!text || text.trim() === '') {
+        error('PRE: buildPrompt text is empty', 'preconditionBuildPrompt');
+    }
+    if (!['correct_transcription', 'create_summary'].includes(task)) {
+        error(`PRE: buildPrompt invalid task: ${task}`, 'preconditionBuildPrompt');
+    }
+    log(`PRE: buildPrompt OK - task=${task}, textLen=${text.length}`, 'preconditionBuildPrompt');
+}
+
+function postconditionBuildPrompt(prompt, task) {
+    if (!prompt || prompt.trim() === '') {
+        error('POST: buildPrompt returned empty prompt', 'postconditionBuildPrompt');
+    }
+    if (prompt.length < 50) {
+        error(`POST: buildPrompt returned suspiciously short prompt: ${prompt.length}`, 'postconditionBuildPrompt');
+    }
+    log(`POST: buildPrompt OK - promptLen=${prompt.length}`, 'postconditionBuildPrompt');
+}
+
+function preconditionHaikuWorker(prompt, task, sessionId) {
+    if (!prompt || prompt.trim() === '') {
+        error('PRE: haikuWorker prompt is empty', 'preconditionHaikuWorker');
+    }
+    if (!['correct_transcription', 'create_summary'].includes(task)) {
+        error(`PRE: haikuWorker invalid task: ${task}`, 'preconditionHaikuWorker');
+    }
+    log(`PRE: haikuWorker OK - task=${task}, sessionId=${sessionId || 'new'}`, 'preconditionHaikuWorker');
+}
+
+function postconditionHaikuWorker(result, sessionId) {
+    if (!result) {
+        error('POST: haikuWorker returned null result', 'postconditionHaikuWorker');
+    }
+    if (!sessionId) {
+        error('POST: haikuWorker returned no sessionId', 'postconditionHaikuWorker');
+    }
+    log(`POST: haikuWorker OK - resultLen=${result ? result.length : 0}, sessionId=${sessionId}`, 'postconditionHaikuWorker');
+}
+
+function preconditionParseHaikuResponse(rawResponse, task) {
+    if (!rawResponse) {
+        error('PRE: parseHaikuResponse rawResponse is null', 'preconditionParseHaikuResponse');
+    }
+    log(`PRE: parseHaikuResponse OK - responseLen=${rawResponse.length}, task=${task}`, 'preconditionParseHaikuResponse');
+}
+
+function postconditionParseHaikuResponse(parsed, task) {
+    if (!parsed) {
+        error('POST: parseHaikuResponse returned null', 'postconditionParseHaikuResponse');
+    }
+    if (task === 'correct_transcription' && !parsed.corrected) {
+        error('POST: parseHaikuResponse missing corrected for correction task', 'postconditionParseHaikuResponse');
+    }
+    if (task === 'create_summary' && !parsed.summary) {
+        error('POST: parseHaikuResponse missing summary for summary task', 'postconditionParseHaikuResponse');
+    }
+    log(`POST: parseHaikuResponse OK - task=${task}`, 'postconditionParseHaikuResponse');
+}
+
+function invariantHaikuRequestInFlight(expected) {
+    if (haikuRequestInFlight !== expected) {
+        error(`INV: haikuRequestInFlight expected ${expected}, got ${haikuRequestInFlight}`, 'invariantHaikuRequestInFlight');
+    }
+    log(`INV: haikuRequestInFlight OK - value=${haikuRequestInFlight}`, 'invariantHaikuRequestInFlight');
 }
 
 
@@ -419,6 +504,8 @@ function formatContextForHaiku() {
 }
 
 function buildPrompt(text, task, completeTranscription = null) {
+    preconditionBuildPrompt(text, task);
+    
     const cleanText = text.replace(/[\n\r]+/g, ' ').replace(/\s+/g, ' ').trim();
     const context = formatContextForHaiku();
 
@@ -427,7 +514,7 @@ function buildPrompt(text, task, completeTranscription = null) {
         : '';
 
     if (task === 'correct_transcription') {
-        return `You are a transcription processor for a voice-controlled coding assistant.
+        const correctionPrompt = `You are a transcription processor for a voice-controlled coding assistant.
 
 CONTEXT (last ${haikuContext.length} events):
 ${context}${completeTranscriptionText}
@@ -441,8 +528,10 @@ ${completeTranscription ? '\nNOTE: You have the complete transcription with time
 
 OUTPUT: Respond with valid JSON only, no markdown, no explanation:
 {"corrected": "the corrected text or original if no correction needed"}`;
+        postconditionBuildPrompt(correctionPrompt, task);
+        return correctionPrompt;
     } else {
-        return `You are a transcription processor for a voice-controlled coding assistant.
+        const summaryPrompt = `You are a transcription processor for a voice-controlled coding assistant.
 
 CONTEXT (last ${haikuContext.length} events):
 ${context}
@@ -455,11 +544,17 @@ Create a brief summary (under ${MAX_SPEAK_LENGTH} characters) describing what th
 
 OUTPUT: Respond with valid JSON only, no markdown, no explanation:
 {"summary": "short summary under ${MAX_SPEAK_LENGTH} chars"}`;
+        postconditionBuildPrompt(summaryPrompt, task);
+        return summaryPrompt;
     }
 }
 
 async function processWithHaiku(text, task, completeTranscription = null) {
     preconditionProcessWithHaiku(text, task);
+    
+    haikuRequestInFlight = true;
+    invariantHaikuRequestInFlight(true);
+    log(`Haiku request started - inFlight=true`, 'processWithHaiku');
 
     const cleanText = text.replace(/[\n\r]+/g, ' ').replace(/\s+/g, ' ').trim();
 
@@ -475,6 +570,7 @@ async function processWithHaiku(text, task, completeTranscription = null) {
             log(`Processing${retryNote}...`, 'processWithHaiku');
 
             const prompt = buildPrompt(text, task, completeTranscription);
+            preconditionHaikuWorker(prompt, task, haikuConversationId);
 
             const { result, sessionId } = await new Promise((resolve, reject) => {
                 const worker = new Worker(path.join(__dirname, 'haiku-worker.js'), {
@@ -483,6 +579,7 @@ async function processWithHaiku(text, task, completeTranscription = null) {
 
                 worker.on('message', (msg) => {
                     if (msg.success) {
+                        postconditionHaikuWorker(msg.result, msg.sessionId);
                         resolve({ result: msg.result, sessionId: msg.sessionId });
                     } else {
                         reject(new Error(msg.error));
@@ -497,10 +594,12 @@ async function processWithHaiku(text, task, completeTranscription = null) {
             }
 
             const cleanedResult = result.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+            preconditionParseHaikuResponse(cleanedResult, task);
 
             let parsed;
             try {
                 parsed = JSON.parse(cleanedResult);
+                postconditionParseHaikuResponse(parsed, task);
             } catch (parseErr) {
                 log(`Invalid JSON: ${cleanedResult.substring(0, 100)}`, 'processWithHaiku');
                 addToContext({ type: 'summary_attempt', result: cleanedResult, chars: cleanedResult.length, success: false, error: 'invalid_json' });
@@ -513,7 +612,9 @@ async function processWithHaiku(text, task, completeTranscription = null) {
             if (task === 'correct_transcription') {
                 const result = { corrected };
                 postconditionProcessWithHaiku(result, task, sessionId);
-                log(`Corrected: "${corrected.substring(0, 50)}..."`, 'processWithHaiku');
+                haikuRequestInFlight = false;
+                invariantHaikuRequestInFlight(false);
+                log(`Corrected: "${corrected.substring(0, 50)}..." - inFlight=false`, 'processWithHaiku');
                 return result;
             } else {
                 if (summary.length > MAX_SUMMARY_CHARS) {
@@ -525,6 +626,9 @@ async function processWithHaiku(text, task, completeTranscription = null) {
                 addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: true });
                 const result = { summary };
                 postconditionProcessWithHaiku(result, task, sessionId);
+                haikuRequestInFlight = false;
+                invariantHaikuRequestInFlight(false);
+                log(`Summary complete - inFlight=false`, 'processWithHaiku');
                 return result;
             }
 
@@ -535,6 +639,9 @@ async function processWithHaiku(text, task, completeTranscription = null) {
     }
 
     log(`Max attempts reached, using fallback`, 'processWithHaiku');
+    haikuRequestInFlight = false;
+    invariantHaikuRequestInFlight(false);
+    log(`Fallback used - inFlight=false`, 'processWithHaiku');
     if (task === 'correct_transcription') {
         return { corrected: cleanText };
     } else {
