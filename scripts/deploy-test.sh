@@ -11,6 +11,7 @@ if [ "$1" = "--manual" ]; then
     echo "   - No auto-execute"
     SWIFT_FLAGS='-DIS_TEST -DMANUAL_TESTING'
     SERVER_FLAGS='IS_TEST=true MANUAL_TESTING=true'
+    BUILD_DIR='/tmp/build-test-manual'
 else
     echo "🤖 Automated testing mode"
     echo "   - Mock audio"
@@ -18,6 +19,7 @@ else
     echo "   - Auto-execute story"
     SWIFT_FLAGS='-DIS_TEST'
     SERVER_FLAGS='IS_TEST=true'
+    BUILD_DIR='/tmp/build-test-auto'
 fi
 
 # Get iPhone ID early for terminating old app
@@ -47,19 +49,19 @@ if ! lsof -i :9999 | grep LISTEN > /dev/null; then
 fi
 echo "✅ Test server running on 9999"
 
-# Clean and build with appropriate flags
+# Build with appropriate flags (separate folder per mode = no cache issues)
 echo "Building with flags: $SWIFT_FLAGS"
-rm -rf /tmp/build-test
+echo "Build folder: $BUILD_DIR"
 
 xcodebuild -scheme RealtimeClaude -project RealtimeClaude.xcodeproj \
     -destination "id=$IPHONE_ID" \
     OTHER_SWIFT_FLAGS="$SWIFT_FLAGS" \
-    -derivedDataPath /tmp/build-test \
+    -derivedDataPath "$BUILD_DIR" \
     build
 
 # Install and launch
 echo "Installing on iPhone..."
-xcrun devicectl device install app --device "$IPHONE_ID" /tmp/build-test/Build/Products/Debug-iphoneos/RealtimeClaude.app
+xcrun devicectl device install app --device "$IPHONE_ID" "$BUILD_DIR/Build/Products/Debug-iphoneos/RealtimeClaude.app"
 xcrun devicectl device process launch --terminate-existing --device "$IPHONE_ID" ch.felix.realtimeClaude
 
 echo "✅ TEST DEPLOYMENT COMPLETE"
