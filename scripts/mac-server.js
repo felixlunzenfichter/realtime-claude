@@ -1315,18 +1315,27 @@ function handleLogMessage(socket, logData) {
     sendAcknowledgment(socket, logData.id);
 
     if (IS_TEST && !testFailed && logData.message && logData.message.includes('Story complete')) {
-        log(`[DEBUG] process.cwd() = ${process.cwd()}`, 'handleLogMessage');
-        log(`[DEBUG] __dirname = ${__dirname}`, 'handleLogMessage');
-        const repoRoot = execSync('git rev-parse --show-toplevel', {encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe']}).trim();
-        log(`[DEBUG] repoRoot from git = ${repoRoot}`, 'handleLogMessage');
+        const repoRoot = path.dirname(__dirname);
+        log(`[DEBUG] repoRoot from __dirname = ${repoRoot}`, 'handleLogMessage');
+        
         let commitHash = '';
-
         try {
-            commitHash = require('child_process').execSync('git rev-parse HEAD', { 
-                encoding: 'utf8', 
-                stdio: ['pipe', 'pipe', 'pipe'],
-                cwd: repoRoot 
-            }).trim();
+            const gitHeadPath = path.join(repoRoot, '.git', 'HEAD');
+            let headContent = fs.readFileSync(gitHeadPath, 'utf8').trim();
+            
+            if (headContent.startsWith('ref: ')) {
+                const refPath = path.join(repoRoot, '.git', headContent.slice(5));
+                if (fs.existsSync(refPath)) {
+                    commitHash = fs.readFileSync(refPath, 'utf8').trim();
+                } else {
+                    const gitDir = fs.readFileSync(path.join(repoRoot, '.git'), 'utf8').trim();
+                    const actualGitDir = gitDir.replace('gitdir: ', '');
+                    const actualRefPath = path.join(actualGitDir, headContent.slice(5));
+                    commitHash = fs.readFileSync(actualRefPath, 'utf8').trim();
+                }
+            } else {
+                commitHash = headContent;
+            }
             log(`[DEBUG] commitHash = ${commitHash}`, 'handleLogMessage');
         } catch (gitErr) {
             log(`Failed to get git HEAD: ${gitErr.message}`, 'handleLogMessage');
