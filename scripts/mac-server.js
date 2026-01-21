@@ -261,10 +261,47 @@ const MAX_SUMMARY_CACHE_SIZE = 5;
 
 let haikuContext = [];
 
+let haikuConversationId = null;
+
 let conversationWatcher = null;
 let gitDiffWatcher = null;
 
 const messageStates = new Map();
+
+
+// ============================================
+// HAIKU CONVERSATION CONTRACTS (Design by Contract)
+// ============================================
+
+function invariantHaikuConversation(currentId) {
+    if (haikuConversationId !== null && currentId !== haikuConversationId) {
+        error(`INV: Haiku request using different conversation. Expected ${haikuConversationId}, got ${currentId}`, 'invariantHaikuConversation');
+    }
+}
+
+function preconditionProcessWithHaiku(text, task) {
+    invariantHaikuConversation(haikuConversationId);
+    if (!text || text.trim() === '') {
+        error('PRE: processWithHaiku text is empty', 'preconditionProcessWithHaiku');
+    }
+    if (!['correct_transcription', 'create_summary'].includes(task)) {
+        error(`PRE: processWithHaiku invalid task: ${task}`, 'preconditionProcessWithHaiku');
+    }
+}
+
+function postconditionProcessWithHaiku(result, task, conversationId) {
+    if (task === 'correct_transcription' && (!result || !result.corrected)) {
+        error('POST: processWithHaiku correction has no corrected field', 'postconditionProcessWithHaiku');
+    }
+    if (task === 'create_summary' && (!result || !result.summary)) {
+        error('POST: processWithHaiku summary has no summary field', 'postconditionProcessWithHaiku');
+    }
+    if (haikuConversationId === null && conversationId) {
+        haikuConversationId = conversationId;
+        log(`Haiku conversation ID set: ${haikuConversationId}`, 'postconditionProcessWithHaiku');
+    }
+    invariantHaikuConversation(conversationId);
+}
 
 
 const haikuPriorityQueue = {
@@ -403,6 +440,8 @@ OUTPUT: Respond with valid JSON only, no markdown, no explanation:
 }
 
 async function processWithHaiku(text, task, completeTranscription = null) {
+    preconditionProcessWithHaiku(text, task);
+
     const cleanText = text.replace(/[\n\r]+/g, ' ').replace(/\s+/g, ' ').trim();
 
     log(`Haiku ${task}: "${cleanText.substring(0, 60)}..."`, 'processWithHaiku');
@@ -453,8 +492,10 @@ async function processWithHaiku(text, task, completeTranscription = null) {
             const corrected = parsed.corrected || cleanText;
 
             if (task === 'correct_transcription') {
+                const result = { corrected };
+                postconditionProcessWithHaiku(result, task, null);
                 log(`Corrected: "${corrected.substring(0, 50)}..."`, 'processWithHaiku');
-                return { corrected };
+                return result;
             } else {
                 if (summary.length > MAX_SUMMARY_CHARS) {
                     log(`Summary too long: ${summary.length} chars`, 'processWithHaiku');
@@ -463,7 +504,9 @@ async function processWithHaiku(text, task, completeTranscription = null) {
                 }
                 log(`Summary: "${summary}" (${summary.length} chars)`, 'processWithHaiku');
                 addToContext({ type: 'summary_attempt', result: summary, chars: summary.length, success: true });
-                return { summary };
+                const result = { summary };
+                postconditionProcessWithHaiku(result, task, null);
+                return result;
             }
 
         } catch (err) {
