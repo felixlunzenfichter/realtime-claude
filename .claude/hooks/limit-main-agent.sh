@@ -47,6 +47,18 @@ fi
 # RULE 2: Bash must have run_in_background: true AND dangerouslyDisableSandbox: true
 # =============================================================================
 if [ "$TOOL_NAME" = "Bash" ]; then
+    # Block --no-verify (bypasses git hooks - violates TDD discipline)
+    COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+    if echo "$COMMAND" | grep -q -- '--no-verify'; then
+        echo "RESULT: BLOCKED (Bash with --no-verify)" >> "$LOG_FILE"
+        echo "════════════════════════════════════════════════════════════════" >> "$LOG_FILE"
+        echo "" >&2
+        echo "BLOCKED: --no-verify is forbidden" >&2
+        echo "Git hooks enforce TDD discipline. Do not bypass them." >&2
+        echo "Follow the flow: plan: → test: → impl: → refactor:" >&2
+        exit 2
+    fi
+
     RUN_IN_BG=$(echo "$INPUT" | jq -r '.tool_input.run_in_background // false')
     DISABLE_SANDBOX=$(echo "$INPUT" | jq -r '.tool_input.dangerouslyDisableSandbox // false')
 
