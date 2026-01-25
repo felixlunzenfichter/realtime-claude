@@ -333,7 +333,8 @@ function getMessageState(messageId) {
 function addToContext(event) {
     haikuContext.push({
         ...event,
-        timestamp: Date.now()
+        gitState: gitState,
+                timestamp: Date.now()
     });
     if (haikuContext.length > MAX_CONTEXT_EVENTS) {
         haikuContext.shift();
@@ -705,7 +706,8 @@ async function triggerTranscription(messageId) {
                 } else {
                     const rawTranscription = {
                         messageId: messageId,
-                        timestamp: Date.now(),
+                        gitState: gitState,
+                timestamp: Date.now(),
                         type: 'transcription',
                         transcription: messageState.shortTranscription
                     };
@@ -757,6 +759,7 @@ async function handleAudioEnd(messageId) {
         if (activeSocket && !messageState.deleted) {
             const rawTranscription = {
                 messageId: messageId,
+                gitState: gitState,
                 timestamp: Date.now(),
                 type: 'transcription',
                 transcription: messageState.shortTranscription
@@ -787,7 +790,8 @@ async function handleAudioEnd(messageId) {
                 if (activeSocket && !messageState.deleted) {
                     const promptMessage = {
                         messageId: messageId,
-                        timestamp: Date.now(),
+                        gitState: gitState,
+                timestamp: Date.now(),
                         type: 'prompt',
                         prompt: corrected
                     };
@@ -830,7 +834,8 @@ async function handleAudioEnd(messageId) {
                 if (activeSocket && !messageState.deleted) {
                     const summaryMessage = {
                         messageId: messageId,
-                        timestamp: Date.now(),
+                        gitState: gitState,
+                timestamp: Date.now(),
                         type: 'summary',
                         summary: summary
                     };
@@ -945,6 +950,8 @@ async function handleMessage(socket, logData) {
         handlePromptMessage(socket, logData);
     } else if (isAudioMessage(logData)) {
         await handleAudioMessage(socket, logData);
+    } else if (isMergePrMessage(logData)) {
+        handleMergePrMessage(socket, logData);
     } else if (isDeleteMessage(logData)) {
         handleDeleteMessage(logData);
     } else if (isErrorMessage(logData)) {
@@ -972,6 +979,33 @@ function isLogMessage(logData) {
     return 'log' in logData.type;
 }
 
+
+function isMergePrMessage(logData) {
+    return logData.type === 'merge_pr';
+}
+
+function handleMergePrMessage(socket, logData) {
+    const { prNumber } = logData;
+    log(`Received merge_pr request for PR #${prNumber}`, 'handleMergePrMessage');
+    
+    if (!prNumber) {
+        log(`No prNumber provided`, 'handleMergePrMessage');
+        return;
+    }
+    
+    const repoPath = getRepoPath();
+    if (!repoPath) {
+        log(`No repo configured`, 'handleMergePrMessage');
+        return;
+    }
+    
+    try {
+        const result = execSync(`gh pr merge ${prNumber} --merge --delete-branch`, { cwd: repoPath, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+        log(`PR #${prNumber} merged successfully: ${result}`, 'handleMergePrMessage');
+    } catch (err) {
+        log(`Failed to merge PR #${prNumber}: ${err.message}`, 'handleMergePrMessage');
+    }
+}
 function handleUnknownMessage(logData) {
     error(`Unknown message type: ${logData.type}`, 'handleUnknownMessage');
 }
@@ -1074,7 +1108,8 @@ end tell`;
     pendingPrompts.set(promptId, {
         originalPrompt: prompt,
         messageId: messageId,
-        timestamp: Date.now(),
+        gitState: gitState,
+                timestamp: Date.now(),
         verified: false
     });
     log(`Added prompt to tracking (${pendingPrompts.size} total)`, 'handlePromptMessage');
@@ -1545,7 +1580,8 @@ function computeColumns(text) {
 function writeColumnsJson(hash, columns) {
     const data = {
         hash: hash,
-        timestamp: Date.now(),
+        gitState: gitState,
+                timestamp: Date.now(),
         columns: columns
     };
     try {
@@ -1641,6 +1677,48 @@ function initializeGitDiffWatcher() {
 
 
 
+
+function getGitState(repoPath) {
+    log(`Getting git state for ${repoPath}`, 'getGitState');
+    try {
+        const branch = execSync('git branch --show-current', { cwd: repoPath, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+        log(`Current branch: ${branch}`, 'getGitState');
+        
+        let commits = [];
+        try {
+            const commitOutput = execSync('git log origin/development..HEAD --pretty=format:"%h|%s|%ar" 2>/dev/null', { cwd: repoPath, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+            commits = commitOutput.trim().split('\n').filter(Boolean).map(line => {
+                const [hash, message, timestamp] = line.split('|');
+                return { hash, message, timestamp };
+            });
+            log(`Found ${commits.length} commits ahead of development`, 'getGitState');
+        } catch (e) {
+            log(`No commits ahead of development or error: ${e.message}`, 'getGitState');
+        }
+        
+        let hasPR = false;
+        let prNumber = null;
+        try {
+            const prInfo = execSync('gh pr view --json number,state 2>/dev/null || echo "{}"', { cwd: repoPath, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+            const pr = JSON.parse(prInfo);
+            if (pr.state === 'OPEN') {
+                hasPR = true;
+                prNumber = pr.number;
+                log(`Open PR found: #${prNumber}`, 'getGitState');
+            } else {
+                log(`No open PR`, 'getGitState');
+            }
+        } catch (e) {
+            log(`PR check error: ${e.message}`, 'getGitState');
+        }
+        
+        return { branch, commits, hasPR, prNumber };
+    } catch (err) {
+        log(`getGitState error: ${err.message}`, 'getGitState');
+        return { branch: '', commits: [], hasPR: false, prNumber: null };
+    }
+}
+
 function sendGitDiffToiOS(force = false) {
     const repoPath = getRepoPath();
     if (!repoPath) {
@@ -1678,10 +1756,12 @@ function sendGitDiffToiOS(force = false) {
         writeColumnsJson(hash, columns);
 
         if (activeSocket) {
+            const gitState = getGitState(repoPath);
             const diffMessage = {
                 type: 'code_diff',
                 diff: columns.join('\n\n--- COLUMN ---\n\n'),
                 columns: columns,
+                gitState: gitState,
                 timestamp: Date.now()
             };
 
@@ -1877,7 +1957,8 @@ async function sendPromptAckWithSummary(originalPrompt, messageId) {
 
         const summaryMessage = {
             messageId: messageId,
-            timestamp: Date.now(),
+            gitState: gitState,
+                timestamp: Date.now(),
             type: 'summary',
             summary: extractedSummary
         };
@@ -1904,6 +1985,7 @@ async function sendPromptAckWithSummary(originalPrompt, messageId) {
 
             const summaryMessage = {
                 messageId: messageId,
+                gitState: gitState,
                 timestamp: Date.now(),
                 type: 'summary',
                 summary: summary
@@ -1942,7 +2024,8 @@ async function sendAssistantMessageToiOS(text) {
 
         const assistantMessage = {
             messageId: messageId,
-            timestamp: Date.now(),
+            gitState: gitState,
+                timestamp: Date.now(),
             type: 'assistant',
             prompt: text,
             summary: ""
@@ -1972,7 +2055,8 @@ async function sendAssistantMessageToiOS(text) {
 
                 const summaryUpdate = {
                     messageId: cacheEntry?.messageId || messageId,
-                    timestamp: Date.now(),
+                    gitState: gitState,
+                timestamp: Date.now(),
                     type: 'assistant',
                     prompt: text,
                     summary: summary

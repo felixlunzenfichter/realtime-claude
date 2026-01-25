@@ -12,6 +12,19 @@ struct SessionStats {
     let totalTests: Int
 }
 
+struct GitCommit: Codable {
+    let hash: String
+    let message: String
+    let timestamp: String
+}
+
+struct GitState: Codable {
+    let branch: String
+    let commits: [GitCommit]
+    let hasPR: Bool
+    let prNumber: Int?
+}
+
 protocol LoggerProtocol {
     var logsSubject: CurrentValueSubject<[LogMessage], Never> { get }
     var debugLogsSubject: CurrentValueSubject<[(LogMessage, Int)], Never> { get }
@@ -20,11 +33,13 @@ protocol LoggerProtocol {
     var testsPassedSubject: CurrentValueSubject<Int, Never> { get }
     var macConnectionReadySubject: CurrentValueSubject<Bool, Never> { get }
     var codeDiffSubject: CurrentValueSubject<String, Never> { get }
+    var gitStateSubject: CurrentValueSubject<GitState?, Never> { get }
     var claudeIsActiveSubject: CurrentValueSubject<Bool, Never> { get }
 
     func sendPromptToMac(_ prompt: String, messageId: UUID)
     func sendAudioToMac(_ audioData: Data, isStart: Bool, isEnd: Bool, messageId: UUID?)
     func sendDeleteToMac(messageId: UUID)
+    func sendMergePrToMac(prNumber: Int)
 }
 
 enum LogType: Codable {
@@ -73,6 +88,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     let transmittedLogIdsSubject = CurrentValueSubject<[String], Never>([])
     let macConnectionReadySubject = CurrentValueSubject<Bool, Never>(false)
     let codeDiffSubject = CurrentValueSubject<String, Never>("")
+    let gitStateSubject = CurrentValueSubject<GitState?, Never>(nil)
     let claudeIsActiveSubject = CurrentValueSubject<Bool, Never>(false)
 
     private var connection: NWConnection
@@ -614,7 +630,27 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         }
 
         codeDiffSubject.send(diff)
-        log("📥 Received git diff: \(diff.isEmpty ? "empty" : "\(diff.split(separator: "\n").count) lines")")
+        log("Received git diff: \(diff.isEmpty ? "empty" : "\(diff.split(separator: \"\n\").count) lines")")
+        
+        if let gitStateData = jsonData["gitState"] as? [String: Any] {
+            let branch = gitStateData["branch"] as? String ?? ""
+            let hasPR = gitStateData["hasPR"] as? Bool ?? false
+            let prNumber = gitStateData["prNumber"] as? Int
+            
+            var commits: [GitCommit] = []
+            if let commitsData = gitStateData["commits"] as? [[String: Any]] {
+                for commitData in commitsData {
+                    let hash = commitData["hash"] as? String ?? ""
+                    let message = commitData["message"] as? String ?? ""
+                    let timestamp = commitData["timestamp"] as? String ?? ""
+                    commits.append(GitCommit(hash: hash, message: message, timestamp: timestamp))
+                }
+            }
+            
+            let gitState = GitState(branch: branch, commits: commits, hasPR: hasPR, prNumber: prNumber)
+            gitStateSubject.send(gitState)
+            log("Received git state: branch=\(branch), commits=\(commits.count), hasPR=\(hasPR), prNumber=\(prNumber ?? -1)")
+        }
     }
 
     private func handleClaudeStateMessage(_ jsonData: [String: Any]) {
@@ -691,7 +727,21 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             return
         }
 
-        sendMessage(jsonData, messageType: "delete", logMessage: "📤 [iOS → macOS] Sending delete for messageId: \(messageId.uuidString)")
+        sendMessage(jsonData, messageType: "delete", logMessage: "Sending delete for messageId: \(messageId.uuidString)")
+    }
+
+    func sendMergePrToMac(prNumber: Int) {
+        let mergeMessage: [String: Any] = [
+            "type": "merge_pr",
+            "prNumber": prNumber
+        ]
+
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: mergeMessage) else {
+            error("Failed to serialize merge_pr message to JSON")
+            return
+        }
+
+        sendMessage(jsonData, messageType: "merge_pr", logMessage: "Sending merge_pr for PR #\(prNumber)")
     }
 
     private func scheduleReconnect() {

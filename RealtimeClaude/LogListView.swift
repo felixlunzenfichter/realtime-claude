@@ -523,61 +523,14 @@ struct LogRowView: View {
     }
 }
 
-enum NavigationMode {
-    case headers
-    case hunks
-    case changes
-    case sections
 
-    var color: Color {
-        switch self {
-        case .headers:
-            return .purple
-        case .hunks:
-            return .cyan
-        case .changes:
-            return .green
-        case .sections:
-            return .orange
-        }
-    }
-
-    var label: String {
-        switch self {
-        case .headers:
-            return "Headers"
-        case .hunks:
-            return "Hunks"
-        case .changes:
-            return "Changes"
-        case .sections:
-            return "Sections"
-        }
-    }
-
-    func next() -> NavigationMode {
-        switch self {
-        case .headers:
-            return .hunks
-        case .hunks:
-            return .changes
-        case .changes:
-            return .sections
-        case .sections:
-            return .headers
-        }
-    }
-}
 
 @Observable
 class DiffViewModel {
     var codeDiff: String = ""
-    var scrollToLineIndex: Int? = nil
-    var currentChangeIndex: Int = 0
-    var currentNavigationMode: NavigationMode = .changes
-    var highlightedLineIndex: Int?
+    var gitState: GitState? = nil
+    var selectedCommitHash: String? = nil
 
-    private var previousDiffLines: [(text: String, type: DiffLineType)] = []
     private var cancellables = Set<AnyCancellable>()
 
     init() {
@@ -585,13 +538,19 @@ class DiffViewModel {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] diff in
                 guard let self = self else { return }
-
-                let previousDiff = self.codeDiff
                 self.codeDiff = diff
-
-                guard !diff.isEmpty, diff != previousDiff else { return }
-
-                self.findFirstChangedLine()
+                log("DiffViewModel received diff update: \(diff.isEmpty ? "empty" : "\(diff.split(separator: \"\n\").count) lines")")
+            }
+            .store(in: &cancellables)
+        
+        logger.gitStateSubject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in
+                guard let self = self else { return }
+                self.gitState = state
+                if let state = state {
+                    log("DiffViewModel received gitState: branch=\(state.branch), commits=\(state.commits.count), hasPR=\(state.hasPR)")
+                }
             }
             .store(in: &cancellables)
     }
@@ -616,159 +575,20 @@ class DiffViewModel {
             }
         }
     }
-
-    var changeIndices: [Int] {
-        let lines = diffLines
-        var indices: [Int] = []
-
-        for (index, line) in lines.enumerated() {
-            let text = line.text
-            if text.hasPrefix("---") || text.hasPrefix("+++") {
-                continue
-            }
-
-            guard line.type == .addition || line.type == .deletion || line.type == .hunk else {
-                continue
-            }
-
-            indices.append(index)
-        }
-
-        return indices
+    
+    func selectCommit(_ hash: String) {
+        selectedCommitHash = hash
+        log("Selected commit: \(hash)")
     }
-
-    var changeChunkIndices: [Int] {
-        let indices = changeIndices
-        guard !indices.isEmpty else { return [] }
-
-        var chunkStarts: [Int] = [indices[0]]
-
-        for i in 1..<indices.count {
-            if indices[i] - indices[i-1] > 1 {
-                chunkStarts.append(indices[i])
-            }
+    
+    func approvePR() {
+        guard let gitState = gitState, gitState.hasPR, let prNumber = gitState.prNumber else {
+            log("Cannot approve: no open PR")
+            return
         }
-
-        return chunkStarts
+        log("Approving PR #\(prNumber)")
+        logger.sendMergePrToMac(prNumber: prNumber)
     }
-
-    var modeSpecificIndices: [Int] {
-        let lines = diffLines
-
-        switch currentNavigationMode {
-        case .headers:
-            return lines.enumerated().compactMap { index, line in
-                line.type == .header ? index : nil
-            }
-        case .hunks:
-            return lines.enumerated().compactMap { index, line in
-                line.type == .hunk ? index : nil
-            }
-        case .changes:
-            return changeChunkIndices
-        case .sections:
-            return lines.enumerated().compactMap { index, line in
-                line.type == .sectionHeader ? index : nil
-            }
-        }
-    }
-
-    func cycleNavigationMode() {
-        currentNavigationMode = currentNavigationMode.next()
-        currentChangeIndex = 0
-        log("Navigation mode changed to: \(currentNavigationMode.label)")
-    }
-
-    func navigateToNextChange() {
-        let indices = modeSpecificIndices
-        guard !indices.isEmpty else { return }
-
-        if let currentPos = highlightedLineIndex {
-            for (arrayIndex, lineIndex) in indices.enumerated() {
-                if lineIndex <= currentPos {
-                    currentChangeIndex = arrayIndex
-                } else {
-                    break
-                }
-            }
-        }
-
-        if currentChangeIndex < indices.count - 1 {
-            currentChangeIndex += 1
-        } else {
-            currentChangeIndex = 0
-        }
-
-        let targetIndex = indices[currentChangeIndex]
-        scrollToLineIndex = nil
-        scrollToLineIndex = targetIndex
-        highlightedLineIndex = targetIndex
-        log("Navigated to next \(currentNavigationMode.label): \(currentChangeIndex + 1)/\(indices.count)")
-    }
-
-    func navigateToPreviousChange() {
-        let indices = modeSpecificIndices
-        guard !indices.isEmpty else { return }
-
-        if let currentPos = highlightedLineIndex {
-            for (arrayIndex, lineIndex) in indices.enumerated() {
-                if lineIndex <= currentPos {
-                    currentChangeIndex = arrayIndex
-                } else {
-                    break
-                }
-            }
-        }
-
-        if currentChangeIndex > 0 {
-            currentChangeIndex -= 1
-        } else {
-            currentChangeIndex = indices.count - 1
-        }
-
-        let targetIndex = indices[currentChangeIndex]
-        scrollToLineIndex = nil
-        scrollToLineIndex = targetIndex
-        highlightedLineIndex = targetIndex
-        log("Navigated to previous \(currentNavigationMode.label): \(currentChangeIndex + 1)/\(indices.count)")
-    }
-
-    func findFirstChangedLine() {
-        let currentLines = diffLines
-
-        var firstChangeIndex: Int?
-
-        for (index, currentLine) in currentLines.enumerated() {
-            let text = currentLine.text
-            if text.hasPrefix("---") || text.hasPrefix("+++") {
-                continue
-            }
-
-            guard currentLine.type == .addition || currentLine.type == .deletion || currentLine.type == .hunk else {
-                continue
-            }
-
-            if index >= previousDiffLines.count {
-                firstChangeIndex = index
-                break
-            }
-
-            let previousLine = previousDiffLines[index]
-            if currentLine.text != previousLine.text {
-                firstChangeIndex = index
-                break
-            }
-        }
-
-        previousDiffLines = currentLines
-
-        let targetIndex = firstChangeIndex ?? 0
-        currentChangeIndex = 0
-        scrollToLineIndex = nil
-        scrollToLineIndex = targetIndex
-        highlightedLineIndex = targetIndex
-    }
-
 }
 
 enum DiffLineType {
@@ -806,34 +626,54 @@ struct DiffView: View {
             Color(UIColor.systemBackground)
                 .ignoresSafeArea()
 
-            if viewModel.codeDiff.isEmpty {
-                VStack {
+            VStack(spacing: 0) {
+                if let gitState = viewModel.gitState, !gitState.commits.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(gitState.commits, id: \.hash) { commit in
+                                Button(action: {
+                                    viewModel.selectCommit(commit.hash)
+                                    log("Tapped commit: \(commit.hash)")
+                                }) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(commit.hash)
+                                            .font(.system(.caption, design: .monospaced))
+                                            .fontWeight(.bold)
+                                        Text(commit.message)
+                                            .font(.caption2)
+                                            .lineLimit(1)
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(viewModel.selectedCommitHash == commit.hash ? Color.blue.opacity(0.3) : Color.secondary.opacity(0.2))
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                    }
+                    .frame(height: 50)
+                    .background(Color(UIColor.secondarySystemBackground))
+                }
+
+                if viewModel.codeDiff.isEmpty {
                     Spacer()
                     Text("No changes")
                         .font(.title2)
                         .foregroundColor(.secondary.opacity(0.5))
                     Spacer()
-                }
-                .frame(height: ACTUAL_SCREEN_HEIGHT)
-            } else {
-                ScrollViewReader { proxy in
+                } else {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             Spacer()
-                                .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")) * 2)
+                                .frame(height: 20)
 
-                            let highlightedLine = viewModel.highlightedLineIndex
                             ForEach(Array(viewModel.diffLines.enumerated()), id: \.offset) { index, line in
-                                DiffLineView(text: line.text, type: line.type, index: index, currentLineIndex: highlightedLine)
+                                DiffLineView(text: line.text, type: line.type, index: index, currentLineIndex: nil)
                                     .id(index)
-                                    .background(
-                                        GeometryReader { geo in
-                                            Color.clear.preference(
-                                                key: VisibleLinePreferenceKey.self,
-                                                value: [index: geo.frame(in: .named("diffScroll")).midY]
-                                            )
-                                        }
-                                    )
                             }
 
                             Spacer()
@@ -841,54 +681,39 @@ struct DiffView: View {
                         }
                         .padding(.horizontal, 12)
                     }
-                    .coordinateSpace(name: "diffScroll")
-                    .onPreferenceChange(VisibleLinePreferenceKey.self) { positions in
-                        let centerY = ACTUAL_SCREEN_HEIGHT / 2
-                        if let closestLine = positions.min(by: { abs($0.value - centerY) < abs($1.value - centerY) }) {
-                            viewModel.highlightedLineIndex = closestLine.key
+                }
+
+                HStack {
+                    if let gitState = viewModel.gitState, gitState.hasPR, let prNumber = gitState.prNumber {
+                        Button(action: {
+                            viewModel.approvePR()
+                            log("Approve button tapped for PR #\(prNumber)")
+                        }) {
+                            HStack {
+                                Image(systemName: "checkmark.circle.fill")
+                                Text("Merge PR #\(prNumber)")
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Color.green)
+                            .foregroundColor(.white)
+                            .cornerRadius(8)
                         }
                     }
-                    .frame(height: ACTUAL_SCREEN_HEIGHT)
+                    
+                    Spacer()
+                    
+                    Button(action: {
+                        showDiff.toggle()
+                        log("Close diff view")
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(.secondary)
+                    }
                 }
-            }
-
-            VStack {
-                Spacer()
-
-                ToggleBar(items: [
-                    ToggleBar.ToggleItem(
-                        color: viewModel.currentNavigationMode.color,
-                        isOn: .constant(false),
-                        icon: "chevron.left",
-                        action: {
-                            viewModel.navigateToPreviousChange()
-                        }
-                    ),
-                    ToggleBar.ToggleItem(
-                        color: viewModel.currentNavigationMode.color,
-                        isOn: .constant(false),
-                        icon: "circle.fill",
-                        action: {
-                            viewModel.cycleNavigationMode()
-                        }
-                    ),
-                    ToggleBar.ToggleItem(
-                        color: .blue,
-                        isOn: $showDiff,
-                        icon: "xmark",
-                        action: {
-                            showDiff.toggle()
-                        }
-                    ),
-                    ToggleBar.ToggleItem(
-                        color: viewModel.currentNavigationMode.color,
-                        isOn: .constant(false),
-                        icon: "chevron.right",
-                        action: {
-                            viewModel.navigateToNextChange()
-                        }
-                    )
-                ])
+                .padding()
+                .background(Color(UIColor.secondarySystemBackground))
             }
         }
     }
