@@ -88,7 +88,14 @@ fi
 # =============================================================================
 # STRICT ORDER ENFORCEMENT
 # =============================================================================
-PREV_MSG=$(git log -1 --pretty=%s 2>/dev/null || echo "")
+# Count commits on this branch (not on parent)
+BRANCH_COMMITS=$(git rev-list --count HEAD ^origin/development 2>/dev/null || echo "0")
+
+if [ "$BRANCH_COMMITS" = "0" ]; then
+    PREV_MSG=""
+else
+    PREV_MSG=$(git log --oneline HEAD ^origin/development 2>/dev/null | head -1 | cut -d' ' -f2-)
+fi
 
 case "$TYPE" in
     plan)
