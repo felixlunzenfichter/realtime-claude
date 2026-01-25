@@ -55,3 +55,43 @@ With this: 200k context ÷ 500 per task = 400 tasks, immortal coordinator
 
 ### Pattern
 User speaks → Spawn agent → Keep talking → Get summary → Repeat forever
+
+## TDD COMMIT ENFORCEMENT
+
+**Every commit must have prefix: test: | impl: | refactor:**
+
+commit-msg hook validates via headless Claude agent.
+
+### test: - Specification
+
+PASS if diff adds:
+- pre(condition, message) - precondition guards
+- post(condition, message) - postcondition guards
+- inv(condition, message) - invariant guards
+- STORY test case entries
+- TEST_*_MARKER definitions
+- Test functions that emit markers
+
+FAIL if:
+- None of above added
+- ANY log() that isn't a test marker
+- Business logic
+
+### impl: - Implementation
+
+PASS if diff adds:
+- log() calls (the story/narrative)
+- Logic that makes contracts pass
+
+FAIL if:
+- No log() calls added
+- Only contracts (that's test:)
+
+### refactor: - Cleanup
+
+PASS if:
+- ZERO comments in added lines
+- Code is clean and readable
+
+FAIL if:
+- Any comment syntax in added lines
