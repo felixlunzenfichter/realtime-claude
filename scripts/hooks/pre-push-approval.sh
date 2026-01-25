@@ -1,5 +1,4 @@
 #!/bin/bash
-# Pre-push hook: Wait for iOS approval before allowing push
 
 APPROVAL_FILE="/tmp/.merge-approval"
 TIMEOUT=120
@@ -11,7 +10,6 @@ echo ""
 
 for i in $(seq 1 $TIMEOUT); do
     if [ -f "$APPROVAL_FILE" ]; then
-        # Check freshness (< 30 seconds old)
         TOKEN_AGE=$(( $(date +%s) - $(stat -f %m "$APPROVAL_FILE") ))
         if [ $TOKEN_AGE -lt 30 ]; then
             rm -f "$APPROVAL_FILE"
@@ -23,12 +21,11 @@ for i in $(seq 1 $TIMEOUT); do
             rm -f "$APPROVAL_FILE"
         fi
     fi
-    
-    # Show waiting indicator every 10 seconds
+
     if [ $((i % 10)) -eq 0 ]; then
         echo "   Still waiting... (${i}s)"
     fi
-    
+
     sleep 1
 done
 
