@@ -58,9 +58,28 @@ User speaks → Spawn agent → Keep talking → Get summary → Repeat forever
 
 ## TDD COMMIT ENFORCEMENT
 
-**Every commit must have prefix: test: | impl: | refactor:**
+**Every commit must have prefix: plan: | test: | impl: | refactor:**
 
 commit-msg hook validates via headless Claude agent.
+
+### Universal Rules (Uncle Bob)
+
+1. **BRANCH = TOPIC** - changes must relate to branch name
+2. **ONE THING** - focused on single behavior
+3. **MESSAGE MATCH** - describes exactly what diff does
+
+### plan: - Design
+
+PASS if diff adds:
+- Design documents or architecture decisions
+- Plan files (.md planning docs)
+- TODO lists or task breakdowns
+- Interface definitions (what, not how)
+
+FAIL if:
+- Contains implementation code
+- Contains test code (contracts)
+- No planning content added
 
 ### test: - Specification
 

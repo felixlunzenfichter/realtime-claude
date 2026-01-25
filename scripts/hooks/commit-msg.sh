@@ -3,7 +3,26 @@
 COMMIT_MSG=$(cat "$1")
 GIT_DIFF=$(git diff --cached)
 
-if [[ "$COMMIT_MSG" == test:* ]]; then
+if [[ "$COMMIT_MSG" == plan:* ]]; then
+    TYPE="plan"
+    PROMPT="PLANNING COMMIT.
+
+PASS if diff adds:
+- Design documents or architecture decisions
+- Plan files (.md planning docs)
+- TODO lists or task breakdowns
+- Interface definitions (what, not how)
+
+Defines the approach before implementation.
+
+FAIL if:
+- Contains implementation code
+- Contains test code (contracts)
+- No planning content added
+
+You MUST return exactly this JSON format: {\"pass\": true, \"reason\": \"explanation\"} or {\"pass\": false, \"reason\": \"what is missing\"}"
+
+elif [[ "$COMMIT_MSG" == test:* ]]; then
     TYPE="test"
     PROMPT="SPECIFICATION COMMIT.
 
@@ -56,8 +75,9 @@ You MUST return exactly this JSON format: {\"pass\": true, \"reason\": \"explana
 else
     echo ""
     echo "❌ TDD FAIL: Invalid commit prefix"
-    echo "   Required: test: | impl: | refactor:"
+    echo "   Required: plan: | test: | impl: | refactor:"
     echo ""
+    echo "   plan:     Add design docs, architecture, plans"
     echo "   test:     Add pre(), post(), inv() contracts (specification)"
     echo "   impl:     Add log() and logic (implementation)"
     echo "   refactor: Clean up, no comments"
