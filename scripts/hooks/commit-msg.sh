@@ -22,7 +22,7 @@ FAIL if:
 - ANY log() that isn't a test marker
 - Business logic
 
-You MUST return exactly this JSON format: {"pass": true, "reason": "explanation"} or {"pass": false, "reason": "what is missing"}"
+You MUST return exactly this JSON format: {\"pass\": true, \"reason\": \"explanation\"} or {\"pass\": false, \"reason\": \"what is missing\"}"
 
 elif [[ "$COMMIT_MSG" == impl:* ]]; then
     TYPE="impl"
@@ -38,7 +38,7 @@ FAIL if:
 - No narrative output added
 - Only contracts (that's test:)
 
-You MUST return exactly this JSON format: {"pass": true, "reason": "explanation"} or {"pass": false, "reason": "what is missing"}"
+You MUST return exactly this JSON format: {\"pass\": true, \"reason\": \"explanation\"} or {\"pass\": false, \"reason\": \"what is missing\"}"
 
 elif [[ "$COMMIT_MSG" == refactor:* ]]; then
     TYPE="refactor"
@@ -51,7 +51,7 @@ PASS if:
 FAIL if:
 - Any comment syntax in added lines
 
-You MUST return exactly this JSON format: {"pass": true, "reason": "explanation"} or {"pass": false, "reason": "what is missing"}"
+You MUST return exactly this JSON format: {\"pass\": true, \"reason\": \"explanation\"} or {\"pass\": false, \"reason\": \"what is missing\"}"
 
 else
     echo ""
