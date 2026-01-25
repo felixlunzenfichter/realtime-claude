@@ -75,6 +75,14 @@ fi
 # RULE 3: Edit/Write must be in worktree
 # =============================================================================
 if [ "$TOOL_NAME" = "Edit" ] || [ "$TOOL_NAME" = "Write" ]; then
+    # Exception: Allow writes to .claude/plans/ for plan mode
+    FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+    if [[ "$FILE_PATH" == *"/.claude/plans/"* ]]; then
+        echo "RESULT: ALLOWED ($TOOL_NAME to plans directory)" >> "$LOG_FILE"
+        echo "════════════════════════════════════════════════════════════════" >> "$LOG_FILE"
+        exit 0
+    fi
+
     if [ "$IS_WORKTREE" = "true" ]; then
         echo "RESULT: ALLOWED ($TOOL_NAME in worktree)" >> "$LOG_FILE"
         echo "════════════════════════════════════════════════════════════════" >> "$LOG_FILE"
