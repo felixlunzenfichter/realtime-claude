@@ -873,6 +873,15 @@ struct DiffView: View {
                         }
                     ),
                     ToggleBar.ToggleItem(
+                        color: .green,
+                        isOn: .constant(false),
+                        icon: "checkmark.circle.fill",
+                        action: {
+                            log("Merge button tapped - sending approval to Mac")
+                            logger.sendMergeApprovalToMac()
+                        }
+                    ),
+                    ToggleBar.ToggleItem(
                         color: .blue,
                         isOn: $showDiff,
                         icon: "xmark",

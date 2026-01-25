@@ -25,6 +25,7 @@ protocol LoggerProtocol {
     func sendPromptToMac(_ prompt: String, messageId: UUID)
     func sendAudioToMac(_ audioData: Data, isStart: Bool, isEnd: Bool, messageId: UUID?)
     func sendDeleteToMac(messageId: UUID)
+    func sendMergeApprovalToMac()
 }
 
 enum LogType: Codable {
@@ -692,6 +693,20 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         }
 
         sendMessage(jsonData, messageType: "delete", logMessage: "📤 [iOS → macOS] Sending delete for messageId: \(messageId.uuidString)")
+    }
+
+    func sendMergeApprovalToMac() {
+        let mergeMessage: [String: Any] = [
+            "type": "merge_pr",
+            "timestamp": Date().timeIntervalSince1970
+        ]
+
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: mergeMessage) else {
+            error("Failed to serialize merge approval message")
+            return
+        }
+
+        sendMessage(jsonData, messageType: "merge_pr", logMessage: "📤 [iOS → macOS] Sending merge approval")
     }
 
     private func scheduleReconnect() {
