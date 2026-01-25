@@ -85,6 +85,50 @@ else
     exit 1
 fi
 
+# =============================================================================
+# STRICT ORDER ENFORCEMENT
+# =============================================================================
+PREV_MSG=$(git log -1 --pretty=%s 2>/dev/null || echo "")
+
+case "$TYPE" in
+    plan)
+        if [[ -n "$PREV_MSG" ]]; then
+            echo ""
+            echo "❌ ORDER: plan: must be first commit"
+            echo "   Previous: $PREV_MSG"
+            echo ""
+            exit 1
+        fi
+        ;;
+    test)
+        if [[ "$PREV_MSG" != plan:* ]]; then
+            echo ""
+            echo "❌ ORDER: test: must follow plan:"
+            echo "   Previous: $PREV_MSG"
+            echo ""
+            exit 1
+        fi
+        ;;
+    impl)
+        if [[ "$PREV_MSG" != test:* ]]; then
+            echo ""
+            echo "❌ ORDER: impl: must follow test:"
+            echo "   Previous: $PREV_MSG"
+            echo ""
+            exit 1
+        fi
+        ;;
+    refactor)
+        if [[ "$PREV_MSG" != impl:* ]]; then
+            echo ""
+            echo "❌ ORDER: refactor: must follow impl:"
+            echo "   Previous: $PREV_MSG"
+            echo ""
+            exit 1
+        fi
+        ;;
+esac
+
 echo ""
 echo "🔍 TDD Enforcer checking $TYPE commit..."
 
