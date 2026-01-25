@@ -2,13 +2,6 @@ import SwiftUI
 import Combine
 import Observation
 
-struct VisibleLinePreferenceKey: PreferenceKey {
-    nonisolated(unsafe) static var defaultValue: [Int: CGFloat] = [:]
-    static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
-        value.merge(nextValue()) { $1 }
-    }
-}
-
 @Observable
 class LogListViewModel {
     var debugLogs: [(LogMessage, Int)] = []
