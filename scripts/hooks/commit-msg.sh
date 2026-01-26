@@ -85,10 +85,6 @@ else
     exit 1
 fi
 
-# =============================================================================
-# STRICT ORDER ENFORCEMENT
-# =============================================================================
-# Count commits on this branch (not on parent)
 BRANCH_COMMITS=$(git rev-list --count HEAD ^origin/development 2>/dev/null || echo "0")
 
 if [ "$BRANCH_COMMITS" = "0" ]; then
@@ -136,6 +132,81 @@ case "$TYPE" in
         ;;
 esac
 
+STAGED_FILES=$(git diff --cached --name-status)
+REPO_ROOT=$(git rev-parse --show-toplevel)
+
+TEST_TRACE_FAILING_pre() {
+    if ! echo "$STAGED_FILES" | grep -q "\.test-trace-failing"; then
+        echo ""
+        echo "❌ TRACE: test: requires .test-trace-failing in diff"
+        echo "   pre(trace_failing_in_diff, 'RED phase proof missing')"
+        echo ""
+        exit 1
+    fi
+}
+
+TEST_AUTOMATED_MARKER_pre() {
+    if [ ! -f "$REPO_ROOT/.test-passed-automated" ]; then
+        echo ""
+        echo "❌ TRACE: impl: requires .test-passed-automated to exist"
+        echo "   pre(automated_marker_exists, 'GREEN phase proof missing')"
+        echo ""
+        exit 1
+    fi
+}
+
+TEST_CLEANUP_pre() {
+    if [ ! -f "$REPO_ROOT/.test-passed-automated" ] || [ ! -f "$REPO_ROOT/.test-passed-manual" ]; then
+        echo ""
+        echo "❌ TRACE: refactor: requires both test markers to exist"
+        echo "   pre(both_markers_exist, 'Tests must pass before cleanup')"
+        echo ""
+        exit 1
+    fi
+
+    local missing_deletions=""
+
+    if ! echo "$STAGED_FILES" | grep -q "^D.*\.test-trace-failing"; then
+        if [ -f "$REPO_ROOT/.test-trace-failing" ]; then
+            missing_deletions="$missing_deletions .test-trace-failing"
+        fi
+    fi
+
+    if ! echo "$STAGED_FILES" | grep -q "^D.*\.test-passed-automated"; then
+        missing_deletions="$missing_deletions .test-passed-automated"
+    fi
+
+    if ! echo "$STAGED_FILES" | grep -q "^D.*\.test-passed-manual"; then
+        missing_deletions="$missing_deletions .test-passed-manual"
+    fi
+
+    if ! echo "$STAGED_FILES" | grep -q "^D.*.claude/plans/"; then
+        if ls "$REPO_ROOT/.claude/plans/"*.md 2>/dev/null | grep -v ".gitkeep" | head -1 > /dev/null; then
+            missing_deletions="$missing_deletions plan-file"
+        fi
+    fi
+
+    if [ -n "$missing_deletions" ]; then
+        echo ""
+        echo "❌ TRACE: refactor: must delete trace files"
+        echo "   pre(all_traces_deleted, 'Missing deletions:$missing_deletions')"
+        echo ""
+        exit 1
+    fi
+}
+
+case "$TYPE" in
+    test)
+        TEST_TRACE_FAILING_pre
+        ;;
+    impl)
+        TEST_AUTOMATED_MARKER_pre
+        ;;
+    refactor)
+        TEST_CLEANUP_pre
+        ;;
+esac
+
 echo ""
 echo "🔍 TDD Enforcer checking $TYPE commit..."
 
@@ -149,7 +220,6 @@ if [ $? -ne 0 ]; then
     exit 0
 fi
 
-# Extract the result field, strip markdown code blocks, then parse JSON
 INNER_JSON=$(echo "$RESULT" | jq -r '.result' 2>/dev/null | sed 's/^```json//; s/^```//; s/```$//' | tr -d '\n')
 PASS=$(echo "$INNER_JSON" | jq -r '.pass' 2>/dev/null)
 REASON=$(echo "$INNER_JSON" | jq -r '.reason' 2>/dev/null)

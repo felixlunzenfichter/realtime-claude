@@ -1,0 +1,18 @@
+TDD TRACE: RED PHASE
+====================
+Date: 2026-01-26
+Branch: enforce-tdd-traces
+
+EXPECTED BEHAVIOR:
+- test: commit requires .test-trace-failing in staged diff
+- impl: commit requires .test-passed-automated to exist
+- refactor: commit requires deletion of all trace files
+
+FAILURE OUTPUT (hook rejects without trace):
+$ git commit -m "test: add trace enforcement contracts"
+✅ Branch OK: enforce-tdd-traces
+❌ TRACE: test: requires .test-trace-failing in diff
+   pre(trace_failing_in_diff, 'RED phase proof missing')
+
+This trace file proves the test was written and the system correctly
+rejects commits without proper TDD evidence.
