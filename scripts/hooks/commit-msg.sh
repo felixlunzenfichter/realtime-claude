@@ -135,7 +135,13 @@ esac
 STAGED_FILES=$(git diff --cached --name-status)
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
+echo ""
+echo "📋 TDD Trace Enforcement"
+echo "   Type: $TYPE"
+echo "   Checking trace file requirements..."
+
 TEST_TRACE_FAILING_pre() {
+    echo "   Looking for .test-trace-failing in staged files..."
     if ! echo "$STAGED_FILES" | grep -q "\.test-trace-failing"; then
         echo ""
         echo "❌ TRACE: test: requires .test-trace-failing in diff"
@@ -143,9 +149,11 @@ TEST_TRACE_FAILING_pre() {
         echo ""
         exit 1
     fi
+    echo "   ✓ Found .test-trace-failing - RED phase documented"
 }
 
 TEST_AUTOMATED_MARKER_pre() {
+    echo "   Checking for .test-passed-automated marker..."
     if [ ! -f "$REPO_ROOT/.test-passed-automated" ]; then
         echo ""
         echo "❌ TRACE: impl: requires .test-passed-automated to exist"
@@ -153,9 +161,13 @@ TEST_AUTOMATED_MARKER_pre() {
         echo ""
         exit 1
     fi
+    local marker_hash=$(cat "$REPO_ROOT/.test-passed-automated")
+    echo "   ✓ Found .test-passed-automated - GREEN phase verified"
+    echo "   Marker hash: ${marker_hash:0:8}..."
 }
 
 TEST_CLEANUP_pre() {
+    echo "   Checking both test markers exist..."
     if [ ! -f "$REPO_ROOT/.test-passed-automated" ] || [ ! -f "$REPO_ROOT/.test-passed-manual" ]; then
         echo ""
         echo "❌ TRACE: refactor: requires both test markers to exist"
@@ -163,7 +175,9 @@ TEST_CLEANUP_pre() {
         echo ""
         exit 1
     fi
+    echo "   ✓ Both markers exist - tests passed"
 
+    echo "   Checking trace file deletions in staged diff..."
     local missing_deletions=""
 
     if ! echo "$STAGED_FILES" | grep -q "^D.*\.test-trace-failing"; then
@@ -193,9 +207,13 @@ TEST_CLEANUP_pre() {
         echo ""
         exit 1
     fi
+    echo "   ✓ All trace files being deleted - cleanup complete"
 }
 
 case "$TYPE" in
+    plan)
+        echo "   No trace requirements for plan: commits"
+        ;;
     test)
         TEST_TRACE_FAILING_pre
         ;;
