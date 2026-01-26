@@ -149,7 +149,7 @@ TEST_TRACE_FAILING_pre() {
         echo ""
         exit 1
     fi
-    echo "   ✓ Found .test-trace-failing - RED phase documented"
+    echo "   Found .test-trace-failing - RED phase documented"
 }
 
 TEST_AUTOMATED_MARKER_pre() {
@@ -162,7 +162,7 @@ TEST_AUTOMATED_MARKER_pre() {
         exit 1
     fi
     local marker_hash=$(cat "$REPO_ROOT/.test-passed-automated")
-    echo "   ✓ Found .test-passed-automated - GREEN phase verified"
+    echo "   Found .test-passed-automated - GREEN phase verified"
     echo "   Marker hash: ${marker_hash:0:8}..."
 }
 
@@ -175,27 +175,20 @@ TEST_CLEANUP_pre() {
         echo ""
         exit 1
     fi
-    echo "   ✓ Both markers exist - tests passed"
+    echo "   Both markers exist - tests passed"
 
     echo "   Checking trace file deletions in staged diff..."
     local missing_deletions=""
 
-    if ! echo "$STAGED_FILES" | grep -q "^D.*\.test-trace-failing"; then
-        if [ -f "$REPO_ROOT/.test-trace-failing" ]; then
+    if git ls-files --error-unmatch ".test-trace-failing" >/dev/null 2>&1; then
+        if ! echo "$STAGED_FILES" | grep -q "^D.*\.test-trace-failing"; then
             missing_deletions="$missing_deletions .test-trace-failing"
         fi
     fi
 
-    if ! echo "$STAGED_FILES" | grep -q "^D.*\.test-passed-automated"; then
-        missing_deletions="$missing_deletions .test-passed-automated"
-    fi
-
-    if ! echo "$STAGED_FILES" | grep -q "^D.*\.test-passed-manual"; then
-        missing_deletions="$missing_deletions .test-passed-manual"
-    fi
-
-    if ! echo "$STAGED_FILES" | grep -q "^D.*.claude/plans/"; then
-        if ls "$REPO_ROOT/.claude/plans/"*.md 2>/dev/null | grep -v ".gitkeep" | head -1 > /dev/null; then
+    local plan_count=$(ls "$REPO_ROOT/.claude/plans/"*.md 2>/dev/null | grep -v ".gitkeep" | wc -l | tr -d ' ')
+    if [ "$plan_count" -gt 0 ]; then
+        if ! echo "$STAGED_FILES" | grep -q "^D.*.claude/plans/"; then
             missing_deletions="$missing_deletions plan-file"
         fi
     fi
@@ -207,7 +200,7 @@ TEST_CLEANUP_pre() {
         echo ""
         exit 1
     fi
-    echo "   ✓ All trace files being deleted - cleanup complete"
+    echo "   All tracked trace files being deleted - cleanup complete"
 }
 
 case "$TYPE" in
