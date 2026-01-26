@@ -64,6 +64,12 @@ if [ "$TOOL_NAME" = "Bash" ]; then
         echo "BLOCKED: Bash requires dangerouslyDisableSandbox: true" >&2
         echo "Sandbox blocks output file writes. Disable it for background commands." >&2
         exit 2
+
+    # TEST_NO_VERIFY_MARKER: Defines expected behavior for --no-verify blocking
+    # pre(command contains --no-verify, should trigger block)
+    # post(exit 2 with message "BLOCKED: --no-verify is forbidden")
+    # inv(TDD discipline maintained - hooks cannot be bypassed)
+
     else
         echo "RESULT: ALLOWED (Bash with run_in_background + dangerouslyDisableSandbox)" >> "$LOG_FILE"
         echo "════════════════════════════════════════════════════════════════" >> "$LOG_FILE"
