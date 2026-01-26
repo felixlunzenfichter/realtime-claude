@@ -57,24 +57,36 @@ if [ "$TOOL_NAME" = "Bash" ]; then
         echo "BLOCKED: Bash requires run_in_background: true" >&2
         echo "Run commands in background to avoid blocking." >&2
         exit 2
-    elif [ "$DISABLE_SANDBOX" != "true" ]; then
+    fi
+
+    if [ "$DISABLE_SANDBOX" != "true" ]; then
         echo "RESULT: BLOCKED (Bash without dangerouslyDisableSandbox)" >> "$LOG_FILE"
         echo "════════════════════════════════════════════════════════════════" >> "$LOG_FILE"
         echo "" >&2
         echo "BLOCKED: Bash requires dangerouslyDisableSandbox: true" >&2
         echo "Sandbox blocks output file writes. Disable it for background commands." >&2
         exit 2
+    fi
 
     # TEST_NO_VERIFY_MARKER: Defines expected behavior for --no-verify blocking
     # pre(command contains --no-verify, should trigger block)
     # post(exit 2 with message "BLOCKED: --no-verify is forbidden")
     # inv(TDD discipline maintained - hooks cannot be bypassed)
 
-    else
-        echo "RESULT: ALLOWED (Bash with run_in_background + dangerouslyDisableSandbox)" >> "$LOG_FILE"
+    COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+    if echo "$COMMAND" | grep -q -- '--no-verify'; then
+        echo "RESULT: BLOCKED (Bash with --no-verify)" >> "$LOG_FILE"
         echo "════════════════════════════════════════════════════════════════" >> "$LOG_FILE"
-        exit 0
+        echo "" >&2
+        echo "BLOCKED: --no-verify is forbidden" >&2
+        echo "Git hooks enforce TDD discipline. Do not bypass them." >&2
+        echo "Follow the flow: plan: → test: → impl: → refactor:" >&2
+        exit 2
     fi
+
+    echo "RESULT: ALLOWED (Bash with run_in_background + dangerouslyDisableSandbox)" >> "$LOG_FILE"
+    echo "════════════════════════════════════════════════════════════════" >> "$LOG_FILE"
+    exit 0
 fi
 
 # =============================================================================
