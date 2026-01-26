@@ -68,10 +68,6 @@ if [ "$TOOL_NAME" = "Bash" ]; then
         exit 2
     fi
 
-    # TEST_NO_VERIFY_MARKER: Defines expected behavior for --no-verify blocking
-    # pre(command contains --no-verify, should trigger block)
-    # post(exit 2 with message "BLOCKED: --no-verify is forbidden")
-    # inv(TDD discipline maintained - hooks cannot be bypassed)
 
     COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
     if echo "$COMMAND" | grep -q -- '--no-verify'; then
