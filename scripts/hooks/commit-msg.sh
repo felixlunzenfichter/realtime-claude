@@ -3,24 +3,21 @@
 COMMIT_MSG=$(cat "$1")
 GIT_DIFF=$(git diff --cached)
 
-# =============================================================================
-# CONTRACTS (pre-conditions for TDD order)
-# =============================================================================
+log() {
+    echo "$1"
+}
 
 pre() {
     local condition="$1"
     local message="$2"
     if [ "$condition" != "true" ]; then
-        echo ""
-        echo "❌ ORDER: $message"
-        echo ""
+        log ""
+        log "❌ ORDER: $message"
+        log ""
         exit 1
     fi
+    log "✓ PRE: $message"
 }
-
-# =============================================================================
-# PARSE COMMIT TYPE
-# =============================================================================
 
 if [[ "$COMMIT_MSG" == plan:* ]]; then
     TYPE="plan"
@@ -92,17 +89,12 @@ FAIL if:
 You MUST return exactly this JSON format: {\"pass\": true, \"reason\": \"explanation\"} or {\"pass\": false, \"reason\": \"what is missing\"}"
 
 else
-    echo ""
-    echo "❌ TDD FAIL: Invalid commit prefix"
-    echo "   Required: plan: | test: | impl: | refactor:"
-    echo ""
+    log ""
+    log "❌ TDD FAIL: Invalid commit prefix"
+    log "   Required: plan: | test: | impl: | refactor:"
+    log ""
     exit 1
 fi
-
-# =============================================================================
-# STRICT ORDER ENFORCEMENT
-# plan: → test: → impl: → refactor:
-# =============================================================================
 
 UPSTREAM=$(git rev-parse --abbrev-ref @{upstream} 2>/dev/null)
 if [ -n "$UPSTREAM" ]; then
@@ -130,7 +122,12 @@ else
     fi
 fi
 
-# PRE-CONDITIONS for TDD order
+log ""
+log "🔍 TDD Order Check..."
+log "   Branch commits: $BRANCH_COMMITS"
+log "   Previous type: ${PREV_TYPE:-none}"
+log "   Current type: $TYPE"
+
 case "$TYPE" in
     plan)
         pre "$IS_FIRST_COMMIT" "plan: must be first commit on branch (previous: $PREV_TYPE)"
@@ -146,8 +143,8 @@ case "$TYPE" in
         ;;
 esac
 
-echo ""
-echo "🔍 TDD Enforcer checking $TYPE commit..."
+log ""
+log "🔍 TDD Enforcer checking $TYPE commit..."
 
 RESULT=$(claude -p --output-format json "$PROMPT
 
@@ -155,7 +152,7 @@ Diff:
 $GIT_DIFF" 2>/dev/null)
 
 if [ $? -ne 0 ]; then
-    echo "⚠️  Claude check skipped (not available)"
+    log "⚠️  Claude check skipped (not available)"
     exit 0
 fi
 
@@ -164,8 +161,8 @@ PASS=$(echo "$INNER_JSON" | jq -r '.pass' 2>/dev/null)
 REASON=$(echo "$INNER_JSON" | jq -r '.reason' 2>/dev/null)
 
 if [ "$PASS" != "true" ]; then
-    echo "❌ $TYPE FAIL: $REASON"
+    log "❌ $TYPE FAIL: $REASON"
     exit 1
 fi
 
-echo "✅ $TYPE PASS: $REASON"
+log "✅ $TYPE PASS: $REASON"
