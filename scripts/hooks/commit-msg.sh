@@ -16,7 +16,7 @@ pre() {
         log ""
         exit 1
     fi
-    log "✓ PRE: $message"
+    log "   ✓ PRE: $message"
 }
 
 if [[ "$COMMIT_MSG" == plan:* ]]; then
