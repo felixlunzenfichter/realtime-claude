@@ -24,5 +24,4 @@ if [[ "$COMMIT_MSG" == plan:* ]]; then
     exit 0
 fi
 
-# test/impl/refactor - allow push
 exit 0

@@ -10,7 +10,6 @@ if [[ "$COMMIT_MSG" == plan:* ]]; then
     exit 0
 fi
 
-# test/impl/refactor - push immediately (tests disabled for now)
 echo ""
 echo "🚀 Pushing..."
 git push origin HEAD
