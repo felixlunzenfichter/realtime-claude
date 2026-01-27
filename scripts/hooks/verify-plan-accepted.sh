@@ -1,9 +1,5 @@
 #!/bin/bash
 
-# =============================================================================
-# CONTRACTS
-# =============================================================================
-
 pre_transcript_dir_exists() {
     [[ -d "$1" ]] || { echo "PRE: transcript directory must exist: $1"; exit 1; }
 }
@@ -22,10 +18,6 @@ inv_exit_code_matches_result() {
         echo "INV: FAIL must exit 1, got $exit_code"; exit 1
     fi
 }
-
-# =============================================================================
-# IMPLEMENTATION
-# =============================================================================
 
 TRANSCRIPT_DIR="$HOME/.claude/projects/-Users-felixlunzenfichter-Documents-realtime-claude"
 
