@@ -30,22 +30,35 @@ inv_exit_code_matches_result() {
 TRANSCRIPT_DIR="$HOME/.claude/projects/-Users-felixlunzenfichter-Documents-realtime-claude"
 
 echo "TEST_PLAN_ACCEPTANCE_CHECK_START"
-echo "Checking for plan acceptance in Claude transcripts..."
+echo ""
+echo "=== Plan Acceptance Verification ==="
+echo ""
+echo "Verifying plan acceptance..."
+echo "Checking transcript directory: $TRANSCRIPT_DIR"
 
 pre_transcript_dir_exists "$TRANSCRIPT_DIR"
 
+echo "Transcript directory exists."
+echo ""
+echo "Searching for 'Implement the following plan' in transcripts..."
+
 if command -v rg &>/dev/null; then
+    echo "Using ripgrep for search..."
     MATCH=$(rg -l --max-count=1 --glob '*.jsonl' 'Implement the following plan' "$TRANSCRIPT_DIR" 2>/dev/null | head -1)
 else
+    echo "Using find/grep for search (ripgrep not available)..."
     MATCH=$(find "$TRANSCRIPT_DIR" -maxdepth 1 -name '*.jsonl' -exec grep -l 'Implement the following plan' {} + 2>/dev/null | head -1)
 fi
 
+echo ""
 if [[ -n "$MATCH" ]]; then
-    echo "Found plan acceptance in: $MATCH"
+    echo "Found acceptance evidence in: $MATCH"
+    echo "Plan was accepted via ExitPlanMode."
     RESULT="PASS"
     EXIT_CODE=0
 else
-    echo "No plan acceptance found - use ExitPlanMode to accept your plan"
+    echo "No acceptance evidence found in transcripts."
+    echo "To accept a plan, use ExitPlanMode with 'Implement the following plan'."
     RESULT="FAIL"
     EXIT_CODE=1
 fi
@@ -53,5 +66,7 @@ fi
 post_result_is_pass_or_fail "$RESULT"
 inv_exit_code_matches_result "$RESULT" "$EXIT_CODE"
 
+echo ""
+echo "=== Verification Complete ==="
 echo "TEST_PLAN_ACCEPTANCE_RESULT: $RESULT"
 exit $EXIT_CODE
