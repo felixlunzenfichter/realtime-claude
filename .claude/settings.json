@@ -12,6 +12,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/plan-accepted.sh",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

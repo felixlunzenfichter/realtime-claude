@@ -3,6 +3,18 @@
 COMMIT_MSG=$(cat "$1")
 GIT_DIFF=$(git diff --cached)
 
+UNPUSHED=$(git log --oneline @{upstream}..HEAD 2>/dev/null | wc -l | tr -d ' ')
+
+if [ "$UNPUSHED" -gt 0 ]; then
+    echo ""
+    echo "❌ Cannot commit: previous commit not pushed yet"
+    echo "   Unpushed commits: $UNPUSHED"
+    git log --oneline @{upstream}..HEAD 2>/dev/null
+    echo ""
+    echo "   Push first, then commit."
+    exit 1
+fi
+
 if [[ "$COMMIT_MSG" == plan:* ]]; then
     TYPE="plan"
     PROMPT="PLANNING COMMIT.
