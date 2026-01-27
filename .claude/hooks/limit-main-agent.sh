@@ -44,32 +44,9 @@ if [ "$TOOL_NAME" = "Task" ]; then
 fi
 
 # =============================================================================
-# RULE 2: Bash must have run_in_background: true AND dangerouslyDisableSandbox: true
+# RULE 2: Bash - allow foreground for quick commands
 # =============================================================================
-if [ "$TOOL_NAME" = "Bash" ]; then
-    RUN_IN_BG=$(echo "$INPUT" | jq -r '.tool_input.run_in_background // false')
-    DISABLE_SANDBOX=$(echo "$INPUT" | jq -r '.tool_input.dangerouslyDisableSandbox // false')
-
-    if [ "$RUN_IN_BG" != "true" ]; then
-        echo "RESULT: BLOCKED (Bash without run_in_background)" >> "$LOG_FILE"
-        echo "════════════════════════════════════════════════════════════════" >> "$LOG_FILE"
-        echo "" >&2
-        echo "BLOCKED: Bash requires run_in_background: true" >&2
-        echo "Run commands in background to avoid blocking." >&2
-        exit 2
-    elif [ "$DISABLE_SANDBOX" != "true" ]; then
-        echo "RESULT: BLOCKED (Bash without dangerouslyDisableSandbox)" >> "$LOG_FILE"
-        echo "════════════════════════════════════════════════════════════════" >> "$LOG_FILE"
-        echo "" >&2
-        echo "BLOCKED: Bash requires dangerouslyDisableSandbox: true" >&2
-        echo "Sandbox blocks output file writes. Disable it for background commands." >&2
-        exit 2
-    else
-        echo "RESULT: ALLOWED (Bash with run_in_background + dangerouslyDisableSandbox)" >> "$LOG_FILE"
-        echo "════════════════════════════════════════════════════════════════" >> "$LOG_FILE"
-        exit 0
-    fi
-fi
+# Foreground bash allowed. Deploys run in background via their own scripts.
 
 # =============================================================================
 # RULE 3: Edit/Write must be in worktree
