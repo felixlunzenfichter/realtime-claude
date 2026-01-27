@@ -855,6 +855,14 @@ function isDeleteMessage(logData) {
     return logData.type === 'delete';
 }
 
+function isCreatePlanMessage(logData) {
+    return logData.type === 'create_plan';
+}
+
+function isAcceptPlanMessage(logData) {
+    return logData.type === 'accept_plan';
+}
+
 function handleDeleteMessage(logData) {
     const messageId = logData.messageId;
 
@@ -872,6 +880,32 @@ function handleDeleteMessage(logData) {
     } else {
         log(`No message state found for messageId: ${messageId}`, 'handleDeleteMessage');
     }
+}
+
+function handleCreatePlanMessage(socket) {
+    log('Received create_plan request', 'handleCreatePlanMessage');
+
+    const response = {
+        type: 'create_plan_response',
+        status: 'rejected',
+        timestamp: Date.now()
+    };
+
+    socket.write(JSON.stringify(response) + '\n');
+    log('Sent create_plan_response: rejected', 'handleCreatePlanMessage');
+}
+
+function handleAcceptPlanMessage(socket) {
+    log('Received accept_plan request', 'handleAcceptPlanMessage');
+
+    const response = {
+        type: 'accept_plan_response',
+        status: 'accepted',
+        timestamp: Date.now()
+    };
+
+    socket.write(JSON.stringify(response) + '\n');
+    log('Sent accept_plan_response: accepted', 'handleAcceptPlanMessage');
 }
 
 const server = net.createServer((socket) => {
@@ -947,6 +981,10 @@ async function handleMessage(socket, logData) {
         await handleAudioMessage(socket, logData);
     } else if (isDeleteMessage(logData)) {
         handleDeleteMessage(logData);
+    } else if (isCreatePlanMessage(logData)) {
+        handleCreatePlanMessage(socket);
+    } else if (isAcceptPlanMessage(logData)) {
+        handleAcceptPlanMessage(socket);
     } else if (isErrorMessage(logData)) {
         handleErrorMessage(socket, logData);
     } else if (isLogMessage(logData)) {

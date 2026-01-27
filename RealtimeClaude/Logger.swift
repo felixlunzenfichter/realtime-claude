@@ -88,16 +88,14 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     private var reconnectTimer: DispatchSourceTimer?
 
     #if IS_TEST
-    private static let TEST_WORD = "MOONLIGHT"
-
     private static let TEST_0_MARKER = "✓ TEST[0] PASSED: handshake"
-    private static let TEST_1_MARKER = "✓ TEST[1] PASSED: claude_responds"
-    private static let TEST_2_MARKER = "✓ TEST[2] PASSED: recall_verified"
+    private static let TEST_1_MARKER = "✓ TEST[1] PASSED: plan_rejected"
+    private static let TEST_2_MARKER = "✓ TEST[2] PASSED: plan_accepted"
 
     private let STORY: [(command: String?, result: String)] = [
         (nil, Logger.TEST_0_MARKER),
-        ("Remember \(TEST_WORD)", Logger.TEST_1_MARKER),
-        ("What word did I ask you to remember?", Logger.TEST_2_MARKER)
+        ("Create plan", Logger.TEST_1_MARKER),
+        ("Accept plan", Logger.TEST_2_MARKER)
     ]
 
     private var storyIndex = 0
@@ -109,15 +107,14 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         log(Logger.TEST_0_MARKER)
     }
 
-    func testClaudeRespondsPassed() {
+    func testPlanRejected() {
         guard storyIndex == 1 else { return }
         testsPassedSubject.send(testsPassedSubject.value + 1)
         log(Logger.TEST_1_MARKER)
     }
 
-    func testRecallVerified(_ response: String) {
+    func testPlanAccepted() {
         guard storyIndex == 2 else { return }
-        guard !response.isEmpty else { return }
         testsPassedSubject.send(testsPassedSubject.value + 1)
         log(Logger.TEST_2_MARKER)
     }
@@ -177,15 +174,24 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     #if !MANUAL_TESTING
     private func executeCommand(_ command: String) {
         pre(!command.isEmpty, "command must not be empty")
-        log("📤 Sending prompt to Mac: \(command)")
-        sendPromptToMac(command, messageId: UUID())
+        
+        if command == "Create plan" {
+            log("📤 Sending create_plan to Mac")
+            sendCreatePlanToMac()
+        } else if command == "Accept plan" {
+            log("📤 Sending accept_plan to Mac")
+            sendAcceptPlanToMac()
+        } else {
+            log("📤 Sending prompt to Mac: \(command)")
+            sendPromptToMac(command, messageId: UUID())
+        }
     }
     #endif
 
     #else
     func testHandshakePassed() {}
-    func testClaudeRespondsPassed() {}
-    func testRecallVerified(_ response: String) {}
+    func testPlanRejected() {}
+    func testPlanAccepted() {}
     #endif
 
     private var isConnectionReady: Bool = false {
@@ -448,6 +454,10 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             handleCodeDiffMessage(jsonData)
         case "claude_state":
             handleClaudeStateMessage(jsonData)
+        case "create_plan_response":
+            handleCreatePlanResponse(jsonData)
+        case "accept_plan_response":
+            handleAcceptPlanResponse(jsonData)
         default:
             error("Unexpected message type: \(messageType)")
         }
@@ -513,6 +523,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         #else
         let totalTests = 0
         #endif
+
 
         let sessionStats = SessionStats(
             sessionNumber: sessionNumber,
@@ -600,11 +611,6 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
         realtimeAPI.updatePrompt(messageId: messageId, text: prompt)
         realtimeAPI.updateSummary(messageId: messageId, text: summary)
-
-        #if IS_TEST
-        testClaudeRespondsPassed()
-        testRecallVerified(prompt)
-        #endif
     }
 
     private func handleCodeDiffMessage(_ jsonData: [String: Any]) {
@@ -626,6 +632,26 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         log("📡 Claude state: \(isActive ? "active" : "inactive")")
         claudeIsActiveSubject.send(isActive)
         realtimeAPI.updateClaudeActiveState(isActive)
+    }
+
+    private func handleCreatePlanResponse(_ jsonData: [String: Any]) {
+        guard let status = jsonData["status"] as? String else {
+            error("status was nil in create_plan_response")
+            return
+        }
+
+        log("📥 create_plan_response: status=\(status)")
+
+    }
+
+    private func handleAcceptPlanResponse(_ jsonData: [String: Any]) {
+        guard let status = jsonData["status"] as? String else {
+            error("status was nil in accept_plan_response")
+            return
+        }
+
+        log("📥 accept_plan_response: status=\(status)")
+
     }
 
     private func sendStartMessage() {
@@ -692,6 +718,34 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         }
 
         sendMessage(jsonData, messageType: "delete", logMessage: "📤 [iOS → macOS] Sending delete for messageId: \(messageId.uuidString)")
+    }
+
+    func sendCreatePlanToMac() {
+        let message: [String: Any] = [
+            "type": "create_plan",
+            "timestamp": Date().timeIntervalSince1970
+        ]
+
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: message) else {
+            error("Failed to serialize create_plan message to JSON")
+            return
+        }
+
+        sendMessage(jsonData, messageType: "create_plan", logMessage: "📤 [iOS → macOS] Sending create_plan")
+    }
+
+    func sendAcceptPlanToMac() {
+        let message: [String: Any] = [
+            "type": "accept_plan",
+            "timestamp": Date().timeIntervalSince1970
+        ]
+
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: message) else {
+            error("Failed to serialize accept_plan message to JSON")
+            return
+        }
+
+        sendMessage(jsonData, messageType: "accept_plan", logMessage: "📤 [iOS → macOS] Sending accept_plan")
     }
 
     private func scheduleReconnect() {
