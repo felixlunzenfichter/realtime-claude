@@ -87,49 +87,71 @@ fi
 
 # =============================================================================
 # STRICT ORDER ENFORCEMENT
+# plan: → test: → impl: → refactor:
 # =============================================================================
-# Count commits on this branch (not on parent)
-BRANCH_COMMITS=$(git rev-list --count HEAD ^origin/development 2>/dev/null || echo "0")
+
+# Count commits on THIS branch only (since branching from upstream)
+UPSTREAM=$(git rev-parse --abbrev-ref @{upstream} 2>/dev/null)
+if [ -n "$UPSTREAM" ]; then
+    BRANCH_COMMITS=$(git rev-list --count HEAD ^"$UPSTREAM" 2>/dev/null || echo "0")
+else
+    # No upstream, count from development
+    BRANCH_COMMITS=$(git rev-list --count HEAD ^origin/development 2>/dev/null || echo "0")
+fi
 
 if [ "$BRANCH_COMMITS" = "0" ]; then
-    PREV_MSG=""
+    # First commit on this branch
+    PREV_TYPE=""
 else
-    PREV_MSG=$(git log --oneline HEAD ^origin/development 2>/dev/null | head -1 | cut -d' ' -f2-)
+    # Get the previous commit on THIS branch
+    PREV_MSG=$(git log -1 --pretty=%B HEAD 2>/dev/null | head -1)
+    if [[ "$PREV_MSG" == plan:* ]]; then
+        PREV_TYPE="plan"
+    elif [[ "$PREV_MSG" == test:* ]]; then
+        PREV_TYPE="test"
+    elif [[ "$PREV_MSG" == impl:* ]]; then
+        PREV_TYPE="impl"
+    elif [[ "$PREV_MSG" == refactor:* ]]; then
+        PREV_TYPE="refactor"
+    else
+        PREV_TYPE="unknown"
+    fi
 fi
 
 case "$TYPE" in
     plan)
-        if [[ -n "$PREV_MSG" ]]; then
+        # plan: OK only if first commit on this branch
+        if [[ -n "$PREV_TYPE" ]]; then
             echo ""
-            echo "❌ ORDER: plan: must be first commit"
-            echo "   Previous: $PREV_MSG"
+            echo "❌ ORDER: plan: must be first commit on branch"
+            echo "   This branch already has commits (previous: $PREV_TYPE)"
             echo ""
             exit 1
         fi
         ;;
     test)
-        if [[ "$PREV_MSG" != plan:* ]]; then
+        if [[ "$PREV_TYPE" != "plan" ]]; then
             echo ""
             echo "❌ ORDER: test: must follow plan:"
-            echo "   Previous: $PREV_MSG"
+            echo "   Previous: $PREV_TYPE"
             echo ""
             exit 1
         fi
         ;;
     impl)
-        if [[ "$PREV_MSG" != test:* ]]; then
+        if [[ "$PREV_TYPE" != "test" ]]; then
             echo ""
             echo "❌ ORDER: impl: must follow test:"
-            echo "   Previous: $PREV_MSG"
+            echo "   Previous: $PREV_TYPE"
             echo ""
             exit 1
         fi
         ;;
     refactor)
-        if [[ "$PREV_MSG" != impl:* ]]; then
+        if [[ "$PREV_TYPE" != "impl" ]]; then
             echo ""
             echo "❌ ORDER: refactor: must follow impl:"
-            echo "   Previous: $PREV_MSG"
+            echo "   Previous: $PREV_TYPE"
             echo ""
             exit 1
         fi
@@ -149,7 +171,6 @@ if [ $? -ne 0 ]; then
     exit 0
 fi
 
-# Extract the result field, strip markdown code blocks, then parse JSON
 INNER_JSON=$(echo "$RESULT" | jq -r '.result' 2>/dev/null | sed 's/^```json//; s/^```//; s/```$//' | tr -d '\n')
 PASS=$(echo "$INNER_JSON" | jq -r '.pass' 2>/dev/null)
 REASON=$(echo "$INNER_JSON" | jq -r '.reason' 2>/dev/null)
