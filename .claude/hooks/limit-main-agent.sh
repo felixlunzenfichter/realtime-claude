@@ -6,7 +6,6 @@ CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
 
 LOG_FILE="/tmp/hook-coordinator.log"
 
-# Check if in worktree
 IS_WORKTREE=false
 if [[ "$CWD" == *"/worktrees/"* ]]; then
     IS_WORKTREE=true
@@ -14,7 +13,6 @@ fi
 
 BRANCH=$(git -C "$CWD" branch --show-current 2>/dev/null || echo "unknown")
 
-# Log
 {
     echo "════════════════════════════════════════════════════════════════"
     echo "TIME: $(date)"
@@ -24,9 +22,18 @@ BRANCH=$(git -C "$CWD" branch --show-current 2>/dev/null || echo "unknown")
     echo "IS_WORKTREE: $IS_WORKTREE"
 } >> "$LOG_FILE"
 
-# =============================================================================
-# RULE 1: Task must have run_in_background: true
-# =============================================================================
+pre() {
+    local condition="$1"
+    local message="$2"
+    if [ "$condition" != "true" ]; then
+        echo "RESULT: BLOCKED ($message)" >> "$LOG_FILE"
+        echo "════════════════════════════════════════════════════════════════" >> "$LOG_FILE"
+        echo "" >&2
+        echo "PRE: $message" >&2
+        exit 2
+    fi
+}
+
 if [ "$TOOL_NAME" = "Task" ]; then
     RUN_IN_BG=$(echo "$INPUT" | jq -r '.tool_input.run_in_background // false')
     if [ "$RUN_IN_BG" = "true" ]; then
@@ -43,12 +50,13 @@ if [ "$TOOL_NAME" = "Task" ]; then
     fi
 fi
 
-# =============================================================================
-# RULE 2: Bash must have run_in_background: true AND dangerouslyDisableSandbox: true
-# =============================================================================
 if [ "$TOOL_NAME" = "Bash" ]; then
     RUN_IN_BG=$(echo "$INPUT" | jq -r '.tool_input.run_in_background // false')
     DISABLE_SANDBOX=$(echo "$INPUT" | jq -r '.tool_input.dangerouslyDisableSandbox // false')
+    COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+
+    NO_VERIFY_CHECK=$(echo "$COMMAND" | grep -qE '\-\-no-verify' && echo "false" || echo "true")
+    pre "$NO_VERIFY_CHECK" "git commands must not contain --no-verify"
 
     if [ "$RUN_IN_BG" != "true" ]; then
         echo "RESULT: BLOCKED (Bash without run_in_background)" >> "$LOG_FILE"
@@ -71,11 +79,7 @@ if [ "$TOOL_NAME" = "Bash" ]; then
     fi
 fi
 
-# =============================================================================
-# RULE 3: Edit/Write must be in worktree
-# =============================================================================
 if [ "$TOOL_NAME" = "Edit" ] || [ "$TOOL_NAME" = "Write" ]; then
-    # Exception: Allow writes to .claude/plans/ for plan mode
     FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
     if [[ "$FILE_PATH" == *"/.claude/plans/"* ]]; then
         echo "RESULT: ALLOWED ($TOOL_NAME to plans directory)" >> "$LOG_FILE"
@@ -98,9 +102,6 @@ if [ "$TOOL_NAME" = "Edit" ] || [ "$TOOL_NAME" = "Write" ]; then
     fi
 fi
 
-# =============================================================================
-# RULE 4: Everything else allowed
-# =============================================================================
 echo "RESULT: ALLOWED ($TOOL_NAME)" >> "$LOG_FILE"
 echo "════════════════════════════════════════════════════════════════" >> "$LOG_FILE"
 exit 0
