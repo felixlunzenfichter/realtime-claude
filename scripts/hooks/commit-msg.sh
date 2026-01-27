@@ -3,6 +3,25 @@
 COMMIT_MSG=$(cat "$1")
 GIT_DIFF=$(git diff --cached)
 
+# =============================================================================
+# CONTRACTS (pre-conditions for TDD order)
+# =============================================================================
+
+pre() {
+    local condition="$1"
+    local message="$2"
+    if [ "$condition" != "true" ]; then
+        echo ""
+        echo "❌ ORDER: $message"
+        echo ""
+        exit 1
+    fi
+}
+
+# =============================================================================
+# PARSE COMMIT TYPE
+# =============================================================================
+
 if [[ "$COMMIT_MSG" == plan:* ]]; then
     TYPE="plan"
     PROMPT="PLANNING COMMIT.
@@ -77,11 +96,6 @@ else
     echo "❌ TDD FAIL: Invalid commit prefix"
     echo "   Required: plan: | test: | impl: | refactor:"
     echo ""
-    echo "   plan:     Add design docs, architecture, plans"
-    echo "   test:     Add pre(), post(), inv() contracts (specification)"
-    echo "   impl:     Add log() and logic (implementation)"
-    echo "   refactor: Clean up, no comments"
-    echo ""
     exit 1
 fi
 
@@ -90,20 +104,18 @@ fi
 # plan: → test: → impl: → refactor:
 # =============================================================================
 
-# Count commits on THIS branch only (since branching from upstream)
 UPSTREAM=$(git rev-parse --abbrev-ref @{upstream} 2>/dev/null)
 if [ -n "$UPSTREAM" ]; then
     BRANCH_COMMITS=$(git rev-list --count HEAD ^"$UPSTREAM" 2>/dev/null || echo "0")
 else
-    # No upstream, count from development
     BRANCH_COMMITS=$(git rev-list --count HEAD ^origin/development 2>/dev/null || echo "0")
 fi
 
+IS_FIRST_COMMIT="false"
 if [ "$BRANCH_COMMITS" = "0" ]; then
-    # First commit on this branch
+    IS_FIRST_COMMIT="true"
     PREV_TYPE=""
 else
-    # Get the previous commit on THIS branch
     PREV_MSG=$(git log -1 --pretty=%B HEAD 2>/dev/null | head -1)
     if [[ "$PREV_MSG" == plan:* ]]; then
         PREV_TYPE="plan"
@@ -118,43 +130,19 @@ else
     fi
 fi
 
+# PRE-CONDITIONS for TDD order
 case "$TYPE" in
     plan)
-        # plan: OK only if first commit on this branch
-        if [[ -n "$PREV_TYPE" ]]; then
-            echo ""
-            echo "❌ ORDER: plan: must be first commit on branch"
-            echo "   This branch already has commits (previous: $PREV_TYPE)"
-            echo ""
-            exit 1
-        fi
+        pre "$IS_FIRST_COMMIT" "plan: must be first commit on branch (previous: $PREV_TYPE)"
         ;;
     test)
-        if [[ "$PREV_TYPE" != "plan" ]]; then
-            echo ""
-            echo "❌ ORDER: test: must follow plan:"
-            echo "   Previous: $PREV_TYPE"
-            echo ""
-            exit 1
-        fi
+        pre "$([[ "$PREV_TYPE" == "plan" ]] && echo true || echo false)" "test: must follow plan: (previous: $PREV_TYPE)"
         ;;
     impl)
-        if [[ "$PREV_TYPE" != "test" ]]; then
-            echo ""
-            echo "❌ ORDER: impl: must follow test:"
-            echo "   Previous: $PREV_TYPE"
-            echo ""
-            exit 1
-        fi
+        pre "$([[ "$PREV_TYPE" == "test" ]] && echo true || echo false)" "impl: must follow test: (previous: $PREV_TYPE)"
         ;;
     refactor)
-        if [[ "$PREV_TYPE" != "impl" ]]; then
-            echo ""
-            echo "❌ ORDER: refactor: must follow impl:"
-            echo "   Previous: $PREV_TYPE"
-            echo ""
-            exit 1
-        fi
+        pre "$([[ "$PREV_TYPE" == "impl" ]] && echo true || echo false)" "refactor: must follow impl: (previous: $PREV_TYPE)"
         ;;
 esac
 
