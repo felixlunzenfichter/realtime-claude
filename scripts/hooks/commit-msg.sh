@@ -5,6 +5,18 @@ GIT_DIFF=$(git diff --cached)
 
 if [[ "$COMMIT_MSG" == plan:* ]]; then
     TYPE="plan"
+    
+    HOOK_DIR="$(dirname "$0")"
+    if [[ -f "$HOOK_DIR/verify-plan-accepted.sh" ]]; then
+        "$HOOK_DIR/verify-plan-accepted.sh" || {
+            echo ""
+            echo "BLOCKED: plan: commit requires ExitPlanMode acceptance"
+            echo "   Accept your plan in Claude Code UI first"
+            echo ""
+            exit 1
+        }
+    fi
+    
     PROMPT="PLANNING COMMIT.
 
 PASS if diff adds:
