@@ -1,41 +1,52 @@
 #!/bin/bash
 
-REPO_ROOT=$(git rev-parse --show-toplevel)
-COMMIT_HASH=$(git rev-parse HEAD)
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+MARKER=".plan-accepted"
 
-AUTOMATED_FILE="$REPO_ROOT/.test-passed-automated"
-
-if [ ! -f "$AUTOMATED_FILE" ]; then
-    echo "❌ Automated tests not run for this commit."
-    echo "   Run: ./scripts/deploy-test.sh"
+# Block protected branches
+if [ "$BRANCH" = "development" ] || [ "$BRANCH" = "main" ]; then
+    echo "❌ Cannot push directly to $BRANCH"
     exit 1
 fi
 
-AUTOMATED_HASH=$(cat "$AUTOMATED_FILE")
-if [ "$AUTOMATED_HASH" != "$COMMIT_HASH" ]; then
-    echo "❌ Automated tests not passed for HEAD ($COMMIT_HASH)"
-    echo "   Marker has: $AUTOMATED_HASH"
-    echo "   Run: ./scripts/deploy-test.sh"
+# Check 1: Plan must be accepted
+if [ ! -f "$MARKER" ]; then
+    echo "❌ No plan accepted."
+    echo "   Say 'accept plan' to Claude first."
     exit 1
 fi
 
-MANUAL_FILE="$REPO_ROOT/.test-passed-manual"
-
-if [ ! -f "$MANUAL_FILE" ]; then
-    echo "❌ Manual tests not run for this commit."
-    echo "   Run: ./scripts/deploy-test.sh --manual"
+ACCEPTED_BRANCH=$(cat "$MARKER")
+if [ "$ACCEPTED_BRANCH" != "$BRANCH" ]; then
+    echo "❌ Plan accepted for '$ACCEPTED_BRANCH', not '$BRANCH'"
     exit 1
 fi
 
-MANUAL_HASH=$(cat "$MANUAL_FILE")
-if [ "$MANUAL_HASH" != "$COMMIT_HASH" ]; then
-    echo "❌ Manual tests not passed for HEAD ($COMMIT_HASH)"
-    echo "   Marker has: $MANUAL_HASH"
-    echo "   Run: ./scripts/deploy-test.sh --manual"
+# Check 2: Is plan already pushed?
+REMOTE_EXISTS=$(git ls-remote --heads origin "$BRANCH" 2>/dev/null)
+
+if [ -z "$REMOTE_EXISTS" ]; then
+    # Branch not on remote - this is first push
+    # Only allow if pushing a plan commit
+    COMMITS=$(git log origin/development..HEAD --oneline 2>/dev/null || git log HEAD --oneline)
+    if echo "$COMMITS" | grep -q "^[a-f0-9]* plan:"; then
+        echo "✅ Pushing plan commit..."
+        exit 0
+    else
+        echo "❌ First push must be a plan commit."
+        echo "   Commit with 'plan: ...' message first."
+        exit 1
+    fi
+fi
+
+# Branch exists on remote - check if plan was pushed
+PLAN_ON_REMOTE=$(git log "origin/$BRANCH" --oneline 2>/dev/null | grep "^[a-f0-9]* plan:" | head -1)
+
+if [ -z "$PLAN_ON_REMOTE" ]; then
+    echo "❌ No plan commit on remote yet."
+    echo "   Push a 'plan: ...' commit first."
     exit 1
 fi
 
-echo "✅ All tests passed for $COMMIT_HASH"
-echo "   Pushing..."
-
+echo "✅ Plan accepted and pushed. Pushing..."
 exit 0
