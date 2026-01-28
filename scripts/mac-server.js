@@ -131,44 +131,59 @@ let testFailed = false;
 // UNIFIED LOGGING (writes to same file as iOS)
 // ============================================
 
-function formatTime(isoString) {
-    const d = new Date(isoString);
-    return d.toTimeString().slice(0, 8);
+function getMacMode() {
+    if (IS_TEST) {
+        return MANUAL_TESTING ? 'MANUAL' : 'AUTO';
+    }
+    return 'PROD';
 }
 
-function formatLogLine(type, timestamp, fileName, functionName, message) {
-    const time = formatTime(timestamp);
-    const system = fileName.includes('mac-server') ? 'MAC' : 'iOS';
-    const typeStr = type === 'error' ? '🚨 ERROR' : 'LOG';
-    return `${time} | ${typeStr} | ${system} | ${fileName} | ${functionName} | ${message}`;
+function formatTimestamp(isoString) {
+    const d = new Date(isoString);
+    const hours = d.getHours().toString().padStart(2, '0');
+    const minutes = d.getMinutes().toString().padStart(2, '0');
+    const seconds = d.getSeconds().toString().padStart(2, '0');
+    const millis = d.getMilliseconds().toString().padStart(3, '0');
+    return `${hours}:${minutes}:${seconds}.${millis}`;
+}
+
+function formatUnifiedLogLine(mode, device, type, fileName, functionName, message, timestamp) {
+    const time = formatTimestamp(timestamp);
+    return `${time} | ${mode} | ${device} | ${type} | ${fileName} | ${functionName} | ${message}`;
 }
 
 function log(message, functionName = 'unknown') {
     const timestamp = new Date().toISOString();
-    console.log(formatLogLine('log', timestamp, 'mac-server.js', functionName, message));
+    const mode = getMacMode();
+    const line = formatUnifiedLogLine(mode, 'Mac', 'LOG', 'mac-server', functionName, message, timestamp);
+    console.log(line);
     if (currentSessionFile) {
         writeLogToFile({
-            type: { log: {} },
-            message: message,
-            fileName: 'mac-server.js',
+            mode: mode,
+            device: 'Mac',
+            type: 'LOG',
+            fileName: 'mac-server',
             functionName: functionName,
-            timestamp: timestamp,
-            id: crypto.randomUUID()
+            message: message,
+            timestamp: timestamp
         });
     }
 }
 
 function error(message, functionName = 'unknown') {
     const timestamp = new Date().toISOString();
-    console.error(formatLogLine('error', timestamp, 'mac-server.js', functionName, message));
+    const mode = getMacMode();
+    const line = formatUnifiedLogLine(mode, 'Mac', 'ERROR', 'mac-server', functionName, message, timestamp);
+    console.error(line);
     if (currentSessionFile) {
         writeLogToFile({
-            type: { error: {} },
-            message: message,
-            fileName: 'mac-server.js',
+            mode: mode,
+            device: 'Mac',
+            type: 'ERROR',
+            fileName: 'mac-server',
             functionName: functionName,
-            timestamp: timestamp,
-            id: crypto.randomUUID()
+            message: message,
+            timestamp: timestamp
         });
     }
     if (IS_TEST && !testFailed) {
@@ -177,8 +192,8 @@ function error(message, functionName = 'unknown') {
         const marker = MANUAL_TESTING
             ? path.join(repoRoot, '.test-passed-manual')
             : path.join(repoRoot, '.test-passed-automated');
-        fs.writeFileSync(marker, `ERROR|mac-server.js|${functionName}|${message}`);
-        console.error('🚨 ERROR in test mode: Wrote ERROR to marker. Tests failed.');
+        fs.writeFileSync(marker, `ERROR|mac-server|${functionName}|${message}`);
+        console.error('ERROR in test mode: Wrote ERROR to marker. Tests failed.');
     }
 }
 
@@ -187,13 +202,12 @@ function debugLog(message) {
 }
 
 function printReceivedLog(logData) {
-    const type = logData.type?.error ? 'error' : 'log';
-    const line = formatLogLine(type, logData.timestamp, logData.fileName, logData.functionName, logData.message);
-    if (type === 'error') {
-        console.error(line);
-    } else {
-        console.log(line);
-    }
+    const mode = logData.mode || getMacMode();
+    const device = logData.device || 'iOS';
+    const type = logData.type?.error !== undefined ? 'ERROR' : 'LOG';
+    const shortFileName = logData.fileName.split('/').pop().replace('.swift', '');
+    const line = formatUnifiedLogLine(mode, device, type, shortFileName, logData.functionName, logData.message, logData.timestamp);
+    console.log(line);
 }
 
 process.on('uncaughtException', (err) => {
@@ -1095,7 +1109,7 @@ end tell`;
 function createNewSession() {
     try {
         currentSessionNumber = getSessionCount() + 1;
-        currentSessionFile = path.join(logsDir, `${currentSessionNumber}.json`);
+        currentSessionFile = path.join(logsDir, `${currentSessionNumber}.log`);
         fs.writeFileSync(currentSessionFile, '');
     } catch (err) {
         error(`Failed to create session file (continuing): ${err.message}`, 'createNewSession');
@@ -1150,6 +1164,16 @@ function getMidnightToday() {
     return today;
 }
 
+function parseTimestampFromLogLine(line) {
+    const match = line.match(/^(\d{2}):(\d{2}):(\d{2})\.(\d{3})/);
+    if (match) {
+        const now = new Date();
+        now.setHours(parseInt(match[1]), parseInt(match[2]), parseInt(match[3]), parseInt(match[4]));
+        return now;
+    }
+    return null;
+}
+
 function calculateSessionUptime(file) {
     const filePath = path.join(logsDir, file);
     const content = fs.readFileSync(filePath, 'utf8');
@@ -1159,11 +1183,8 @@ function calculateSessionUptime(file) {
         return { duration: 0, startTime: new Date() };
     }
 
-    const firstLog = JSON.parse(lines[0]);
-    const lastLog = JSON.parse(lines[lines.length - 1]);
-
-    const startTime = new Date(firstLog.timestamp);
-    const endTime = new Date(lastLog.timestamp);
+    const startTime = parseTimestampFromLogLine(lines[0]) || new Date();
+    const endTime = parseTimestampFromLogLine(lines[lines.length - 1]) || new Date();
     const duration = endTime - startTime;
 
     return { duration, startTime };
@@ -1189,7 +1210,7 @@ function countAllLogs() {
 }
 
 function getAllSessionFiles() {
-    return fs.readdirSync(logsDir).filter(f => f.endsWith('.json'));
+    return fs.readdirSync(logsDir).filter(f => f.endsWith('.log'));
 }
 
 function countLinesInContent(content) {
@@ -1270,9 +1291,25 @@ async function sendHandshakeResponse(socket, stats) {
     }
 }
 
+function parseLogLine(line) {
+    const parts = line.split(' | ');
+    if (parts.length >= 7) {
+        return {
+            timestamp: parts[0],
+            mode: parts[1],
+            device: parts[2],
+            type: parts[3],
+            fileName: parts[4],
+            functionName: parts[5],
+            message: parts.slice(6).join(' | ')
+        };
+    }
+    return null;
+}
+
 function getPreviousSessionErrors(currentSessionNumber) {
     const previousSessionNumber = currentSessionNumber - 1;
-    const previousSessionFile = path.join(logsDir, `${previousSessionNumber}.json`);
+    const previousSessionFile = path.join(logsDir, `${previousSessionNumber}.log`);
 
     if (!fs.existsSync(previousSessionFile)) {
         return [];
@@ -1283,14 +1320,8 @@ function getPreviousSessionErrors(currentSessionNumber) {
         const lines = fileContent.trim().split('\n');
 
         const errors = lines
-            .map(line => {
-                try {
-                    return JSON.parse(line);
-                } catch {
-                    return null;
-                }
-            })
-            .filter(log => log && log.type && log.type.error !== undefined)
+            .map(line => parseLogLine(line))
+            .filter(log => log && log.type === 'ERROR')
             .map(log => ({
                 message: log.message,
                 fileName: log.fileName,
@@ -1401,7 +1432,7 @@ function persistLogToFile(logData) {
 
 function getSessionCount() {
     const files = fs.readdirSync(logsDir);
-    return files.filter(f => f.endsWith('.json')).length;
+    return files.filter(f => f.endsWith('.log')).length;
 }
 
 function writeLogToFile(logData) {
@@ -1410,7 +1441,14 @@ function writeLogToFile(logData) {
         return;
     }
     try {
-        fs.appendFileSync(currentSessionFile, JSON.stringify(logData) + '\n');
+        const mode = logData.mode || getMacMode();
+        const device = logData.device || 'Mac';
+        const type = logData.type?.error !== undefined ? 'ERROR' : (logData.type || 'LOG');
+        const shortFileName = logData.fileName.includes('/')
+            ? logData.fileName.split('/').pop().replace('.swift', '')
+            : logData.fileName.replace('.js', '');
+        const line = formatUnifiedLogLine(mode, device, type, shortFileName, logData.functionName, logData.message, logData.timestamp);
+        fs.appendFileSync(currentSessionFile, line + '\n');
     } catch (err) {
         console.error(`Failed to write log (continuing): ${err.message}`);
     }
