@@ -1,17 +1,1 @@
-{
-  "enableAllProjectMcpServers": false,
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write|Bash|WebFetch|WebSearch|Task",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/limit-main-agent.sh",
-            "timeout": 5
-          }
-        ]
-      }
-    ]
-  }
-}
+{"enableAllProjectMcpServers": false}
