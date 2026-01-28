@@ -16,3 +16,5 @@ whisper-venv-312/
 .test-passed-manual
 .test-status
 .plan-accepted
+test-no-verify
+worktrees/
