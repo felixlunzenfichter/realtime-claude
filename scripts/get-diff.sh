@@ -15,7 +15,15 @@ import json, os, time, subprocess
 now = time.time()
 cutoff = now - 300
 
-agents = []
+def run(cmd):
+    try:
+        return subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL, text=True).rstrip('\n')
+    except:
+        return ""
+
+current_branch = run("git rev-parse --abbrev-ref HEAD") or "unknown"
+
+agents_by_branch = {}
 for proj_dir in os.listdir(os.path.expanduser("~/.claude/projects")):
     index_path = os.path.expanduser(f"~/.claude/projects/{proj_dir}/sessions-index.json")
     if os.path.exists(index_path):
@@ -24,29 +32,25 @@ for proj_dir in os.listdir(os.path.expanduser("~/.claude/projects")):
                 data = json.load(f)
             for entry in data.get("entries", []):
                 mtime = entry.get("fileMtime", 0) / 1000
+                agent_branch = entry.get("gitBranch", "") or "unknown"
                 if mtime > cutoff:
                     prompt = entry.get("firstPrompt", "")[:40].replace("\n", " ").strip()
                     ago = int(now - mtime)
-                    agents.append((ago, prompt))
+                    if agent_branch not in agents_by_branch:
+                        agents_by_branch[agent_branch] = []
+                    agents_by_branch[agent_branch].append((ago, prompt))
         except:
             pass
 
-def run(cmd):
-    try:
-        return subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL, text=True).rstrip('\n')
-    except:
-        return ""
-
-branch = run("git rev-parse --abbrev-ref HEAD") or "unknown"
+branch = current_branch
 remote_head = run("git rev-parse origin/" + branch + " 2>/dev/null")
 local_head = run("git rev-parse HEAD")
 
 commits = []
-if remote_head and remote_head != local_head:
-    log = run(f"git log {remote_head}..HEAD --format='%h %s'")
-    for line in log.split('\n'):
-        if line.strip():
-            commits.append(line.strip())
+log = run("git log --format='%h %d %s'")
+for line in log.split('\n'):
+    if line.strip():
+        commits.append(line.strip())
 
 working = []
 status = run("git status --porcelain")
@@ -74,29 +78,33 @@ for line in status.split('\n'):
                     added, removed = parts[0], parts[1]
                     working.append(f"M {filepath} (+{added} -{removed})")
 
-lines = [branch, "│"]
+lines = []
 
-if agents:
+for br in sorted(agents_by_branch.keys(), key=lambda b: (b != current_branch, b)):
+    agents = agents_by_branch[br]
+    marker = "★" if br == current_branch else "○"
+    lines.append(f"├─ {marker} {br}")
     for ago, prompt in sorted(agents):
         if ago < 60:
             time_str = f"{ago}s"
         else:
             time_str = f"{ago // 60}m{ago % 60:02d}s"
-        lines.append(f"├─ ● {time_str} \"{prompt}...\"")
-    lines.append("│")
-
-if commits:
-    for c in commits:
-        lines.append(f"├─ {c}")
+        lines.append(f"│  ├─ ● {time_str} \"{prompt}...\"")
     lines.append("│")
 
 if working:
-    lines.append("└─ Working")
+    lines.append("├─ Working")
     for i, w in enumerate(working):
-        prefix = "   └─ " if i == len(working) - 1 else "   ├─ "
+        prefix = "│  └─ " if i == len(working) - 1 else "│  ├─ "
         lines.append(prefix + w)
+    lines.append("│")
+
+if commits:
+    for i, c in enumerate(commits):
+        prefix = "└─ " if i == len(commits) - 1 else "├─ "
+        lines.append(prefix + c)
 else:
-    lines.append("└─ (clean)")
+    lines.append("└─ (no commits)")
 
 print('\n'.join(lines))
 PYTHON

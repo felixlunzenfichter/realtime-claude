@@ -523,276 +523,36 @@ struct LogRowView: View {
     }
 }
 
-enum NavigationMode {
-    case headers
-    case hunks
-    case changes
-    case sections
-
-    var color: Color {
-        switch self {
-        case .headers:
-            return .purple
-        case .hunks:
-            return .cyan
-        case .changes:
-            return .green
-        case .sections:
-            return .orange
-        }
-    }
-
-    var label: String {
-        switch self {
-        case .headers:
-            return "Headers"
-        case .hunks:
-            return "Hunks"
-        case .changes:
-            return "Changes"
-        case .sections:
-            return "Sections"
-        }
-    }
-
-    func next() -> NavigationMode {
-        switch self {
-        case .headers:
-            return .hunks
-        case .hunks:
-            return .changes
-        case .changes:
-            return .sections
-        case .sections:
-            return .headers
-        }
-    }
-}
-
 @Observable
 class DiffViewModel {
-    var codeDiff: String = ""
-    var scrollToLineIndex: Int? = nil
-    var currentChangeIndex: Int = 0
-    var currentNavigationMode: NavigationMode = .changes
-    var highlightedLineIndex: Int?
+    var treeText: String = ""
 
-    private var previousDiffLines: [(text: String, type: DiffLineType)] = []
     private var cancellables = Set<AnyCancellable>()
 
     init() {
         logger.codeDiffSubject
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] diff in
+            .sink { [weak self] text in
                 guard let self = self else { return }
-
-                let previousDiff = self.codeDiff
-                self.codeDiff = diff
-
-                guard !diff.isEmpty, diff != previousDiff else { return }
-
-                self.findFirstChangedLine()
+                self.treeText = text
             }
             .store(in: &cancellables)
     }
 
-    var diffLines: [(text: String, type: DiffLineType)] {
-        guard !codeDiff.isEmpty else { return [] }
+    var treeLines: [(text: String, color: Color)] {
+        guard !treeText.isEmpty else { return [] }
 
-        return codeDiff.split(separator: "\n", omittingEmptySubsequences: false).map { line in
-            let lineString = String(line)
-            if lineString.hasPrefix("===") {
-                return (text: lineString, type: .sectionHeader)
-            } else if lineString.hasPrefix("+") {
-                return (text: lineString, type: .addition)
-            } else if lineString.hasPrefix("-") {
-                return (text: lineString, type: .deletion)
-            } else if lineString.hasPrefix("@@") {
-                return (text: lineString, type: .hunk)
-            } else if lineString.hasPrefix("diff --git") || lineString.hasPrefix("index") {
-                return (text: lineString, type: .header)
+        return treeText.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+            let text = String(line)
+            if text.contains("●") {
+                return (text: text, color: .cyan)
+            } else if text.hasPrefix("└─ Working") || text.hasPrefix("   ├─") || text.hasPrefix("   └─") {
+                return (text: text, color: .orange)
+            } else if text.contains("(clean)") {
+                return (text: text, color: .green)
             } else {
-                return (text: lineString, type: .context)
+                return (text: text, color: .primary)
             }
-        }
-    }
-
-    var changeIndices: [Int] {
-        let lines = diffLines
-        var indices: [Int] = []
-
-        for (index, line) in lines.enumerated() {
-            let text = line.text
-            if text.hasPrefix("---") || text.hasPrefix("+++") {
-                continue
-            }
-
-            guard line.type == .addition || line.type == .deletion || line.type == .hunk else {
-                continue
-            }
-
-            indices.append(index)
-        }
-
-        return indices
-    }
-
-    var changeChunkIndices: [Int] {
-        let indices = changeIndices
-        guard !indices.isEmpty else { return [] }
-
-        var chunkStarts: [Int] = [indices[0]]
-
-        for i in 1..<indices.count {
-            if indices[i] - indices[i-1] > 1 {
-                chunkStarts.append(indices[i])
-            }
-        }
-
-        return chunkStarts
-    }
-
-    var modeSpecificIndices: [Int] {
-        let lines = diffLines
-
-        switch currentNavigationMode {
-        case .headers:
-            return lines.enumerated().compactMap { index, line in
-                line.type == .header ? index : nil
-            }
-        case .hunks:
-            return lines.enumerated().compactMap { index, line in
-                line.type == .hunk ? index : nil
-            }
-        case .changes:
-            return changeChunkIndices
-        case .sections:
-            return lines.enumerated().compactMap { index, line in
-                line.type == .sectionHeader ? index : nil
-            }
-        }
-    }
-
-    func cycleNavigationMode() {
-        currentNavigationMode = currentNavigationMode.next()
-        currentChangeIndex = 0
-        log("Navigation mode changed to: \(currentNavigationMode.label)")
-    }
-
-    func navigateToNextChange() {
-        let indices = modeSpecificIndices
-        guard !indices.isEmpty else { return }
-
-        if let currentPos = highlightedLineIndex {
-            for (arrayIndex, lineIndex) in indices.enumerated() {
-                if lineIndex <= currentPos {
-                    currentChangeIndex = arrayIndex
-                } else {
-                    break
-                }
-            }
-        }
-
-        if currentChangeIndex < indices.count - 1 {
-            currentChangeIndex += 1
-        } else {
-            currentChangeIndex = 0
-        }
-
-        let targetIndex = indices[currentChangeIndex]
-        scrollToLineIndex = nil
-        scrollToLineIndex = targetIndex
-        highlightedLineIndex = targetIndex
-        log("Navigated to next \(currentNavigationMode.label): \(currentChangeIndex + 1)/\(indices.count)")
-    }
-
-    func navigateToPreviousChange() {
-        let indices = modeSpecificIndices
-        guard !indices.isEmpty else { return }
-
-        if let currentPos = highlightedLineIndex {
-            for (arrayIndex, lineIndex) in indices.enumerated() {
-                if lineIndex <= currentPos {
-                    currentChangeIndex = arrayIndex
-                } else {
-                    break
-                }
-            }
-        }
-
-        if currentChangeIndex > 0 {
-            currentChangeIndex -= 1
-        } else {
-            currentChangeIndex = indices.count - 1
-        }
-
-        let targetIndex = indices[currentChangeIndex]
-        scrollToLineIndex = nil
-        scrollToLineIndex = targetIndex
-        highlightedLineIndex = targetIndex
-        log("Navigated to previous \(currentNavigationMode.label): \(currentChangeIndex + 1)/\(indices.count)")
-    }
-
-    func findFirstChangedLine() {
-        let currentLines = diffLines
-
-        var firstChangeIndex: Int?
-
-        for (index, currentLine) in currentLines.enumerated() {
-            let text = currentLine.text
-            if text.hasPrefix("---") || text.hasPrefix("+++") {
-                continue
-            }
-
-            guard currentLine.type == .addition || currentLine.type == .deletion || currentLine.type == .hunk else {
-                continue
-            }
-
-            if index >= previousDiffLines.count {
-                firstChangeIndex = index
-                break
-            }
-
-            let previousLine = previousDiffLines[index]
-            if currentLine.text != previousLine.text {
-                firstChangeIndex = index
-                break
-            }
-        }
-
-        previousDiffLines = currentLines
-
-        let targetIndex = firstChangeIndex ?? 0
-        currentChangeIndex = 0
-        scrollToLineIndex = nil
-        scrollToLineIndex = targetIndex
-        highlightedLineIndex = targetIndex
-    }
-
-}
-
-enum DiffLineType {
-    case addition
-    case deletion
-    case hunk
-    case header
-    case sectionHeader
-    case context
-
-    var color: Color {
-        switch self {
-        case .addition:
-            return .green
-        case .deletion:
-            return .red
-        case .hunk:
-            return .cyan
-        case .header:
-            return .purple
-        case .sectionHeader:
-            return .orange
-        case .context:
-            return .secondary
         }
     }
 }
@@ -806,7 +566,7 @@ struct DiffView: View {
             Color(UIColor.systemBackground)
                 .ignoresSafeArea()
 
-            if viewModel.codeDiff.isEmpty {
+            if viewModel.treeText.isEmpty {
                 VStack {
                     Spacer()
                     Text("No changes")
@@ -816,40 +576,24 @@ struct DiffView: View {
                 }
                 .frame(height: ACTUAL_SCREEN_HEIGHT)
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            Spacer()
-                                .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")) * 2)
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                        Spacer()
+                            .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")) * 2)
 
-                            let highlightedLine = viewModel.highlightedLineIndex
-                            ForEach(Array(viewModel.diffLines.enumerated()), id: \.offset) { index, line in
-                                DiffLineView(text: line.text, type: line.type, index: index, currentLineIndex: highlightedLine)
-                                    .id(index)
-                                    .background(
-                                        GeometryReader { geo in
-                                            Color.clear.preference(
-                                                key: VisibleLinePreferenceKey.self,
-                                                value: [index: geo.frame(in: .named("diffScroll")).midY]
-                                            )
-                                        }
-                                    )
-                            }
+                        ForEach(Array(viewModel.treeLines.enumerated()), id: \.offset) { _, line in
+                            Text(line.text)
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundColor(line.color)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
 
-                            Spacer()
-                                .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) * 2)
-                        }
-                        .padding(.horizontal, 12)
+                        Spacer()
+                            .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_TOP")) * 2)
                     }
-                    .coordinateSpace(name: "diffScroll")
-                    .onPreferenceChange(VisibleLinePreferenceKey.self) { positions in
-                        let centerY = ACTUAL_SCREEN_HEIGHT / 2
-                        if let closestLine = positions.min(by: { abs($0.value - centerY) < abs($1.value - centerY) }) {
-                            viewModel.highlightedLineIndex = closestLine.key
-                        }
-                    }
-                    .frame(height: ACTUAL_SCREEN_HEIGHT)
+                    .padding(.horizontal, 16)
                 }
+                .frame(height: ACTUAL_SCREEN_HEIGHT)
             }
 
             VStack {
@@ -857,78 +601,14 @@ struct DiffView: View {
 
                 ToggleBar(items: [
                     ToggleBar.ToggleItem(
-                        color: viewModel.currentNavigationMode.color,
-                        isOn: .constant(false),
-                        icon: "chevron.left",
-                        action: {
-                            viewModel.navigateToPreviousChange()
-                        }
-                    ),
-                    ToggleBar.ToggleItem(
-                        color: viewModel.currentNavigationMode.color,
-                        isOn: .constant(false),
-                        icon: "circle.fill",
-                        action: {
-                            viewModel.cycleNavigationMode()
-                        }
-                    ),
-                    ToggleBar.ToggleItem(
                         color: .blue,
                         isOn: $showDiff,
                         icon: "xmark",
                         action: {
                             showDiff.toggle()
                         }
-                    ),
-                    ToggleBar.ToggleItem(
-                        color: viewModel.currentNavigationMode.color,
-                        isOn: .constant(false),
-                        icon: "chevron.right",
-                        action: {
-                            viewModel.navigateToNextChange()
-                        }
                     )
                 ])
-            }
-        }
-    }
-}
-
-struct DiffLineView: View {
-    let text: String
-    let type: DiffLineType
-    let index: Int
-    let currentLineIndex: Int?
-
-    var isHighlighted: Bool {
-        guard let currentLineIndex = currentLineIndex else { return false }
-        return index == currentLineIndex
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            if type == .sectionHeader {
-                Spacer()
-                    .frame(height: 16)
-            }
-
-            HStack(spacing: 0) {
-                Text(text)
-                    .font(.system(type == .sectionHeader ? .headline : .body, design: .monospaced))
-                    .fontWeight(type == .sectionHeader ? .bold : .regular)
-                    .foregroundColor(type.color)
-                    .lineLimit(nil)
-                    .frame(maxWidth: .infinity, alignment: type == .sectionHeader ? .center : .leading)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .background(
-                isHighlighted ? Color.yellow.opacity(0.1) : Color.clear
-            )
-
-            if type == .sectionHeader {
-                Spacer()
-                    .frame(height: 16)
             }
         }
     }
