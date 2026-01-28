@@ -1,5 +1,4 @@
 #!/bin/bash
-# Read target repo from config file (one line: path to repo)
 CONFIG_FILE="$HOME/.watched-repo"
 
 if [ -f "$CONFIG_FILE" ]; then
@@ -10,16 +9,21 @@ fi
 
 cd "$REPO_PATH" || exit 1
 
-# Active agents (sessions modified in last 5 min)
-echo "=== ACTIVE AGENTS ==="
-python3 << 'PYTHON' 2>/dev/null
-import json, os, time
+python3 << 'PYTHON'
+import json, os, time, subprocess
 
 now = time.time()
-cutoff = now - 300  # 5 minutes
+cutoff = now - 300
 
-agents = []
+def run(cmd):
+    try:
+        return subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL, text=True).rstrip('\n')
+    except:
+        return ""
 
+current_branch = run("git rev-parse --abbrev-ref HEAD") or "unknown"
+
+agents_by_branch = {}
 for proj_dir in os.listdir(os.path.expanduser("~/.claude/projects")):
     index_path = os.path.expanduser(f"~/.claude/projects/{proj_dir}/sessions-index.json")
     if os.path.exists(index_path):
@@ -28,80 +32,79 @@ for proj_dir in os.listdir(os.path.expanduser("~/.claude/projects")):
                 data = json.load(f)
             for entry in data.get("entries", []):
                 mtime = entry.get("fileMtime", 0) / 1000
+                agent_branch = entry.get("gitBranch", "") or "unknown"
                 if mtime > cutoff:
-                    branch = entry.get("gitBranch", "unknown")
-                    prompt = entry.get("firstPrompt", "")[:60].replace("\n", " ")
+                    prompt = entry.get("firstPrompt", "")[:40].replace("\n", " ").strip()
                     ago = int(now - mtime)
-                    agents.append((ago, branch, prompt))
+                    if agent_branch not in agents_by_branch:
+                        agents_by_branch[agent_branch] = []
+                    agents_by_branch[agent_branch].append((ago, prompt))
         except:
             pass
 
-if agents:
-    for ago, branch, prompt in sorted(agents):
-        mins = ago // 60
-        secs = ago % 60
-        time_str = f"{mins}m{secs:02d}s" if mins else f"{secs}s"
-        print(f"{time_str:>6} │ {branch:15} │ {prompt}...")
+branch = current_branch
+remote_head = run("git rev-parse origin/" + branch + " 2>/dev/null")
+local_head = run("git rev-parse HEAD")
+
+commits = []
+log = run("git log --format='%h %d %s'")
+for line in log.split('\n'):
+    if line.strip():
+        commits.append(line.strip())
+
+working = []
+status = run("git status --porcelain")
+for line in status.split('\n'):
+    if not line.strip():
+        continue
+    code = line[:2]
+    filepath = line[3:]
+
+    if code[0] == '?' or code[1] == '?':
+        stat = run(f"wc -l < '{filepath}' 2>/dev/null") or "0"
+        working.append(f"? {filepath} (+{stat.strip()})")
+    else:
+        diff_stat = run(f"git diff --numstat '{filepath}' 2>/dev/null")
+        if diff_stat:
+            parts = diff_stat.split()
+            if len(parts) >= 2:
+                added, removed = parts[0], parts[1]
+                working.append(f"M {filepath} (+{added} -{removed})")
+        else:
+            diff_stat = run(f"git diff --cached --numstat '{filepath}' 2>/dev/null")
+            if diff_stat:
+                parts = diff_stat.split()
+                if len(parts) >= 2:
+                    added, removed = parts[0], parts[1]
+                    working.append(f"M {filepath} (+{added} -{removed})")
+
+lines = []
+
+for br in sorted(agents_by_branch.keys(), key=lambda b: (b != current_branch, b)):
+    agents = agents_by_branch[br]
+    marker = "★" if br == current_branch else "○"
+    lines.append(f"├─ {marker} {br}")
+    for ago, prompt in sorted(agents):
+        if ago < 60:
+            time_str = f"{ago}s"
+        else:
+            time_str = f"{ago // 60}m{ago % 60:02d}s"
+        lines.append(f"│  ├─ ● {time_str} \"{prompt}...\"")
+    lines.append("│")
+
+if working:
+    lines.append("├─ Working")
+    for i, w in enumerate(working):
+        prefix = "│  └─ " if i == len(working) - 1 else "│  ├─ "
+        lines.append(prefix + w)
+    lines.append("│")
+
+if commits:
+    for i, c in enumerate(commits):
+        prefix = "└─ " if i == len(commits) - 1 else "├─ "
+        lines.append(prefix + c)
 else:
-    print("(none)")
+    lines.append("└─ (no commits)")
+
+print('\n'.join(lines))
 PYTHON
-echo ""
-
-# Git tree with branches and commits
-echo "=== GIT TREE ==="
-git log --graph --pretty=format:'%h %ad%d %s' --date=format:'%b %d %H:%M' --abbrev-commit --all
-echo ""
-echo ""
-
-# Branch status with ahead/behind count
-echo "=== Branch Status ==="
-repo_name=$(basename -s .git "$(git config --get remote.origin.url)" 2>/dev/null || basename "$(pwd)")
-git status -sb | sed "s/^## /$repo_name\//"
-echo ""
-
-# Unstaged changes
-echo "=== Unstaged Changes ==="
-git diff --function-context
-echo ""
-
-# Staged changes
-echo "=== Staged Changes ==="
-git diff --staged --function-context
-echo ""
-
-# Untracked files with their content (max 5000 bytes per file)
-echo "=== Untracked files ==="
-git ls-files --others --exclude-standard | while read -r f; do
-    if [ -f "$f" ]; then
-        size=$(wc -c < "$f")
-        echo ""
-        echo "new file: $f"
-        echo "---"
-        if [ "$size" -lt 5000 ]; then
-            cat "$f"
-        else
-            echo "(file too large: $size bytes)"
-        fi
-        echo ""
-    fi
-done
-echo ""
-
-# Commits
-echo "=== Commits ==="
-git fetch -q 2>/dev/null
-local_head=$(git rev-parse HEAD 2>/dev/null)
-remote_head=$(git rev-parse origin/development 2>/dev/null || echo "")
-
-git log --all -10 --format="%H|%ad %s %h" --date=format:'%b %d %H:%M' | while IFS='|' read -r commit_hash commit_line; do
-    if [ "$commit_hash" = "$remote_head" ]; then
-        echo "=== REMOTE HEAD ==="
-    fi
-    if [ "$commit_hash" = "$local_head" ]; then
-        echo "=== LOCAL HEAD ==="
-    fi
-    echo "$commit_line"
-done
-
-echo "=== Last Commit ==="
-git show -1 --format="%h %ad %s" --date=format:'%b %d %H:%M'

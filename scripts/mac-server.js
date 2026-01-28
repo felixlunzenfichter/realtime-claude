@@ -1703,33 +1703,29 @@ function sendGitDiffToiOS(force = false) {
             cwd: repoPath
         });
 
-        const diff = fs.readFileSync(outputFile, 'utf8').trim();
+        const tree = fs.readFileSync(outputFile, 'utf8').trim();
 
-        if (!force && diff === lastDiffSent) {
+        if (!force && tree === lastDiffSent) {
             return;
         }
 
-        lastDiffSent = diff;
+        lastDiffSent = tree;
         lastDiffHash = hash;
 
-        const columns = computeColumns(diff);
-        writeColumnsJson(hash, columns);
-
         if (activeSocket) {
-            const diffMessage = {
+            const treeMessage = {
                 type: 'code_diff',
-                diff: columns.join('\n\n--- COLUMN ---\n\n'),
-                columns: columns,
+                diff: tree,
                 timestamp: Date.now()
             };
 
-            const jsonData = JSON.stringify(diffMessage) + '\n';
+            const jsonData = JSON.stringify(treeMessage) + '\n';
             activeSocket.write(jsonData);
 
-            log(`Sent git diff to iOS: ${columns.length} columns${force ? ' (forced during handshake)' : ''}`, 'sendGitDiffToiOS');
+            log(`Sent tree to iOS: ${tree.split('\n').length} lines${force ? ' (forced during handshake)' : ''}`, 'sendGitDiffToiOS');
         }
     } catch (err) {
-        log(`Failed to get git diff: ${err.message}`, 'sendGitDiffToiOS');
+        log(`Failed to get tree: ${err.message}`, 'sendGitDiffToiOS');
     } finally {
         try { fs.unlinkSync(outputFile); } catch {}
     }
