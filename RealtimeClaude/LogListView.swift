@@ -2,13 +2,6 @@ import SwiftUI
 import Combine
 import Observation
 
-struct VisibleLinePreferenceKey: PreferenceKey {
-    nonisolated(unsafe) static var defaultValue: [Int: CGFloat] = [:]
-    static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
-        value.merge(nextValue()) { $1 }
-    }
-}
-
 @Observable
 class LogListViewModel {
     var debugLogs: [(LogMessage, Int)] = []
@@ -539,21 +532,9 @@ class DiffViewModel {
             .store(in: &cancellables)
     }
 
-    var treeLines: [(text: String, color: Color)] {
+    var treeLines: [String] {
         guard !treeText.isEmpty else { return [] }
-
-        return treeText.split(separator: "\n", omittingEmptySubsequences: false).map { line in
-            let text = String(line)
-            if text.contains("●") {
-                return (text: text, color: .cyan)
-            } else if text.hasPrefix("└─ Working") || text.hasPrefix("   ├─") || text.hasPrefix("   └─") {
-                return (text: text, color: .orange)
-            } else if text.contains("(clean)") {
-                return (text: text, color: .green)
-            } else {
-                return (text: text, color: .primary)
-            }
-        }
+        return treeText.split(separator: "\n", omittingEmptySubsequences: false).map { String($0) }
     }
 }
 
@@ -582,9 +563,8 @@ struct DiffView: View {
                             .frame(height: CGFloat(UserDefaults.standard.double(forKey: "SAFE_AREA_BOTTOM")) * 2)
 
                         ForEach(Array(viewModel.treeLines.enumerated()), id: \.offset) { _, line in
-                            Text(line.text)
+                            Text(line)
                                 .font(.system(.body, design: .monospaced))
-                                .foregroundColor(line.color)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
 
