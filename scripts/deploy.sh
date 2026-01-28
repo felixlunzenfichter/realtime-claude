@@ -69,8 +69,8 @@ exec 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-
 node scripts/mac-server.js > /tmp/mac-server-output.log 2>&1 &
 SERVER_PID=$!
 
-# Now start the tail|sed pipe (server already has clean FDs)
-tail -f /tmp/mac-server-output.log | sed -l "s/^/[SERVER] /" &
+# Stream server logs to console (unified format already includes device/mode)
+tail -f /tmp/mac-server-output.log &
 
 for i in {1..100}; do
     if pgrep -f "node scripts/mac-server.js" > /dev/null; then

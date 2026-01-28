@@ -49,6 +49,52 @@ enum LogType: Codable {
         }
     }
 }
+enum LogMode: String, Codable, Sendable {
+    case auto = "AUTO"
+    case manual = "MANUAL"
+    case prod = "PROD"
+
+    static var current: LogMode {
+        #if IS_TEST
+            #if MANUAL_TESTING
+                return .manual
+            #else
+                return .auto
+            #endif
+        #else
+            return .prod
+        #endif
+    }
+}
+
+enum LogDevice: String, Codable, Sendable {
+    case iPhone = "iPhone"
+    case iPad = "iPad"
+
+    private nonisolated(unsafe) static var _cachedDevice: LogDevice?
+
+    @MainActor
+    private static func detectDevice() -> LogDevice {
+        UIDevice.current.userInterfaceIdiom == .pad ? .iPad : .iPhone
+    }
+
+    static var current: LogDevice {
+        if let cached = _cachedDevice {
+            return cached
+        }
+        let device: LogDevice
+        if Thread.isMainThread {
+            device = MainActor.assumeIsolated { detectDevice() }
+        } else {
+            device = DispatchQueue.main.sync {
+                MainActor.assumeIsolated { detectDevice() }
+            }
+        }
+        _cachedDevice = device
+        return device
+    }
+}
+
 struct LogMessage: Identifiable, Codable, Sendable {
     var id: String = UUID().uuidString
     let type: LogType
@@ -56,6 +102,8 @@ struct LogMessage: Identifiable, Codable, Sendable {
     let fileName: String
     let functionName: String
     let message: String
+    let mode: LogMode
+    let device: LogDevice
 
     var shortFileName: String {
         URL(fileURLWithPath: fileName).deletingPathExtension().lastPathComponent
@@ -258,7 +306,9 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             timestamp: Date(),
             fileName: file,
             functionName: function,
-            message: message
+            message: message,
+            mode: LogMode.current,
+            device: LogDevice.current
         )
 
         addLogMessage(logMessage)
@@ -336,7 +386,9 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
                 timestamp: newTimestamp,
                 fileName: file,
                 functionName: function,
-                message: message
+                message: message,
+                mode: LogMode.current,
+                device: LogDevice.current
             )
             debugLogs[index] = (updatedLog, count + 1)
         } else {
@@ -346,7 +398,9 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
                 timestamp: Date(),
                 fileName: file,
                 functionName: function,
-                message: message
+                message: message,
+                mode: LogMode.current,
+                device: LogDevice.current
             )
             debugLogs.insert((logMessage, 1), at: 0)
         }
