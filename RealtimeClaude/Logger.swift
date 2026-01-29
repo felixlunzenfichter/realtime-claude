@@ -2,7 +2,6 @@ import Foundation
 import SwiftUI
 import Network
 import Combine
-import UIKit
 
 struct SessionStats {
     let sessionNumber: Int
@@ -21,10 +20,13 @@ protocol LoggerProtocol {
     var macConnectionReadySubject: CurrentValueSubject<Bool, Never> { get }
     var codeDiffSubject: CurrentValueSubject<String, Never> { get }
     var claudeIsActiveSubject: CurrentValueSubject<Bool, Never> { get }
+    var planPendingSubject: CurrentValueSubject<String?, Never> { get }
 
     func sendPromptToMac(_ prompt: String, messageId: UUID)
     func sendAudioToMac(_ audioData: Data, isStart: Bool, isEnd: Bool, messageId: UUID?)
     func sendDeleteToMac(messageId: UUID)
+    func sendPlanAcceptedToMac()
+    func sendPlanRejectedToMac()
 }
 
 enum LogType: Codable {
@@ -122,6 +124,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     let macConnectionReadySubject = CurrentValueSubject<Bool, Never>(false)
     let codeDiffSubject = CurrentValueSubject<String, Never>("")
     let claudeIsActiveSubject = CurrentValueSubject<Bool, Never>(false)
+    let planPendingSubject = CurrentValueSubject<String?, Never>(nil)
 
     private var connection: NWConnection
     private let macHostname = "100.73.64.63"
@@ -502,6 +505,8 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             handleCodeDiffMessage(jsonData)
         case "claude_state":
             handleClaudeStateMessage(jsonData)
+        case "plan_pending":
+            handlePlanPendingMessage(jsonData)
         default:
             error("Unexpected message type: \(messageType)")
         }
@@ -682,6 +687,16 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         realtimeAPI.updateClaudeActiveState(isActive)
     }
 
+    private func handlePlanPendingMessage(_ jsonData: [String: Any]) {
+        guard let message = jsonData["message"] as? String else {
+            error("message was nil in plan_pending message")
+            return
+        }
+
+        log("📋 Plan pending: \(message)")
+        planPendingSubject.send(message)
+    }
+
     private func sendStartMessage() {
         let startMessage = ["type": "start"] as [String: Any]
 
@@ -746,6 +761,34 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         }
 
         sendMessage(jsonData, messageType: "delete", logMessage: "📤 [iOS → macOS] Sending delete for messageId: \(messageId.uuidString)")
+    }
+
+    func sendPlanAcceptedToMac() {
+        let acceptMessage: [String: Any] = [
+            "type": "plan_accepted"
+        ]
+
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: acceptMessage) else {
+            error("Failed to serialize plan_accepted message to JSON")
+            return
+        }
+
+        sendMessage(jsonData, messageType: "plan_accepted", logMessage: "📤 [iOS → macOS] Plan accepted")
+        planPendingSubject.send(nil)
+    }
+
+    func sendPlanRejectedToMac() {
+        let rejectMessage: [String: Any] = [
+            "type": "plan_rejected"
+        ]
+
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: rejectMessage) else {
+            error("Failed to serialize plan_rejected message to JSON")
+            return
+        }
+
+        sendMessage(jsonData, messageType: "plan_rejected", logMessage: "📤 [iOS → macOS] Plan rejected")
+        planPendingSubject.send(nil)
     }
 
     private func scheduleReconnect() {

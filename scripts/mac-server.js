@@ -114,7 +114,7 @@
 const net = require('net');
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execSync, spawnSync, spawn, exec, fork } = require('child_process');
 const chokidar = require('chokidar');
 const FormData = require('form-data');
 const fetch = require('node-fetch');
@@ -126,6 +126,8 @@ const MANUAL_TESTING = process.env.MANUAL_TESTING === 'true';
 const useRealAudio = !IS_TEST || MANUAL_TESTING;
 const SERVER_PORT = parseInt(process.env.SERVER_PORT, 10) || 8082;
 let testFailed = false;
+
+const REPO_ROOT = path.dirname(__dirname);
 
 // ============================================
 // UNIFIED LOGGING (writes to same file as iOS)
@@ -188,10 +190,9 @@ function error(message, functionName = 'unknown') {
     }
     if (IS_TEST && !testFailed) {
         testFailed = true;
-        const repoRoot = execSync('git rev-parse --show-toplevel', {encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe']}).trim();
         const marker = MANUAL_TESTING
-            ? path.join(repoRoot, '.test-passed-manual')
-            : path.join(repoRoot, '.test-passed-automated');
+            ? path.join(REPO_ROOT, '.test-passed-manual')
+            : path.join(REPO_ROOT, '.test-passed-automated');
         fs.writeFileSync(marker, `ERROR|mac-server|${functionName}|${message}`);
         console.error('ERROR in test mode: Wrote ERROR to marker. Tests failed.');
     }
@@ -231,6 +232,10 @@ function closeAllWatchers() {
         configWatcher.close();
         configWatcher = null;
     }
+    if (planPendingWatcher) {
+        planPendingWatcher.close();
+        planPendingWatcher = null;
+    }
     log('All file watchers closed', 'closeAllWatchers');
 }
 
@@ -261,6 +266,9 @@ let lastDiffHash = null;
 let diffDebounceTimer = null;
 const COLUMNS_JSON_PATH = path.join(require('os').homedir(), '.git-diff-columns.json');
 const REPO_CONFIG_PATH = path.join(require('os').homedir(), '.watched-repo');
+const PLAN_PENDING_PATH = '/tmp/plan-pending';
+
+let planPendingWatcher = null;
 
 
 const MAX_AUDIO_DURATION = 10;
@@ -869,6 +877,14 @@ function isDeleteMessage(logData) {
     return logData.type === 'delete';
 }
 
+function isPlanAcceptedMessage(logData) {
+    return logData.type === 'plan_accepted';
+}
+
+function isPlanRejectedMessage(logData) {
+    return logData.type === 'plan_rejected';
+}
+
 function handleDeleteMessage(logData) {
     const messageId = logData.messageId;
 
@@ -885,6 +901,50 @@ function handleDeleteMessage(logData) {
         log(`Marked message as deleted: ${messageId}`, 'handleDeleteMessage');
     } else {
         log(`No message state found for messageId: ${messageId}`, 'handleDeleteMessage');
+    }
+}
+
+function handlePlanAcceptedMessage() {
+    log('Plan accepted by user - pushing to remote', 'handlePlanAcceptedMessage');
+
+    const childScript = path.join(__dirname, 'git-push-child.js');
+    const child = fork(childScript, [], { detached: true, stdio: 'ignore' });
+    child.unref();
+    child.on('close', (code) => {
+        if (code === 0) {
+            log('Git push successful', 'handlePlanAcceptedMessage');
+        } else {
+            log(`Git push child exited with code ${code}`, 'handlePlanAcceptedMessage');
+        }
+    });
+
+    try {
+        fs.unlinkSync(PLAN_PENDING_PATH);
+        log('Deleted plan-pending file', 'handlePlanAcceptedMessage');
+    } catch (err) {
+        log(`Could not delete plan-pending file: ${err.message}`, 'handlePlanAcceptedMessage');
+    }
+}
+
+function handlePlanRejectedMessage() {
+    log('Plan rejected by user - resetting to previous commit', 'handlePlanRejectedMessage');
+
+    const childScript = path.join(__dirname, 'git-reset-child.js');
+    const child = fork(childScript, [], { detached: true, stdio: 'ignore' });
+    child.unref();
+    child.on('close', (code) => {
+        if (code === 0) {
+            log('Git reset successful', 'handlePlanRejectedMessage');
+        } else {
+            log(`Git reset child exited with code ${code}`, 'handlePlanRejectedMessage');
+        }
+    });
+
+    try {
+        fs.unlinkSync(PLAN_PENDING_PATH);
+        log('Deleted plan-pending file', 'handlePlanRejectedMessage');
+    } catch (err) {
+        log(`Could not delete plan-pending file: ${err.message}`, 'handlePlanRejectedMessage');
     }
 }
 
@@ -927,6 +987,7 @@ server.listen(SERVER_PORT, '0.0.0.0', () => {
 
     initializeClaudeMonitoring();
     initializeGitDiffWatcher();
+    initializePlanPendingWatcher();
 });
 
 function processBufferedData(socket, buffer) {
@@ -961,6 +1022,10 @@ async function handleMessage(socket, logData) {
         await handleAudioMessage(socket, logData);
     } else if (isDeleteMessage(logData)) {
         handleDeleteMessage(logData);
+    } else if (isPlanAcceptedMessage(logData)) {
+        handlePlanAcceptedMessage();
+    } else if (isPlanRejectedMessage(logData)) {
+        handlePlanRejectedMessage();
     } else if (isErrorMessage(logData)) {
         handleErrorMessage(socket, logData);
     } else if (isLogMessage(logData)) {
@@ -1413,10 +1478,9 @@ function handleErrorMessage(socket, logData) {
 
     if (IS_TEST && !testFailed) {
         testFailed = true;
-        const repoRoot = execSync('git rev-parse --show-toplevel', {encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe']}).trim();
         const marker = MANUAL_TESTING
-            ? path.join(repoRoot, '.test-passed-manual')
-            : path.join(repoRoot, '.test-passed-automated');
+            ? path.join(REPO_ROOT, '.test-passed-manual')
+            : path.join(REPO_ROOT, '.test-passed-automated');
         fs.writeFileSync(marker, `ERROR|${logData.fileName}|${logData.functionName}|${logData.message}`);
         console.error('🚨 iOS ERROR in test mode: Wrote ERROR to marker. Tests failed.');
     }
@@ -1675,6 +1739,60 @@ function initializeGitDiffWatcher() {
     });
 
     log(`Watching config file: ${REPO_CONFIG_PATH}`, 'initializeGitDiffWatcher');
+}
+
+function initializePlanPendingWatcher() {
+    planPendingWatcher = chokidar.watch(PLAN_PENDING_PATH, {
+        persistent: true,
+        ignoreInitial: false
+    });
+
+    planPendingWatcher.on('add', () => {
+        log(`Plan pending file created`, 'initializePlanPendingWatcher');
+        sendPlanPendingToiOS();
+    });
+
+    planPendingWatcher.on('change', () => {
+        log(`Plan pending file changed`, 'initializePlanPendingWatcher');
+        sendPlanPendingToiOS();
+    });
+
+    planPendingWatcher.on('error', (err) => {
+        error(`Plan pending watcher error: ${err}`, 'initializePlanPendingWatcher');
+    });
+
+    log(`Watching for plan commits: ${PLAN_PENDING_PATH}`, 'initializePlanPendingWatcher');
+}
+
+function sendPlanPendingToiOS() {
+    if (!activeSocket) {
+        log('No iOS client connected - cannot send plan pending', 'sendPlanPendingToiOS');
+        return;
+    }
+
+    try {
+        if (!fs.existsSync(PLAN_PENDING_PATH)) {
+            log('Plan pending file does not exist', 'sendPlanPendingToiOS');
+            return;
+        }
+
+        const message = fs.readFileSync(PLAN_PENDING_PATH, 'utf8').trim();
+        if (!message) {
+            log('Plan pending file is empty', 'sendPlanPendingToiOS');
+            return;
+        }
+
+        const planPendingMessage = {
+            type: 'plan_pending',
+            message: message,
+            timestamp: Date.now()
+        };
+
+        activeSocket.write(JSON.stringify(planPendingMessage) + '\n');
+        log(`Sent plan_pending to iOS: "${message}"`, 'sendPlanPendingToiOS');
+    } catch (err) {
+        error(`Failed to send plan_pending: ${err.message}`, 'sendPlanPendingToiOS');
+    }
 }
 
 

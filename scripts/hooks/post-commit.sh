@@ -3,9 +3,17 @@
 REPO_ROOT=$(git rev-parse --show-toplevel)
 COMMIT_HASH=$(git rev-parse HEAD)
 BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
+COMMIT_MSG=$(git log -1 --format=%s)
 AUTOMATED_MARKER="$REPO_ROOT/.test-passed-automated"
 MANUAL_MARKER="$REPO_ROOT/.test-passed-manual"
 STATUS_FILE="$REPO_ROOT/.test-status"
+PLAN_PENDING_FILE="/tmp/plan-pending"
+
+if [[ "$COMMIT_MSG" == plan:* ]]; then
+    echo "$COMMIT_MSG" > "$PLAN_PENDING_FILE"
+    echo "📋 Plan commit detected. Waiting for iOS approval..."
+    exit 0
+fi
 
 update_status() {
     echo "$1 $COMMIT_HASH $(date '+%H:%M:%S')" >> "$STATUS_FILE"

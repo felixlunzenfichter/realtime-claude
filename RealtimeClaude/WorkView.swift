@@ -2,7 +2,6 @@ import SwiftUI
 import Combine
 import Observation
 import CoreMotion
-import UIKit
 
 let INTERRUPT_MESSAGE = "[Request interrupted by user]"
 
@@ -361,6 +360,62 @@ struct WorkView: View {
 
                 Spacer()
             }
+
+            if let planMessage = viewModel.pendingPlanMessage {
+                Color.black.opacity(0.7)
+                    .ignoresSafeArea()
+
+                VStack(spacing: 20) {
+                    Text("Plan Approval")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+
+                    Text(planMessage)
+                        .font(.body)
+                        .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
+                        .padding()
+                        .background(Color.gray.opacity(0.3))
+                        .cornerRadius(10)
+
+                    HStack(spacing: 40) {
+                        Button {
+                            viewModel.rejectPlan()
+                        } label: {
+                            HStack {
+                                Image(systemName: "xmark.circle.fill")
+                                Text("Reject")
+                            }
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 30)
+                            .padding(.vertical, 15)
+                            .background(Color.red)
+                            .cornerRadius(10)
+                        }
+
+                        Button {
+                            viewModel.acceptPlan()
+                        } label: {
+                            HStack {
+                                Image(systemName: "checkmark.circle.fill")
+                                Text("Accept")
+                            }
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 30)
+                            .padding(.vertical, 15)
+                            .background(Color.green)
+                            .cornerRadius(10)
+                        }
+                    }
+                }
+                .padding(30)
+                .background(Color.black.opacity(0.8))
+                .cornerRadius(20)
+                .padding(.horizontal, 20)
+            }
         }
         .onAppear {
             viewModel.startMotionDetection()
@@ -398,6 +453,7 @@ class WorkViewModel {
     var audioInputSource = "Unknown"
     var loadingStatus: String? = nil
     var claudeIsActive = false
+    var pendingPlanMessage: String? = nil
 
     var allMessages: [ConversationMessage] = []
 
@@ -500,6 +556,13 @@ class WorkViewModel {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isActive in
                 self?.claudeIsActive = isActive
+            }
+            .store(in: &cancellables)
+
+        logger.planPendingSubject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] message in
+                self?.pendingPlanMessage = message
             }
             .store(in: &cancellables)
     }
@@ -624,6 +687,16 @@ class WorkViewModel {
         log("▶️ Sending continue signal to Claude")
         let messageId = realtimeAPI.createRecordingMessage()
         logger.sendPromptToMac("continue working", messageId: messageId)
+    }
+
+    func acceptPlan() {
+        log("✅ User accepted plan")
+        logger.sendPlanAcceptedToMac()
+    }
+
+    func rejectPlan() {
+        log("❌ User rejected plan")
+        logger.sendPlanRejectedToMac()
     }
 
     deinit {
