@@ -1712,6 +1712,8 @@ function sendGitDiffToiOS(force = false) {
         lastDiffSent = tree;
         lastDiffHash = hash;
 
+        writeColumnsJson(hash, [tree]);
+
         if (activeSocket) {
             const treeMessage = {
                 type: 'code_diff',
