@@ -32,9 +32,12 @@ REMOTE_EXISTS=$(git ls-remote --heads origin "$BRANCH" 2>/dev/null)
 
 if [ -z "$REMOTE_EXISTS" ]; then
     # Branch not on remote - this is first push
-    # Only allow if pushing a plan commit
-    COMMITS=$(git log origin/development..HEAD --oneline 2>/dev/null || git log HEAD --oneline)
-    if echo "$COMMITS" | grep -q "^[a-f0-9]* plan:"; then
+    # First commit on branch must be a plan commit
+    FIRST_COMMIT=$(git log origin/development..HEAD --oneline --reverse 2>/dev/null | head -1)
+    if [ -z "$FIRST_COMMIT" ]; then
+        FIRST_COMMIT=$(git log HEAD --oneline --reverse | head -1)
+    fi
+    if echo "$FIRST_COMMIT" | grep -q "^[a-f0-9]* plan:"; then
         echo "✅ Pushing plan commit..."
         exit 0
     else
