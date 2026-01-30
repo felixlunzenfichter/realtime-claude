@@ -19,7 +19,8 @@ if [ ! -f "$MARKER" ]; then
     exit 1
 fi
 
-ACCEPTED_BRANCH=$(cat "$MARKER")
+ACCEPTED_BRANCH=$(head -1 "$MARKER")
+echo "📋 Read branch from marker: '$ACCEPTED_BRANCH'"
 if [ "$ACCEPTED_BRANCH" != "$BRANCH" ]; then
     echo "❌ Plan accepted for '$ACCEPTED_BRANCH', not '$BRANCH'"
     echo ""
