@@ -869,6 +869,10 @@ function isDeleteMessage(logData) {
     return logData.type === 'delete';
 }
 
+function isAcceptPlanMessage(logData) {
+    return logData.type === 'accept_plan';
+}
+
 function handleDeleteMessage(logData) {
     const messageId = logData.messageId;
 
@@ -885,6 +889,46 @@ function handleDeleteMessage(logData) {
         log(`Marked message as deleted: ${messageId}`, 'handleDeleteMessage');
     } else {
         log(`No message state found for messageId: ${messageId}`, 'handleDeleteMessage');
+    }
+}
+
+function getCurrentBranchFromHead(repoPath) {
+    const headPath = path.join(repoPath, '.git', 'HEAD');
+    const headContent = fs.readFileSync(headPath, 'utf8').trim();
+    if (headContent.startsWith('ref: refs/heads/')) {
+        return headContent.replace('ref: refs/heads/', '');
+    }
+    return headContent;
+}
+
+function handleAcceptPlanMessage(socket, logData) {
+    log('Received accept_plan message', 'handleAcceptPlanMessage');
+
+    try {
+        const repoPath = getRepoPath();
+        if (!repoPath) {
+            error('No repo configured for accept_plan', 'handleAcceptPlanMessage');
+            return;
+        }
+
+        const branch = getCurrentBranchFromHead(repoPath);
+
+        const timestamp = Date.now();
+        const markerPath = path.join(repoPath, '.plan-accepted');
+        fs.writeFileSync(markerPath, `${branch}\n${timestamp}`);
+
+        log(`Wrote .plan-accepted with branch: ${branch}, timestamp: ${timestamp}`, 'handleAcceptPlanMessage');
+
+        const response = JSON.stringify({type: 'plan_accepted', branch: branch, timestamp: timestamp}) + '\n';
+        socket.write(response, (err) => {
+            if (err) {
+                error(`Failed to send plan_accepted response: ${err.message}`, 'handleAcceptPlanMessage');
+            } else {
+                log(`Sent plan_accepted response to iOS`, 'handleAcceptPlanMessage');
+            }
+        });
+    } catch (err) {
+        error(`Failed to handle accept_plan: ${err.message}`, 'handleAcceptPlanMessage');
     }
 }
 
@@ -961,6 +1005,8 @@ async function handleMessage(socket, logData) {
         await handleAudioMessage(socket, logData);
     } else if (isDeleteMessage(logData)) {
         handleDeleteMessage(logData);
+    } else if (isAcceptPlanMessage(logData)) {
+        handleAcceptPlanMessage(socket, logData);
     } else if (isErrorMessage(logData)) {
         handleErrorMessage(socket, logData);
     } else if (isLogMessage(logData)) {
@@ -1217,6 +1263,21 @@ function countLinesInContent(content) {
     return content.split('\n').filter(line => line.trim()).length;
 }
 
+function isPlanAccepted() {
+    const repoPath = getRepoPath();
+    if (!repoPath) return false;
+
+    const markerPath = path.join(repoPath, '.plan-accepted');
+    if (!fs.existsSync(markerPath)) return false;
+
+    const content = fs.readFileSync(markerPath, 'utf8').trim();
+    const acceptedBranch = content.split('\n')[0];
+
+    const currentBranch = getCurrentBranchFromHead(repoPath);
+
+    return acceptedBranch === currentBranch;
+}
+
 async function sendHandshakeResponse(socket, stats) {
     let apiKey;
     if (IS_TEST) {
@@ -1226,6 +1287,7 @@ async function sendHandshakeResponse(socket, stats) {
     }
 
     const previousErrors = getPreviousSessionErrors(stats.sessionNumber);
+    const planAccepted = isPlanAccepted();
 
     const crypto = require('crypto');
     const handshakeMessageId = lastSentAssistantMessage ? crypto.randomUUID() : null;
@@ -1240,7 +1302,8 @@ async function sendHandshakeResponse(socket, stats) {
         previousErrors: previousErrors,
         currentAssistantMessage: lastSentAssistantMessage,
         currentAssistantMessageSummary: "",
-        messageId: handshakeMessageId
+        messageId: handshakeMessageId,
+        planAccepted: planAccepted
     }) + '\n';
 
     socket.write(handshakeResponse);

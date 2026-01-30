@@ -41,6 +41,10 @@ xcrun devicectl device process terminate --device "$IPHONE_ID" ch.felix.realtime
 # Kill only test server (port 9999), leave production (8082) alone
 echo "Restarting test server on port 9999..."
 lsof -ti :9999 | xargs kill -9 2>/dev/null || true
+
+# Delete plan marker to ensure clean test state
+rm -f .plan-accepted
+
 sleep 1
 eval "$SERVER_FLAGS SERVER_PORT=9999 node scripts/mac-server.js >> /tmp/mac-server-test.log 2>&1 &"
 sleep 2
