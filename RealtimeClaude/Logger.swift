@@ -21,10 +21,12 @@ protocol LoggerProtocol {
     var macConnectionReadySubject: CurrentValueSubject<Bool, Never> { get }
     var codeDiffSubject: CurrentValueSubject<String, Never> { get }
     var claudeIsActiveSubject: CurrentValueSubject<Bool, Never> { get }
+    var planAcceptedSubject: CurrentValueSubject<Bool, Never> { get }
 
     func sendPromptToMac(_ prompt: String, messageId: UUID)
     func sendAudioToMac(_ audioData: Data, isStart: Bool, isEnd: Bool, messageId: UUID?)
     func sendDeleteToMac(messageId: UUID)
+    func sendAcceptPlan()
 }
 
 enum LogType: Codable {
@@ -122,6 +124,7 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     let macConnectionReadySubject = CurrentValueSubject<Bool, Never>(false)
     let codeDiffSubject = CurrentValueSubject<String, Never>("")
     let claudeIsActiveSubject = CurrentValueSubject<Bool, Never>(false)
+    let planAcceptedSubject = CurrentValueSubject<Bool, Never>(false)
 
     private var connection: NWConnection
     private let macHostname = "100.73.64.63"
@@ -136,16 +139,17 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     private var reconnectTimer: DispatchSourceTimer?
 
     #if IS_TEST
-    private static let TEST_WORD = "MOONLIGHT"
+    private static let ACCEPT_PLAN_COMMAND = "ACCEPT_PLAN"
+    private static let CHECK_NOT_ACCEPTED_COMMAND = "CHECK_NOT_ACCEPTED"
 
     private static let TEST_0_MARKER = "✓ TEST[0] PASSED: handshake"
-    private static let TEST_1_MARKER = "✓ TEST[1] PASSED: claude_responds"
-    private static let TEST_2_MARKER = "✓ TEST[2] PASSED: recall_verified"
+    private static let TEST_1_MARKER = "✓ TEST[1] PASSED: plan_not_accepted"
+    private static let TEST_2_MARKER = "✓ TEST[2] PASSED: plan_accepted"
 
     private let STORY: [(command: String?, result: String)] = [
         (nil, Logger.TEST_0_MARKER),
-        ("Remember \(TEST_WORD)", Logger.TEST_1_MARKER),
-        ("What word did I ask you to remember?", Logger.TEST_2_MARKER)
+        (Logger.CHECK_NOT_ACCEPTED_COMMAND, Logger.TEST_1_MARKER),
+        (Logger.ACCEPT_PLAN_COMMAND, Logger.TEST_2_MARKER)
     ]
 
     private var storyIndex = 0
@@ -157,15 +161,20 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         log(Logger.TEST_0_MARKER)
     }
 
-    func testClaudeRespondsPassed() {
+    func testPlanNotAccepted() {
         guard storyIndex == 1 else { return }
-        testsPassedSubject.send(testsPassedSubject.value + 1)
-        log(Logger.TEST_1_MARKER)
+        if planAcceptedSubject.value == false {
+            testsPassedSubject.send(testsPassedSubject.value + 1)
+            log(Logger.TEST_1_MARKER)
+            storyIndex += 1
+            advanceStory()
+        } else {
+            error("TEST[1] FAILED: planAccepted should be false but was true")
+        }
     }
 
-    func testRecallVerified(_ response: String) {
+    func testPlanAccepted() {
         guard storyIndex == 2 else { return }
-        guard !response.isEmpty else { return }
         testsPassedSubject.send(testsPassedSubject.value + 1)
         log(Logger.TEST_2_MARKER)
     }
@@ -225,15 +234,23 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
     #if !MANUAL_TESTING
     private func executeCommand(_ command: String) {
         pre(!command.isEmpty, "command must not be empty")
-        log("📤 Sending prompt to Mac: \(command)")
-        sendPromptToMac(command, messageId: UUID())
+        if command == Logger.CHECK_NOT_ACCEPTED_COMMAND {
+            log("📋 Checking planAccepted is false")
+            testPlanNotAccepted()
+        } else if command == Logger.ACCEPT_PLAN_COMMAND {
+            log("📤 Sending accept_plan to Mac")
+            sendAcceptPlan()
+        } else {
+            log("📤 Sending prompt to Mac: \(command)")
+            sendPromptToMac(command, messageId: UUID())
+        }
     }
     #endif
 
     #else
     func testHandshakePassed() {}
-    func testClaudeRespondsPassed() {}
-    func testRecallVerified(_ response: String) {}
+    func testPlanNotAccepted() {}
+    func testPlanAccepted() {}
     #endif
 
     private var isConnectionReady: Bool = false {
@@ -502,6 +519,8 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
             handleCodeDiffMessage(jsonData)
         case "claude_state":
             handleClaudeStateMessage(jsonData)
+        case "plan_accepted":
+            handlePlanAcceptedMessage(jsonData)
         default:
             error("Unexpected message type: \(messageType)")
         }
@@ -577,6 +596,10 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         )
 
         sessionStatsSubject.send(sessionStats)
+
+        if let planAccepted = jsonData["planAccepted"] as? Bool {
+            planAcceptedSubject.send(planAccepted)
+        }
 
         log("Successful handshake: Session #\(sessionNumber), Total: \(totalUptime)ms, Today: \(todayUptime)ms, Logs: \(totalLogs)")
 
@@ -654,11 +677,6 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
 
         realtimeAPI.updatePrompt(messageId: messageId, text: prompt)
         realtimeAPI.updateSummary(messageId: messageId, text: summary)
-
-        #if IS_TEST
-        testClaudeRespondsPassed()
-        testRecallVerified(prompt)
-        #endif
     }
 
     private func handleCodeDiffMessage(_ jsonData: [String: Any]) {
@@ -680,6 +698,16 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         log("📡 Claude state: \(isActive ? "active" : "inactive")")
         claudeIsActiveSubject.send(isActive)
         realtimeAPI.updateClaudeActiveState(isActive)
+    }
+
+    private func handlePlanAcceptedMessage(_ jsonData: [String: Any]) {
+        let branch = jsonData["branch"] as? String ?? "unknown"
+        log("📥 Plan accepted for branch: \(branch)")
+        planAcceptedSubject.send(true)
+
+        #if IS_TEST
+        testPlanAccepted()
+        #endif
     }
 
     private func sendStartMessage() {
@@ -746,6 +774,15 @@ private class Logger: @unchecked Sendable, LoggerProtocol {
         }
 
         sendMessage(jsonData, messageType: "delete", logMessage: "📤 [iOS → macOS] Sending delete for messageId: \(messageId.uuidString)")
+    }
+
+    func sendAcceptPlan() {
+        let msg: [String: Any] = ["type": "accept_plan"]
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: msg) else {
+            error("Failed to serialize accept_plan message")
+            return
+        }
+        sendMessage(jsonData, messageType: "accept_plan", logMessage: "📤 [iOS → macOS] Sending accept_plan")
     }
 
     private func scheduleReconnect() {

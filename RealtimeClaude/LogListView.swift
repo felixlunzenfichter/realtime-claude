@@ -519,6 +519,7 @@ struct LogRowView: View {
 @Observable
 class DiffViewModel {
     var treeText: String = ""
+    var planAccepted: Bool = false
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -530,17 +531,58 @@ class DiffViewModel {
                 self.treeText = text
             }
             .store(in: &cancellables)
+
+        logger.planAcceptedSubject
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] accepted in
+                guard let self = self else { return }
+                self.planAccepted = accepted
+            }
+            .store(in: &cancellables)
     }
 
     var treeLines: [String] {
         guard !treeText.isEmpty else { return [] }
         return treeText.split(separator: "\n", omittingEmptySubsequences: false).map { String($0) }
     }
+
+    var hasPlanCommit: Bool {
+        let pattern = #"\d+[smhd]\s+[a-f0-9]{7,8}\s+plan:"#
+        return treeText.range(of: pattern, options: .regularExpression) != nil
+    }
 }
 
 struct DiffView: View {
     @Binding var showDiff: Bool
     @Bindable var viewModel: DiffViewModel
+
+    var toggleItems: [ToggleBar.ToggleItem] {
+        var items: [ToggleBar.ToggleItem] = []
+
+        if viewModel.hasPlanCommit {
+            items.append(ToggleBar.ToggleItem(
+                color: viewModel.planAccepted ? .gray : .green,
+                isOn: .constant(false),
+                icon: "checkmark.circle.fill",
+                action: {
+                    if !viewModel.planAccepted {
+                        logger.sendAcceptPlan()
+                    }
+                }
+            ))
+        }
+
+        items.append(ToggleBar.ToggleItem(
+            color: .blue,
+            isOn: $showDiff,
+            icon: "xmark",
+            action: {
+                showDiff.toggle()
+            }
+        ))
+
+        return items
+    }
 
     var body: some View {
         ZStack {
@@ -579,16 +621,7 @@ struct DiffView: View {
             VStack {
                 Spacer()
 
-                ToggleBar(items: [
-                    ToggleBar.ToggleItem(
-                        color: .blue,
-                        isOn: $showDiff,
-                        icon: "xmark",
-                        action: {
-                            showDiff.toggle()
-                        }
-                    )
-                ])
+                ToggleBar(items: toggleItems)
             }
         }
     }
