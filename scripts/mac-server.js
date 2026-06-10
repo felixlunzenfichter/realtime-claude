@@ -2203,7 +2203,7 @@ tell application "System Events"
 
         keystroke "${escapedPrompt}"
 
-        delay 1
+        delay 2
 
         key code 36
 
